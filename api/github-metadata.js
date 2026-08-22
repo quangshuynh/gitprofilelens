@@ -88,4 +88,4 @@ const METADATA_QUERY = `
   }
 `;
 
-module.exports = { fetchGitHubMetadata, GitHubRequestError };
+module.exports = { analyzeReadme, fetchGitHubMetadata, GitHubRequestError };

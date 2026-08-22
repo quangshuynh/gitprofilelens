@@ -297,6 +297,8 @@
       openIssues: repository.open_issues_count || 0,
       archived: Boolean(repository.archived),
       fork: Boolean(repository.fork),
+      private: Boolean(repository.private),
+      visibility: repository.visibility || (repository.private ? "private" : "public"),
       createdAt: repository.created_at,
       updatedAt: repository.updated_at,
       pushedAt: repository.pushed_at,

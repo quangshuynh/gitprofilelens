@@ -278,6 +278,22 @@ test("repository transformation normalizes optional metadata without mutating Gi
   assert.deepEqual(source, snapshot);
 });
 
+test("repository transformation preserves explicit privacy and visibility", () => {
+  const privateRepository = transformRepository(createRepository({
+    private: true,
+    visibility: "private",
+  }), null);
+  const publicRepository = transformRepository(createRepository({
+    private: false,
+    visibility: undefined,
+  }), null);
+
+  assert.equal(privateRepository.private, true);
+  assert.equal(privateRepository.visibility, "private");
+  assert.equal(publicRepository.private, false);
+  assert.equal(publicRepository.visibility, "public");
+});
+
 test("profile scoring is deterministic, order-independent, finite, and bounded", () => {
   const now = new Date("2026-08-21T00:00:00Z");
   const repositories = [

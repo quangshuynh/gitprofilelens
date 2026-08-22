@@ -6,7 +6,7 @@
   "scripts": {
     "test": "node --test",
     "test:browser": "node --test tests/browser.test.js",
-    "check": "node --check share.js && node --check audit.js && node --check script.js && node --check api/github-metadata.js && node --check api/pinned-repositories.js && node --check api/report.js && node --check api/auth/session-crypto.js && node --check api/auth/github.js && node --check api/auth/callback.js && node --check api/auth/session.js && node --check api/auth/logout.js"
+    "check": "node --check share.js && node --check audit.js && node --check script.js && node --check api/github-metadata.js && node --check api/pinned-repositories.js && node --check api/report.js && node --check api/private-repositories.js && node --check api/auth/session-crypto.js && node --check api/auth/authenticated-session.js && node --check api/auth/github.js && node --check api/auth/callback.js && node --check api/auth/session.js && node --check api/auth/logout.js"
   },
   "devDependencies": {
     "playwright-core": "^1.62.1"
