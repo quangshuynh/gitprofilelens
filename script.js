@@ -25,6 +25,10 @@ const exportSummary = document.querySelector("#export-summary");
 const includeDetailsInput = document.querySelector("#include-details");
 const pinnedOnlyInput = document.querySelector("#pinned-only");
 const selectedOnlyInput = document.querySelector("#selected-only");
+const publicExportOptions = document.querySelector("#public-export-options");
+const privateExportOptions = document.querySelector("#private-export-options");
+const privateExportNote = document.querySelector("#private-export-note");
+const privateExportScopeInputs = document.querySelectorAll('[name="private-export-scope"]');
 const copyButton = document.querySelector("#copy-button");
 const downloadButton = document.querySelector("#download-button");
 const signedOutAuth = document.querySelector("#signed-out-auth");
@@ -51,6 +55,7 @@ const appState = {
   mode: "public",
   authUser: null,
   privateInstallation: false,
+  privateExports: { public: [], private: [], combined: [], publicSupplemental: null },
 };
 
 form.addEventListener("submit", handleFormSubmit);
@@ -64,6 +69,9 @@ logoutButton.addEventListener("click", logout);
 includeDetailsInput.addEventListener("change", refreshMarkdown);
 pinnedOnlyInput.addEventListener("change", refreshMarkdown);
 selectedOnlyInput.addEventListener("change", refreshMarkdown);
+for (const scopeInput of privateExportScopeInputs) {
+  scopeInput.addEventListener("change", refreshMarkdown);
+}
 
 for (const tabButton of tabButtons) {
   tabButton.addEventListener("click", handleTabClick);
@@ -233,7 +241,11 @@ async function loadPrivateRepositories() {
   statusEl.textContent = "Fetching repositories authorized for GitProfileLens…";
 
   try {
-    const response = await fetch("/api/private-repositories", { headers: { Accept: "application/json" } });
+    const [response, rawPublicRepositories, publicSupplemental] = await Promise.all([
+      fetch("/api/private-repositories", { headers: { Accept: "application/json" } }),
+      fetchAllRepositories(appState.authUser.login),
+      fetchSupplementalMetadata(appState.authUser.login),
+    ]);
     const data = await response.json().catch(() => null);
     if (response.status === 401) {
       appState.authUser = null;
@@ -246,12 +258,21 @@ async function loadPrivateRepositories() {
 
     const supplemental = { pinnedRepositories: [], readmes: data.readmes };
     const repositories = transformRepositories(data.repositories, supplemental);
+    const publicRepositories = transformRepositories(rawPublicRepositories, publicSupplemental)
+      .filter((repository) => !repository.private);
+    const privateRepositories = repositories.filter((repository) => repository.private);
     appState.user = appState.authUser;
     appState.repositories = repositories;
     appState.audits = repositories.map(scoreTransformedRepository);
     appState.supplemental = supplemental;
     appState.mode = "private";
     appState.privateInstallation = Boolean(data.installation);
+    appState.privateExports = {
+      public: publicRepositories,
+      private: privateRepositories,
+      combined: combineRepositoryScopes(publicRepositories, privateRepositories),
+      publicSupplemental,
+    };
     configureAccessLink.hidden = !data.configure_url;
     if (data.configure_url) configureAccessLink.href = data.configure_url;
 
@@ -284,6 +305,7 @@ async function logout() {
       appState.repositories = [];
       appState.audits = [];
       appState.supplemental = null;
+      clearPrivateExportState();
       showHomeView();
     }
     renderAuthState();
@@ -291,6 +313,19 @@ async function logout() {
     statusEl.classList.remove("error");
     statusEl.textContent = "Signed out of GitProfileLens.";
   }
+}
+
+function combineRepositoryScopes(publicRepositories, privateRepositories) {
+  const repositories = new Map();
+  for (const repository of [...publicRepositories, ...privateRepositories]) {
+    repositories.set((repository.fullName || repository.name).toLowerCase(), repository);
+  }
+  return [...repositories.values()];
+}
+
+function clearPrivateExportState() {
+  appState.privateExports = { public: [], private: [], combined: [], publicSupplemental: null };
+  output.value = "";
 }
 
 function clearPublicAuditUrl() {
@@ -461,6 +496,7 @@ function renderPrivateResults() {
   profileLink.textContent = `@${appState.authUser.login}`;
   profileInsight.textContent = "Review authorized repositories and identify projects worth preparing for your public portfolio.";
   renderAudits();
+  refreshMarkdown();
   activateTab("audit", false);
 }
 
@@ -469,8 +505,11 @@ function setResultMode(mode) {
   shareButton.hidden = privateMode;
   scoreCardButton.hidden = privateMode;
   for (const button of tabButtons) {
-    button.hidden = privateMode && button.dataset.tab !== "audit";
+    button.hidden = privateMode && !["audit", "markdown"].includes(button.dataset.tab);
   }
+  publicExportOptions.hidden = privateMode;
+  privateExportOptions.hidden = !privateMode;
+  privateExportNote.hidden = !privateMode;
   auditEyebrow.textContent = privateMode ? "Authorized repositories only" : "Lowest scores first";
   auditTitle.textContent = privateMode ? "Private Repository Audit" : "Repository audit";
   ratingGuide.textContent = privateMode
@@ -1017,7 +1056,11 @@ function compareCreationDatesNewestFirst(repositoryA, repositoryB) {
  * @returns {void} no return value
  */
 function refreshMarkdown() {
-  if (!appState.user || appState.mode !== "public") return;
+  if (!appState.user) return;
+  if (appState.mode === "private") {
+    refreshPrivateMarkdown();
+    return;
+  }
   const options = {
     includeDetails: includeDetailsInput.checked,
     pinnedOnly: pinnedOnlyInput.checked,
@@ -1027,6 +1070,28 @@ function refreshMarkdown() {
   output.value = createMarkdown(appState.user.login, repositories, appState.supplemental, options);
   exportSummary.textContent = `${repositories.length} repositories included in this export.`;
   pinnedOnlyInput.disabled = appState.supplemental === null;
+}
+
+function refreshPrivateMarkdown() {
+  const scope = [...privateExportScopeInputs].find((input) => input.checked)?.value || "private";
+  const repositories = appState.privateExports[scope] || [];
+  const labels = {
+    public: "public",
+    private: "authorized private",
+    combined: "combined public and authorized private",
+  };
+  output.value = createMarkdown(
+    appState.authUser.login,
+    repositories,
+    scope === "private" ? null : appState.privateExports.publicSupplemental,
+    {
+      includeDetails: true,
+      includePinned: scope !== "private",
+      includeVisibility: true,
+      scope: labels[scope],
+    }
+  );
+  exportSummary.textContent = `${repositories.length} ${labels[scope]} ${repositories.length === 1 ? "repository" : "repositories"} included in this export.`;
 }
 
 /**
@@ -1057,38 +1122,46 @@ function filterRepositoriesForExport(repositories, options) {
  */
 function createMarkdown(username, repositories, supplemental, options) {
   const sortedRepositories = [...repositories].sort(compareCreationDatesNewestFirst);
+  const includePinned = options.includePinned !== false;
   const lines = [
     `username: ${escapeMarkdown(username)}`,
-    `public repositories in report: ${sortedRepositories.length}`,
-    "",
-    "# pinned repositories:",
+    `${options.scope || "public"} repositories in report: ${sortedRepositories.length}`,
     "",
   ];
-  const pinnedRepositories = sortedRepositories.filter(isPinnedRepository);
+  if (includePinned) {
+    lines.push("# pinned repositories:", "");
+    const pinnedRepositories = sortedRepositories.filter(isPinnedRepository);
 
-  if (supplemental === null) {
-    lines.push("Pinned repository data unavailable.", "");
-  } else if (pinnedRepositories.length === 0) {
-    lines.push("No pinned repositories included in this report.", "");
-  } else {
-    for (const repository of pinnedRepositories) {
-      lines.push(`- ${escapeMarkdown(repository.name)}`);
+    if (supplemental === null) {
+      lines.push("Pinned repository data unavailable.", "");
+    } else if (pinnedRepositories.length === 0) {
+      lines.push("No pinned repositories included in this report.", "");
+    } else {
+      for (const repository of pinnedRepositories) {
+        lines.push(`- ${escapeMarkdown(repository.name)}`);
+      }
+      lines.push("");
     }
-    lines.push("");
   }
 
   lines.push("# repositories:", "");
 
   for (let index = 0; index < sortedRepositories.length; index += 1) {
     const repository = sortedRepositories[index];
-    lines.push(
+    const repositoryLines = [
       `### repo ${sortedRepositories.length - index}:`,
       "",
       `- name: ${escapeMarkdown(repository.name)}`,
       `- desc: ${escapeMarkdown(repository.description || "No description")}`,
       `- url: ${repository.url}`,
-      `- pinned on profile: ${repository.pinned === null ? "Unavailable" : repository.pinned ? "Yes" : "No"}`
-    );
+    ];
+    if (options.includeVisibility) {
+      repositoryLines.push(`- visibility: ${repository.private ? "Private" : "Public"}`);
+    }
+    if (includePinned) {
+      repositoryLines.push(`- pinned on profile: ${repository.pinned === null ? "Unavailable" : repository.pinned ? "Yes" : "No"}`);
+    }
+    lines.push(...repositoryLines);
 
     if (options.includeDetails) {
       lines.push(
@@ -1138,7 +1211,7 @@ function handleTabClick(event) {
  * @returns {void} no return value
  */
 function activateTab(tabName, updateUrl) {
-  if (appState.mode === "private") tabName = "audit";
+  if (appState.mode === "private" && !["audit", "markdown"].includes(tabName)) tabName = "audit";
   const validTab = ["overview", "audit", "repositories", "markdown"].includes(tabName)
     ? tabName
     : "overview";
@@ -1392,7 +1465,7 @@ function drawRoundedRectangle(context, x, y, width, height, radius) {
  * @returns {Promise<void>} no return value
  */
 async function copyMarkdown() {
-  if (appState.mode !== "public") return;
+  if (!output.value) return;
   try {
     await navigator.clipboard.writeText(output.value);
     showTemporaryButtonText(copyButton, "Copied");
@@ -1406,12 +1479,17 @@ async function copyMarkdown() {
  * @returns {void} no return value
  */
 function downloadMarkdown() {
-  if (!output.value || appState.mode !== "public") return;
+  if (!output.value) return;
   const blob = new Blob([output.value], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${appState.user?.login || "github-user"}-repositories.md`;
+  const scope = appState.mode === "private"
+    ? [...privateExportScopeInputs].find((input) => input.checked)?.value || "private"
+    : "public";
+  link.download = appState.mode === "private"
+    ? `${appState.user?.login || "github-user"}-${scope}-repositories.md`
+    : `${appState.user?.login || "github-user"}-repositories.md`;
   document.body.appendChild(link);
   link.click();
   link.remove();

@@ -158,12 +158,19 @@
             <button id="download-button" class="secondary" type="button">Download .md</button>
           </div>
         </div>
-        <fieldset class="export-options">
+        <fieldset id="public-export-options" class="export-options">
           <legend>Include</legend>
           <label><input id="include-details" type="checkbox" checked /> Full repository details</label>
           <label><input id="pinned-only" type="checkbox" /> Pinned repositories only</label>
           <label><input id="selected-only" type="checkbox" /> Selected repositories only</label>
         </fieldset>
+        <fieldset id="private-export-options" class="export-options" hidden>
+          <legend>Report scope</legend>
+          <label><input type="radio" name="private-export-scope" value="public" /> Public repositories only</label>
+          <label><input type="radio" name="private-export-scope" value="private" checked /> Private repositories only</label>
+          <label><input type="radio" name="private-export-scope" value="combined" /> Public and private repositories</label>
+        </fieldset>
+        <p id="private-export-note" class="private-export-note" hidden>Private repository metadata is included only in this local, user-initiated export. Do not publish it unless you intend to disclose those repository details.</p>
         <p id="export-summary" class="panel-help"></p>
         <textarea id="output" readonly spellcheck="false" aria-label="Generated Markdown"></textarea>
       </section>

@@ -287,13 +287,15 @@ test("private audit mode isolates authorized repositories from public outputs", 
   await page.locator("#home-signed-in-auth").waitFor({ state: "visible" });
   assert.equal(await page.locator("#home-auth-login").innerText(), "@example");
   assert.equal(await page.locator("#home-private-audit-button svg").count(), 1);
-  const publicMarkdown = "";
-
   await page.evaluate(() => {
     window.__privateShareCalls = 0;
     window.__privateCardCalls = 0;
     window.__privateProfileScoreCalls = 0;
-    window.__privateMarkdownCalls = 0;
+    window.__copiedPrivateMarkdown = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text) => { window.__copiedPrivateMarkdown = text; } },
+    });
     Object.defineProperty(navigator, "share", {
       configurable: true,
       value: async () => { window.__privateShareCalls += 1; },
@@ -307,11 +309,6 @@ test("private audit mode isolates authorized repositories from public outputs", 
     GitHubAudit.scoreProfile = (...args) => {
       window.__privateProfileScoreCalls += 1;
       return originalProfileScore(...args);
-    };
-    const originalMarkdown = createMarkdown;
-    window.createMarkdown = (...args) => {
-      window.__privateMarkdownCalls += 1;
-      return originalMarkdown(...args);
     };
   });
   await page.locator("#home-private-audit-button").click();
@@ -331,30 +328,54 @@ test("private audit mode isolates authorized repositories from public outputs", 
   assert.equal(await page.locator("#share-button").isHidden(), true);
   assert.equal(await page.locator("#score-card-button").isHidden(), true);
   assert.equal(await page.locator('[data-tab="overview"]').isHidden(), true);
-  assert.equal(await page.locator('[data-tab="markdown"]').isHidden(), true);
-  assert.equal(await page.locator("#markdown-panel").isHidden(), true);
-  assert.equal(await page.locator("#output").inputValue(), publicMarkdown);
+  assert.equal(await page.locator('[data-tab="markdown"]').isVisible(), true);
   assert.equal(new URL(page.url()).searchParams.has("user"), false);
   assert.doesNotMatch(page.url(), /secret-project/);
+
+  await page.getByRole("tab", { name: "Markdown export" }).click();
+  assert.equal(await page.locator("#private-export-options").isVisible(), true);
+  assert.equal(await page.locator("#public-export-options").isHidden(), true);
+  const privateMarkdown = await page.locator("#output").inputValue();
+  assert.match(privateMarkdown, /authorized private repositories in report: 1/);
+  assert.match(privateMarkdown, /name: secret-project/);
+  assert.match(privateMarkdown, /visibility: Private/);
+  assert.doesNotMatch(privateMarkdown, /authorized-public-project|portfolio-lens/);
+
+  await page.getByLabel("Public repositories only").check();
+  const publicMarkdown = await page.locator("#output").inputValue();
+  assert.match(publicMarkdown, /public repositories in report: 2/);
+  assert.match(publicMarkdown, /name: portfolio-lens/);
+  assert.doesNotMatch(publicMarkdown, /secret-project/);
+
+  await page.getByLabel("Public and private repositories").check();
+  const combinedMarkdown = await page.locator("#output").inputValue();
+  assert.match(combinedMarkdown, /combined public and authorized private repositories in report: 3/);
+  assert.match(combinedMarkdown, /name: portfolio-lens/);
+  assert.match(combinedMarkdown, /name: secret-project/);
+  assert.match(combinedMarkdown, /visibility: Public/);
+  assert.match(combinedMarkdown, /visibility: Private/);
+
+  await page.getByRole("button", { name: "Copy" }).click();
+  assert.equal(await page.evaluate(() => window.__copiedPrivateMarkdown), combinedMarkdown);
+  const markdownDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download .md" }).click();
+  assert.equal((await markdownDownloadPromise).suggestedFilename(), "example-combined-repositories.md");
 
   await page.evaluate(() => {
     document.querySelector("#share-button").click();
     document.querySelector("#score-card-button").click();
-    document.querySelector("#copy-button").click();
-    document.querySelector("#download-button").click();
   });
   assert.deepEqual(await page.evaluate(() => ({
     share: window.__privateShareCalls,
     card: window.__privateCardCalls,
     profileScore: window.__privateProfileScoreCalls,
-    markdown: window.__privateMarkdownCalls,
-  })), { share: 0, card: 0, profileScore: 0, markdown: 0 });
-  assert.equal(await page.locator("#output").inputValue(), publicMarkdown);
+  })), { share: 0, card: 0, profileScore: 0 });
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.locator(".hero").waitFor({ state: "visible" });
   assert.equal(await page.locator("#signed-out-auth").evaluate((element) => element.hidden), false);
   assert.equal(await page.locator("#result-section").isHidden(), true);
+  assert.equal(await page.locator("#output").inputValue(), "");
   assert.deepEqual(browserErrors, []);
   } finally {
     await browser.close();

@@ -41,8 +41,9 @@ Sign in with GitHub and install the GitHub App on all or selected repositories. 
 - Reuses the deterministic repository presentation checks.
 - Labels each repository as Private or Public.
 - Classifies projects as strong portfolio candidates, worth polishing, or needing presentation work.
+- Exports Markdown containing public repositories, authorized private repositories, or both.
 
-Private repositories never affect the public GitHub Profile Score. Private identifiers are not included in public URLs, score cards, Markdown exports, public metadata endpoints, or `/api/report`.
+Private repositories never affect the public GitHub Profile Score. Private identifiers are not included in public URLs, score cards, public metadata endpoints, or `/api/report`. Private details enter Markdown only when the authenticated user explicitly selects a private or combined export.
 
 ## How scoring works
 
@@ -66,6 +67,7 @@ GitProfileLens uses the GitHub App web authorization flow and requests read-only
 - Authenticated endpoints send private, no-store cache headers and are not eligible for shared CDN caching.
 - Browser JavaScript receives only safe sign-in identity data, never raw tokens or session secrets.
 - Private repository responses are processed for the current request and are not permanently stored by GitProfileLens.
+- Private Markdown reports are generated locally in the browser and cleared from page state on logout.
 - Logout clears the GitProfileLens session cookie. It does not sign the user out of GitHub.
 
 The server necessarily receives authorized GitHub API responses while producing an audit. Avoid granting the GitHub App access to repositories you do not want GitProfileLens to process.
@@ -196,7 +198,7 @@ npm run check
 npm run test:browser
 ```
 
-Tests cover deterministic scoring, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, and browser-level isolation from public scoring, sharing, score cards, URLs, and Markdown export.
+Tests cover deterministic scoring, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, and browser-level isolation from public scoring, sharing, score cards, and URLs.
 
 ## Deployment options
 
@@ -214,7 +216,7 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - The public GraphQL README query covers the first 100 public repositories and common root README filenames.
 - Private auditing retrieves the preferred root README but does not clone repositories or analyze source code.
 - The private view currently focuses on repositories owned by the signed-in user, not organization administration.
-- Private Markdown export, private report APIs, saved audits, and combined public/private scores are intentionally excluded.
+- Private report APIs, saved audits, and combined public/private scores are intentionally excluded. Private Markdown export is available only through the authenticated browser view.
 - README structure and size are presentation signals and cannot determine writing or implementation quality.
 - A public share URL re-fetches current public data; no audit snapshot is stored.
 

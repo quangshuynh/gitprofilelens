@@ -185,6 +185,8 @@ button.secondary { border-color: #30363d; background: #21262d; }
 .export-options legend { padding: 0 6px; color: #8b949e; font-size: .78rem; font-weight: 700; }
 .export-options label { display: flex; align-items: center; gap: 7px; color: #c9d1d9; font-size: .85rem; }
 .export-options input { accent-color: #238636; }
+.export-options[hidden], .private-export-note[hidden] { display: none; }
+.private-export-note { margin: -6px 0 18px; padding: 11px 13px; border-left: 3px solid #e3b341; background: rgba(210,153,34,.08); color: #c9b36b; font-size: .8rem; line-height: 1.5; }
 textarea { width: 100%; min-height: 520px; resize: vertical; padding: 16px; border: 1px solid #30363d; border-radius: 9px; outline: none; background: #080b10; color: #e6edf3; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .84rem; line-height: 1.55; }
 textarea:focus { border-color: #58a6ff; }
 .empty-state { margin: 0; padding: 20px; color: #8b949e; line-height: 1.5; }
