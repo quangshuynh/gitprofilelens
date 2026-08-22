@@ -35,25 +35,35 @@
           <button id="generate-button" type="submit">Analyze profile</button>
         </div>
       </form>
-      <div class="auth-divider" aria-hidden="true"><span>or</span></div>
-      <section class="auth-panel" aria-label="Private repository auditing">
-        <div id="signed-out-auth">
-          <a class="button-link secondary" href="/api/auth/github">Sign in with GitHub</a>
-          <p>Audit repositories you authorize, including private repositories.</p>
-        </div>
-        <div id="signed-in-auth" class="signed-in-auth" hidden>
-          <p>Signed in as <strong id="auth-login"></strong></p>
-          <div class="auth-actions">
-            <button id="private-audit-button" type="button">Audit my repositories</button>
-            <a id="configure-access-link" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>Configure access</a>
-            <button id="logout-button" class="secondary" type="button">Sign out</button>
-          </div>
-        </div>
-      </section>
       <p id="status" class="status" aria-live="polite"></p>
     </header>
 
-    <section id="result-section" class="results" hidden>
+    <section id="loading-screen" class="loading-screen" aria-live="polite" hidden>
+      <div class="loading-orbit" aria-hidden="true"><span></span></div>
+      <p class="eyebrow">Building portfolio audit</p>
+      <h2>Analyzing <span id="loading-username"></span></h2>
+      <p>Fetching repositories, checking presentation signals, and preparing recommendations.</p>
+    </section>
+
+    <section id="result-page" class="result-page" hidden>
+      <header class="result-page-header">
+        <a class="result-brand" href="/" aria-label="Start a new GitProfileLens audit">GitProfileLens</a>
+        <section class="result-auth" aria-label="Private repository auditing">
+          <div id="signed-out-auth">
+            <a class="button-link secondary" href="/api/auth/github">Sign in with GitHub</a>
+          </div>
+          <div id="signed-in-auth" class="signed-in-auth" hidden>
+            <p>Signed in as <strong id="auth-login"></strong></p>
+            <div class="auth-actions">
+              <button id="private-audit-button" type="button">Audit my repositories</button>
+              <a id="configure-access-link" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>Configure access</a>
+              <button id="logout-button" class="secondary" type="button">Sign out</button>
+            </div>
+          </div>
+        </section>
+      </header>
+
+      <section id="result-section" class="results" hidden>
       <div class="profile-bar">
         <div class="profile-identity">
           <img id="profile-avatar" class="avatar" alt="" />
@@ -131,6 +141,7 @@
         </fieldset>
         <p id="export-summary" class="panel-help"></p>
         <textarea id="output" readonly spellcheck="false" aria-label="Generated Markdown"></textarea>
+      </section>
       </section>
     </section>
     <footer class="footer">

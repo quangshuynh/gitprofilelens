@@ -2,6 +2,10 @@ const form = document.querySelector("#github-form");
 const usernameInput = document.querySelector("#username");
 const generateButton = document.querySelector("#generate-button");
 const statusEl = document.querySelector("#status");
+const hero = document.querySelector(".hero");
+const loadingScreen = document.querySelector("#loading-screen");
+const loadingUsername = document.querySelector("#loading-username");
+const resultPage = document.querySelector("#result-page");
 const resultSection = document.querySelector("#result-section");
 const profileAvatar = document.querySelector("#profile-avatar");
 const profileName = document.querySelector("#profile-name");
@@ -116,9 +120,9 @@ async function loadProfile(username) {
   }
 
   setLoading(true);
-  resultSection.hidden = true;
+  showLoadingView(username);
   statusEl.classList.remove("error");
-  statusEl.textContent = `Fetching public profile data for @${username}…`;
+  statusEl.textContent = "";
 
   try {
     const user = await fetchJson(
@@ -139,13 +143,41 @@ async function loadProfile(username) {
 
     updateShareUrl(user.login);
     renderResults();
-    resultSection.hidden = false;
+    showResultView();
     statusEl.textContent = createSuccessStatus(repositories.length, supplemental);
   } catch (error) {
+    showHomeView();
     showError(error.message);
   } finally {
     setLoading(false);
   }
+}
+
+function showLoadingView(username) {
+  hero.hidden = true;
+  resultPage.hidden = true;
+  resultSection.hidden = true;
+  loadingUsername.textContent = `@${username}`;
+  loadingScreen.hidden = false;
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function showResultView() {
+  hero.hidden = true;
+  loadingScreen.hidden = true;
+  resultPage.hidden = false;
+  resultPage.insertBefore(statusEl, resultSection);
+  resultSection.hidden = false;
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function showHomeView() {
+  loadingScreen.hidden = true;
+  resultPage.hidden = true;
+  resultSection.hidden = true;
+  hero.hidden = false;
+  hero.appendChild(statusEl);
+  window.scrollTo({ top: 0, behavior: "auto" });
 }
 
 /**
@@ -216,7 +248,7 @@ async function loadPrivateRepositories() {
 
     clearPublicAuditUrl();
     renderResults();
-    resultSection.hidden = false;
+    showResultView();
     if (!data.installation) {
       statusEl.textContent = "GitProfileLens is connected, but no GitHub App installation is available.";
     } else {
@@ -242,7 +274,7 @@ async function logout() {
       appState.repositories = [];
       appState.audits = [];
       appState.supplemental = null;
-      resultSection.hidden = true;
+      showHomeView();
     }
     renderAuthState();
     logoutButton.disabled = false;

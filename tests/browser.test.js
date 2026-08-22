@@ -73,6 +73,9 @@ test("profile flow renders verified README details and switches tabs", { skip: !
 
   await page.goto(`${baseUrl}/?user=example`);
   await page.locator("#result-section").waitFor({ state: "visible" });
+  assert.equal(await page.locator(".hero").isHidden(), true);
+  assert.equal(await page.locator("#result-page").isVisible(), true);
+  assert.equal(await page.getByRole("link", { name: "Sign in with GitHub" }).isVisible(), true);
 
   assert.match(await page.locator("#status").innerText(), /including 1 profile pins/i);
   assert.match(await page.locator("#profile-insight").innerText(), /Example's portfolio snapshot: 2 public projects/i);
@@ -89,6 +92,27 @@ test("profile flow renders verified README details and switches tabs", { skip: !
   await browser.close();
 });
 
+test("username search transitions through a dedicated loading screen", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+  await mockGithubRequests(page, [repository, secondRepository], { profileDelay: 250 });
+  await page.goto(baseUrl);
+  assert.equal(await page.locator(".hero").isVisible(), true);
+  assert.equal(await page.locator("#result-page").isHidden(), true);
+
+  await page.locator("#username").fill("example");
+  await page.getByRole("button", { name: "Analyze profile" }).click();
+  await page.locator("#loading-screen").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#loading-username").innerText(), "@example");
+  assert.equal(await page.locator(".hero").isHidden(), true);
+  assert.equal(await page.locator("#result-page").isHidden(), true);
+
+  await page.locator("#result-page").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#loading-screen").isHidden(), true);
+  assert.equal(await page.locator(".hero").isHidden(), true);
+  await browser.close();
+});
+
 test("mobile layout has no horizontal page overflow", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -102,7 +126,8 @@ test("mobile layout has no horizontal page overflow", { skip: !chromePath }, asy
   }));
 
   assert.ok(dimensions.content <= dimensions.viewport, `page width ${dimensions.content}px exceeds ${dimensions.viewport}px viewport`);
-  assert.equal(await page.locator("#generate-button").isVisible(), true);
+  assert.equal(await page.locator("#generate-button").isHidden(), true);
+  assert.equal(await page.getByRole("link", { name: "Sign in with GitHub" }).isVisible(), true);
   assert.equal(await page.locator("#share-button").isVisible(), true);
 
   await browser.close();
@@ -230,6 +255,7 @@ test("private audit mode isolates authorized repositories from public outputs", 
   page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
   page.on("pageerror", (error) => browserErrors.push(error.message));
 
+  await mockGithubRequests(page);
   await page.route("**/api/auth/session", (route) => route.fulfill({
     json: {
       authenticated: true,
@@ -250,8 +276,12 @@ test("private audit mode isolates authorized repositories from public outputs", 
   }));
   await page.route("**/api/auth/logout", (route) => route.fulfill({ json: { authenticated: false } }));
   await page.goto(baseUrl);
+  await page.locator("#username").fill("example");
+  await page.getByRole("button", { name: "Analyze profile" }).click();
+  await page.locator("#result-page").waitFor({ state: "visible" });
   await page.locator("#signed-in-auth").waitFor({ state: "visible" });
   assert.equal(await page.locator("#auth-login").innerText(), "@example");
+  const publicMarkdown = await page.locator("#output").inputValue();
 
   await page.evaluate(() => {
     window.__privateShareCalls = 0;
@@ -279,7 +309,7 @@ test("private audit mode isolates authorized repositories from public outputs", 
     };
   });
   await page.getByRole("button", { name: "Audit my repositories" }).click();
-  await page.locator("#result-section").waitFor({ state: "visible" });
+  await page.locator("#audit-title").filter({ hasText: "Private Repository Audit" }).waitFor();
 
   assert.equal(await page.locator("#audit-title").innerText(), "Private Repository Audit");
   assert.deepEqual(
@@ -295,7 +325,7 @@ test("private audit mode isolates authorized repositories from public outputs", 
   assert.equal(await page.locator('[data-tab="overview"]').isHidden(), true);
   assert.equal(await page.locator('[data-tab="markdown"]').isHidden(), true);
   assert.equal(await page.locator("#markdown-panel").isHidden(), true);
-  assert.equal(await page.locator("#output").inputValue(), "");
+  assert.equal(await page.locator("#output").inputValue(), publicMarkdown);
   assert.equal(new URL(page.url()).searchParams.has("user"), false);
   assert.doesNotMatch(page.url(), /secret-project/);
 
@@ -311,10 +341,11 @@ test("private audit mode isolates authorized repositories from public outputs", 
     profileScore: window.__privateProfileScoreCalls,
     markdown: window.__privateMarkdownCalls,
   })), { share: 0, card: 0, profileScore: 0, markdown: 0 });
-  assert.equal(await page.locator("#output").inputValue(), "");
+  assert.equal(await page.locator("#output").inputValue(), publicMarkdown);
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  await page.locator("#signed-out-auth").waitFor({ state: "visible" });
+  await page.locator(".hero").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#signed-out-auth").evaluate((element) => element.hidden), false);
   assert.equal(await page.locator("#result-section").isHidden(), true);
   assert.deepEqual(browserErrors, []);
   } finally {
@@ -322,14 +353,17 @@ test("private audit mode isolates authorized repositories from public outputs", 
   }
 });
 
-async function mockGithubRequests(page, repositories = [repository, secondRepository]) {
+async function mockGithubRequests(page, repositories = [repository, secondRepository], options = {}) {
   const avatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' fill='%2358a6ff'/%3E%3C/svg%3E";
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({ json: { authenticated: false } })
   );
-  await page.route("https://api.github.com/users/example", (route) =>
-    route.fulfill({ json: { login: "example", name: "Example User", avatar_url: avatar, html_url: "https://github.com/example" } })
-  );
+  await page.route("https://api.github.com/users/example", async (route) => {
+    if (options.profileDelay) {
+      await new Promise((resolve) => setTimeout(resolve, options.profileDelay));
+    }
+    await route.fulfill({ json: { login: "example", name: "Example User", avatar_url: avatar, html_url: "https://github.com/example" } });
+  });
   await page.route("https://api.github.com/users/example/repos**", (route) =>
     route.fulfill({ json: repositories })
   );
