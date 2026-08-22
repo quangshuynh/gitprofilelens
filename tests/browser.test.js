@@ -168,6 +168,27 @@ test("Markdown export respects compact, pinned-only, and manual selection option
   await browser.close();
 });
 
+test("profile pins retain their GitHub order in repositories and Markdown", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page, [repository, secondRepository], {
+    pinnedRepositories: [secondRepository.name, repository.name],
+  });
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+
+  await page.getByRole("tab", { name: "Repositories" }).click();
+  assert.deepEqual(
+    await page.locator("#repository-list .repository-card-heading a").allTextContents(),
+    [secondRepository.name, repository.name]
+  );
+
+  await page.getByRole("tab", { name: "Markdown export" }).click();
+  const markdown = await page.locator("#output").inputValue();
+  assert.ok(markdown.indexOf(`- ${secondRepository.name}`) < markdown.indexOf(`- ${repository.name}`));
+  await browser.close();
+});
+
 test("empty and nonexistent profiles show useful states", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   const emptyPage = await browser.newPage({ viewport: { width: 900, height: 700 } });
@@ -426,7 +447,7 @@ async function mockGithubRequests(page, repositories = [repository, secondReposi
   await page.route("**/api/pinned-repositories?username=example", (route) =>
     route.fulfill({
       json: {
-        repositories: repositories.length ? [repository.name] : [],
+        repositories: options.pinnedRepositories || (repositories.length ? [repository.name] : []),
         readmes: Object.fromEntries(repositories.map((item) => [item.name, readme])),
       },
     })

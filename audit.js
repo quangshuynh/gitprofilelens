@@ -280,7 +280,8 @@
    */
   function transformRepository(repository, supplemental) {
     const readme = supplemental?.readmes?.[repository.name] || { present: null, size: null };
-    const pinnedNames = new Set(supplemental?.pinnedRepositories || []);
+    const pinnedRepositories = supplemental?.pinnedRepositories || [];
+    const pinnedPosition = pinnedRepositories.indexOf(repository.name);
 
     return {
       raw: repository,
@@ -302,7 +303,8 @@
       createdAt: repository.created_at,
       updatedAt: repository.updated_at,
       pushedAt: repository.pushed_at,
-      pinned: supplemental === null ? null : pinnedNames.has(repository.name),
+      pinned: supplemental === null ? null : pinnedPosition >= 0,
+      pinnedPosition: pinnedPosition >= 0 ? pinnedPosition : null,
       readme,
       selected: true,
     };
@@ -324,7 +326,13 @@
     return {
       username,
       public_repositories: repositories.length,
-      pinned_repositories: repositories.filter((repository) => repository.pinned === true).map((repository) => repository.name),
+      pinned_repositories: repositories
+        .filter((repository) => repository.pinned === true)
+        .sort((repositoryA, repositoryB) =>
+          (repositoryA.pinnedPosition ?? Number.MAX_SAFE_INTEGER)
+          - (repositoryB.pinnedPosition ?? Number.MAX_SAFE_INTEGER)
+        )
+        .map((repository) => repository.name),
       repositories: repositories.map((repository) => ({
         name: repository.name,
         description: repository.description || null,

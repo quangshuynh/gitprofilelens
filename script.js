@@ -980,7 +980,7 @@ function getScoreClass(score) {
  */
 function renderRepositories() {
   if (appState.mode !== "public") return;
-  const repositories = [...appState.repositories].sort(compareCreationDatesNewestFirst);
+  const repositories = [...appState.repositories].sort(compareRepositoriesForExplorer);
   repositorySummary.textContent = `${repositories.length} public repositories fetched.`;
   repositoryList.replaceChildren();
 
@@ -1056,6 +1056,26 @@ function compareCreationDatesNewestFirst(repositoryA, repositoryB) {
 }
 
 /**
+ * keeps profile pins first and in the order chosen on GitHub
+ * @param {Object} repositoryA first repository
+ * @param {Object} repositoryB second repository
+ * @returns {number} repository sort order
+ */
+function comparePinnedPositions(repositoryA, repositoryB) {
+  const positionA = repositoryA.pinnedPosition ?? Number.MAX_SAFE_INTEGER;
+  const positionB = repositoryB.pinnedPosition ?? Number.MAX_SAFE_INTEGER;
+  return positionA - positionB;
+}
+
+function compareRepositoriesForExplorer(repositoryA, repositoryB) {
+  if (repositoryA.pinned === true || repositoryB.pinned === true) {
+    const pinnedOrder = comparePinnedPositions(repositoryA, repositoryB);
+    if (pinnedOrder !== 0) return pinnedOrder;
+  }
+  return compareCreationDatesNewestFirst(repositoryA, repositoryB);
+}
+
+/**
  * updates markdown output from current export options
  * @returns {void} no return value
  */
@@ -1125,7 +1145,9 @@ function filterRepositoriesForExport(repositories, options) {
  * @returns {string} formatted markdown report
  */
 function createMarkdown(username, repositories, supplemental, options) {
-  const sortedRepositories = [...repositories].sort(compareCreationDatesNewestFirst);
+  const sortedRepositories = [...repositories].sort(
+    options.pinnedOnly ? comparePinnedPositions : compareCreationDatesNewestFirst
+  );
   const includePinned = options.includePinned !== false;
   const lines = [
     `username: ${escapeMarkdown(username)}`,
@@ -1134,7 +1156,9 @@ function createMarkdown(username, repositories, supplemental, options) {
   ];
   if (includePinned) {
     lines.push("# pinned repositories:", "");
-    const pinnedRepositories = sortedRepositories.filter(isPinnedRepository);
+    const pinnedRepositories = sortedRepositories
+      .filter(isPinnedRepository)
+      .sort(comparePinnedPositions);
 
     if (supplemental === null) {
       lines.push("Pinned repository data unavailable.", "");

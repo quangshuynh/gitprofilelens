@@ -72,11 +72,12 @@ test("description findings preserve factual and subjective distinctions", () => 
 
 test("repository transformation preserves factual metadata and supplemental readme state", () => {
   const transformed = transformRepository(createRepository(), {
-    pinnedRepositories: ["transaction-validator"],
+    pinnedRepositories: ["first-pin", "transaction-validator", "third-pin"],
     readmes: { "transaction-validator": { present: true, size: 1800 } },
   });
 
   assert.equal(transformed.pinned, true);
+  assert.equal(transformed.pinnedPosition, 1);
   assert.equal(transformed.readme.present, true);
   assert.equal(transformed.readme.size, 1800);
   assert.deepEqual(transformed.topics, ["fastapi", "postgresql", "validation"]);

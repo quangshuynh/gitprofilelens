@@ -40,7 +40,7 @@ function createMetadata(repositoryNames = ["portfolio-lens", "minimal-project"])
   return {
     data: {
       user: {
-        pinnedItems: { nodes: [{ name: "portfolio-lens" }] },
+        pinnedItems: { nodes: [{ name: "minimal-project" }, { name: "portfolio-lens" }] },
         repositories: {
           nodes: repositoryNames.map((name) => ({
             name,
@@ -131,7 +131,7 @@ test("report serializes public metadata, pins, topics, and nullable fields", asy
   assert.equal(result.status, 200);
   assert.equal(result.body.username, "example");
   assert.equal(result.body.public_repositories, 2);
-  assert.deepEqual(result.body.pinned_repositories, ["portfolio-lens"]);
+  assert.deepEqual(result.body.pinned_repositories, ["minimal-project", "portfolio-lens"]);
   assert.deepEqual(result.body.repositories[0].topics, ["github", "developer-tools"]);
   assert.equal(result.body.repositories[0].pinned, true);
   assert.equal(result.body.repositories[0].readme_status, "comprehensive");
