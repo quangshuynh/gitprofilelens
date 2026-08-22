@@ -42,6 +42,17 @@ button.secondary { border-color: #30363d; background: #21262d; }
 .button-link { display: inline-flex; align-items: center; justify-content: center; padding: 11px 16px; border: 1px solid transparent; border-radius: 8px; background: #238636; color: #fff; font-weight: 750; text-decoration: none; }
 .button-link:hover { filter: brightness(1.08); }
 .button-link.secondary { border-color: #30363d; background: #21262d; }
+.github-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid #3d444d; background: #f0f6fc; color: #0d1117; box-shadow: 0 5px 18px rgba(0,0,0,.18); }
+.github-button:hover { background: #fff; filter: none; transform: translateY(-1px); }
+.github-button svg { flex: none; width: 20px; height: 20px; }
+.github-button.compact { padding: 9px 13px; font-size: .86rem; }
+.auth-divider { display: flex; align-items: center; gap: 12px; max-width: 680px; margin: 18px 0 14px; color: #6e7681; font-size: .78rem; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; flex: 1; background: #21262d; }
+.home-auth { max-width: 680px; }
+.home-auth p { margin: 9px 0 0; color: #8b949e; font-size: .8rem; }
+.home-signed-in-auth { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 15px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+.home-signed-in-auth p { margin: 0; color: #c9d1d9; }
+.home-signed-in-auth[hidden], #home-signed-out-auth[hidden] { display: none; }
 .signed-in-auth { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .signed-in-auth p { margin: 0; color: #c9d1d9; }
 .auth-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -188,6 +199,8 @@ textarea:focus { border-color: #58a6ff; }
   .profile-actions { width: 100%; }
   .profile-actions button { flex: 1; }
   .signed-in-auth { align-items: stretch; flex-direction: column; }
+  .home-signed-in-auth { align-items: stretch; flex-direction: column; }
+  .home-signed-in-auth .github-button { width: 100%; }
   .auth-actions > * { flex: 1; }
   .result-page-header { align-items: flex-start; flex-direction: column; }
   .result-auth, .signed-in-auth, .auth-actions { width: 100%; }

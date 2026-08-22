@@ -29,8 +29,12 @@ const copyButton = document.querySelector("#copy-button");
 const downloadButton = document.querySelector("#download-button");
 const signedOutAuth = document.querySelector("#signed-out-auth");
 const signedInAuth = document.querySelector("#signed-in-auth");
+const homeSignedOutAuth = document.querySelector("#home-signed-out-auth");
+const homeSignedInAuth = document.querySelector("#home-signed-in-auth");
 const authLogin = document.querySelector("#auth-login");
+const homeAuthLogin = document.querySelector("#home-auth-login");
 const privateAuditButton = document.querySelector("#private-audit-button");
+const homePrivateAuditButton = document.querySelector("#home-private-audit-button");
 const configureAccessLink = document.querySelector("#configure-access-link");
 const logoutButton = document.querySelector("#logout-button");
 const auditEyebrow = document.querySelector("#audit-eyebrow");
@@ -55,6 +59,7 @@ scoreCardButton.addEventListener("click", downloadScoreCard);
 copyButton.addEventListener("click", copyMarkdown);
 downloadButton.addEventListener("click", downloadMarkdown);
 privateAuditButton.addEventListener("click", loadPrivateRepositories);
+homePrivateAuditButton.addEventListener("click", loadPrivateRepositories);
 logoutButton.addEventListener("click", logout);
 includeDetailsInput.addEventListener("change", refreshMarkdown);
 pinnedOnlyInput.addEventListener("change", refreshMarkdown);
@@ -206,7 +211,10 @@ function renderAuthState() {
   const authenticated = Boolean(appState.authUser);
   signedOutAuth.hidden = authenticated;
   signedInAuth.hidden = !authenticated;
+  homeSignedOutAuth.hidden = authenticated;
+  homeSignedInAuth.hidden = !authenticated;
   authLogin.textContent = authenticated ? `@${appState.authUser.login}` : "";
+  homeAuthLogin.textContent = authenticated ? `@${appState.authUser.login}` : "";
   if (!authenticated) configureAccessLink.hidden = true;
 }
 
@@ -220,6 +228,7 @@ async function loadPrivateRepositories() {
     return;
   }
   privateAuditButton.disabled = true;
+  homePrivateAuditButton.disabled = true;
   statusEl.classList.remove("error");
   statusEl.textContent = "Fetching repositories authorized for GitProfileLens…";
 
@@ -258,6 +267,7 @@ async function loadPrivateRepositories() {
     showError(error.message);
   } finally {
     privateAuditButton.disabled = false;
+    homePrivateAuditButton.disabled = false;
   }
 }
 

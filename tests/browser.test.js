@@ -75,7 +75,9 @@ test("profile flow renders verified README details and switches tabs", { skip: !
   await page.locator("#result-section").waitFor({ state: "visible" });
   assert.equal(await page.locator(".hero").isHidden(), true);
   assert.equal(await page.locator("#result-page").isVisible(), true);
-  assert.equal(await page.getByRole("link", { name: "Sign in with GitHub" }).isVisible(), true);
+  const resultLogin = page.locator("#result-page").getByRole("link", { name: "Sign in with GitHub" });
+  assert.equal(await resultLogin.isVisible(), true);
+  assert.equal(await resultLogin.locator("svg").count(), 1);
 
   assert.match(await page.locator("#status").innerText(), /including 1 profile pins/i);
   assert.match(await page.locator("#profile-insight").innerText(), /Example's portfolio snapshot: 2 public projects/i);
@@ -99,6 +101,9 @@ test("username search transitions through a dedicated loading screen", { skip: !
   await page.goto(baseUrl);
   assert.equal(await page.locator(".hero").isVisible(), true);
   assert.equal(await page.locator("#result-page").isHidden(), true);
+  const homeLogin = page.locator(".hero").getByRole("link", { name: "Sign in with GitHub" });
+  assert.equal(await homeLogin.isVisible(), true);
+  assert.equal(await homeLogin.locator("svg").count(), 1);
 
   await page.locator("#username").fill("example");
   await page.getByRole("button", { name: "Analyze profile" }).click();
@@ -127,7 +132,7 @@ test("mobile layout has no horizontal page overflow", { skip: !chromePath }, asy
 
   assert.ok(dimensions.content <= dimensions.viewport, `page width ${dimensions.content}px exceeds ${dimensions.viewport}px viewport`);
   assert.equal(await page.locator("#generate-button").isHidden(), true);
-  assert.equal(await page.getByRole("link", { name: "Sign in with GitHub" }).isVisible(), true);
+  assert.equal(await page.locator("#result-page").getByRole("link", { name: "Sign in with GitHub" }).isVisible(), true);
   assert.equal(await page.locator("#share-button").isVisible(), true);
 
   await browser.close();
@@ -276,12 +281,10 @@ test("private audit mode isolates authorized repositories from public outputs", 
   }));
   await page.route("**/api/auth/logout", (route) => route.fulfill({ json: { authenticated: false } }));
   await page.goto(baseUrl);
-  await page.locator("#username").fill("example");
-  await page.getByRole("button", { name: "Analyze profile" }).click();
-  await page.locator("#result-page").waitFor({ state: "visible" });
-  await page.locator("#signed-in-auth").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#auth-login").innerText(), "@example");
-  const publicMarkdown = await page.locator("#output").inputValue();
+  await page.locator("#home-signed-in-auth").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#home-auth-login").innerText(), "@example");
+  assert.equal(await page.locator("#home-private-audit-button svg").count(), 1);
+  const publicMarkdown = "";
 
   await page.evaluate(() => {
     window.__privateShareCalls = 0;
@@ -308,8 +311,10 @@ test("private audit mode isolates authorized repositories from public outputs", 
       return originalMarkdown(...args);
     };
   });
-  await page.getByRole("button", { name: "Audit my repositories" }).click();
+  await page.locator("#home-private-audit-button").click();
   await page.locator("#audit-title").filter({ hasText: "Private Repository Audit" }).waitFor();
+  await page.locator("#signed-in-auth").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#auth-login").innerText(), "@example");
 
   assert.equal(await page.locator("#audit-title").innerText(), "Private Repository Audit");
   assert.deepEqual(
