@@ -16,7 +16,7 @@ GitProfileLens evaluates presentation and discoverability, not developer ability
 
 ### [Try the live audit →](https://gitprofilelens.vercel.app/)
 
-![Completed GitProfileLens audit showing an overall portfolio score, category scores, and prioritized recommendations](docs/images/githubprofile-lens-audit.png)
+![Completed GitProfileLens audit showing an overall portfolio score, category scores, and prioritized recommendations](docs/images/gitprofilelens-audit.png)
 
 ## Two deliberately separate modes
 
