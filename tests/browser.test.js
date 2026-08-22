@@ -155,6 +155,7 @@ test("empty and nonexistent profiles show useful states", { skip: !chromePath },
 
 test("sharing uses the dynamic score and opens anonymously from its URL", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
   const senderContext = await browser.newContext({ viewport: { width: 1000, height: 800 } });
   await senderContext.addInitScript(() => {
     window.__sharedResult = null;
@@ -216,11 +217,116 @@ test("sharing uses the dynamic score and opens anonymously from its URL", { skip
   await fallbackPage.locator("#share-button").click();
   assert.match(await fallbackPage.locator("#status.error").innerText(), /could not share automatically/i);
   assert.deepEqual(browserErrors, []);
-  await browser.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test("private audit mode isolates authorized repositories from public outputs", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  await page.route("**/api/auth/session", (route) => route.fulfill({
+    json: {
+      authenticated: true,
+      user: { login: "example", avatar_url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' fill='%2358a6ff'/%3E%3C/svg%3E" },
+    },
+  }));
+  await page.route("**/api/private-repositories", (route) => route.fulfill({
+    headers: { "Cache-Control": "private, no-store, max-age=0" },
+    json: {
+      installation: true,
+      configure_url: "https://github.com/apps/gitprofilelens/installations/new",
+      repositories: [
+        { ...repository, name: "secret-project", full_name: "example/secret-project", html_url: "https://github.com/example/secret-project", private: true, visibility: "private" },
+        { ...secondRepository, name: "authorized-public-project", full_name: "example/authorized-public-project", html_url: "https://github.com/example/authorized-public-project", private: false, visibility: "public" },
+      ],
+      readmes: { "secret-project": readme, "authorized-public-project": readme },
+    },
+  }));
+  await page.route("**/api/auth/logout", (route) => route.fulfill({ json: { authenticated: false } }));
+  await page.goto(baseUrl);
+  await page.locator("#signed-in-auth").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#auth-login").innerText(), "@example");
+
+  await page.evaluate(() => {
+    window.__privateShareCalls = 0;
+    window.__privateCardCalls = 0;
+    window.__privateProfileScoreCalls = 0;
+    window.__privateMarkdownCalls = 0;
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: async () => { window.__privateShareCalls += 1; },
+    });
+    const original = GitProfileShare.buildScoreCardData;
+    GitProfileShare.buildScoreCardData = (...args) => {
+      window.__privateCardCalls += 1;
+      return original(...args);
+    };
+    const originalProfileScore = GitHubAudit.scoreProfile;
+    GitHubAudit.scoreProfile = (...args) => {
+      window.__privateProfileScoreCalls += 1;
+      return originalProfileScore(...args);
+    };
+    const originalMarkdown = createMarkdown;
+    window.createMarkdown = (...args) => {
+      window.__privateMarkdownCalls += 1;
+      return originalMarkdown(...args);
+    };
+  });
+  await page.getByRole("button", { name: "Audit my repositories" }).click();
+  await page.locator("#result-section").waitFor({ state: "visible" });
+
+  assert.equal(await page.locator("#audit-title").innerText(), "Private Repository Audit");
+  assert.deepEqual(
+    new Set(await page.locator(".privacy-badge").allInnerTexts()),
+    new Set(["PRIVATE", "PUBLIC"])
+  );
+  assert.equal(await page.locator(".candidate-label").count(), 2);
+  for (const label of await page.locator(".candidate-label").allInnerTexts()) {
+    assert.match(label, /portfolio candidate|worth polishing|needs presentation work/i);
+  }
+  assert.equal(await page.locator("#share-button").isHidden(), true);
+  assert.equal(await page.locator("#score-card-button").isHidden(), true);
+  assert.equal(await page.locator('[data-tab="overview"]').isHidden(), true);
+  assert.equal(await page.locator('[data-tab="markdown"]').isHidden(), true);
+  assert.equal(await page.locator("#markdown-panel").isHidden(), true);
+  assert.equal(await page.locator("#output").inputValue(), "");
+  assert.equal(new URL(page.url()).searchParams.has("user"), false);
+  assert.doesNotMatch(page.url(), /secret-project/);
+
+  await page.evaluate(() => {
+    document.querySelector("#share-button").click();
+    document.querySelector("#score-card-button").click();
+    document.querySelector("#copy-button").click();
+    document.querySelector("#download-button").click();
+  });
+  assert.deepEqual(await page.evaluate(() => ({
+    share: window.__privateShareCalls,
+    card: window.__privateCardCalls,
+    profileScore: window.__privateProfileScoreCalls,
+    markdown: window.__privateMarkdownCalls,
+  })), { share: 0, card: 0, profileScore: 0, markdown: 0 });
+  assert.equal(await page.locator("#output").inputValue(), "");
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  assert.equal(await page.locator("#signed-out-auth").isVisible(), true);
+  assert.equal(await page.locator("#result-section").isHidden(), true);
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
 });
 
 async function mockGithubRequests(page, repositories = [repository, secondRepository]) {
   const avatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' fill='%2358a6ff'/%3E%3C/svg%3E";
+  await page.route("**/api/auth/session", (route) =>
+    route.fulfill({ json: { authenticated: false } })
+  );
   await page.route("https://api.github.com/users/example", (route) =>
     route.fulfill({ json: { login: "example", name: "Example User", avatar_url: avatar, html_url: "https://github.com/example" } })
   );

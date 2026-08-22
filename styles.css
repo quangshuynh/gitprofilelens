@@ -39,6 +39,17 @@ button { padding: 11px 16px; border: 1px solid transparent; border-radius: 8px; 
 button:hover { filter: brightness(1.08); }
 button:disabled { opacity: .55; cursor: wait; }
 button.secondary { border-color: #30363d; background: #21262d; }
+.button-link { display: inline-flex; align-items: center; justify-content: center; padding: 11px 16px; border: 1px solid transparent; border-radius: 8px; background: #238636; color: #fff; font-weight: 750; text-decoration: none; }
+.button-link:hover { filter: brightness(1.08); }
+.button-link.secondary { border-color: #30363d; background: #21262d; }
+.auth-divider { display: flex; align-items: center; gap: 12px; max-width: 680px; margin: 18px 0 14px; color: #6e7681; font-size: .78rem; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; flex: 1; background: #21262d; }
+.auth-panel { max-width: 680px; padding: 14px 16px; border: 1px solid #21262d; border-radius: 10px; background: rgba(13,17,23,.72); }
+.auth-panel p { margin: 8px 0 0; color: #8b949e; font-size: .82rem; line-height: 1.45; }
+.signed-in-auth { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.signed-in-auth p { margin: 0; color: #c9d1d9; }
+.auth-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.signed-in-auth[hidden], .button-link[hidden], button[hidden] { display: none; }
 .status { min-height: 24px; margin: 16px 0 0; color: #9da7b3; line-height: 1.5; }
 .status.error { color: #ff7b72; }
 
@@ -139,6 +150,8 @@ button.secondary { border-color: #30363d; background: #21262d; }
 .repository-card-content { min-width: 0; flex: 1; }
 .repository-card-heading { display: flex; justify-content: space-between; gap: 14px; font-weight: 750; }
 .repository-flags { color: #d29922; font-size: .75rem; font-weight: 700; }
+.privacy-badge { display: inline-block; margin-right: 7px; padding: 3px 7px; border-radius: 99px; background: rgba(210,168,255,.13); color: #d2a8ff; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
+.candidate-label { margin: 12px 0 0; color: #79c0ff; font-size: .8rem; font-weight: 750; }
 .repository-card p:not(.repo-meta-line) { margin: 7px 0 0; color: #b1bac4; line-height: 1.45; }
 
 .export-heading { align-items: center; }
@@ -162,6 +175,8 @@ textarea:focus { border-color: #58a6ff; }
   .profile-bar { gap: 14px; }
   .profile-actions { width: 100%; }
   .profile-actions button { flex: 1; }
+  .signed-in-auth { align-items: stretch; flex-direction: column; }
+  .auth-actions > * { flex: 1; }
   .tabs { padding: 0 10px; }
   .tab-panel { padding: 22px 16px 28px; }
   .score-layout { grid-template-columns: 1fr; }

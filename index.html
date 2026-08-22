@@ -35,6 +35,21 @@
           <button id="generate-button" type="submit">Analyze profile</button>
         </div>
       </form>
+      <div class="auth-divider" aria-hidden="true"><span>or</span></div>
+      <section class="auth-panel" aria-label="Private repository auditing">
+        <div id="signed-out-auth">
+          <a class="button-link secondary" href="/api/auth/github">Sign in with GitHub</a>
+          <p>Audit repositories you authorize, including private repositories.</p>
+        </div>
+        <div id="signed-in-auth" class="signed-in-auth" hidden>
+          <p>Signed in as <strong id="auth-login"></strong></p>
+          <div class="auth-actions">
+            <button id="private-audit-button" type="button">Audit my repositories</button>
+            <a id="configure-access-link" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>Configure access</a>
+            <button id="logout-button" class="secondary" type="button">Sign out</button>
+          </div>
+        </div>
+      </section>
       <p id="status" class="status" aria-live="polite"></p>
     </header>
 
@@ -84,10 +99,10 @@
 
       <section id="audit-panel" class="tab-panel" role="tabpanel" hidden>
         <div class="section-heading">
-          <div><p class="eyebrow">Lowest scores first</p><h2>Repository audit</h2></div>
+          <div><p id="audit-eyebrow" class="eyebrow">Lowest scores first</p><h2 id="audit-title">Repository audit</h2></div>
           <p id="audit-summary" class="summary-text"></p>
         </div>
-        <p class="rating-guide">90–100 strong · 70–89 minor improvements · below 70 needs attention</p>
+        <p id="rating-guide" class="rating-guide">90–100 strong · 70–89 minor improvements · below 70 needs attention</p>
         <div id="audit-list" class="audit-list"></div>
       </section>
 

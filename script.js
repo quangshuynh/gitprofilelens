@@ -23,6 +23,15 @@ const pinnedOnlyInput = document.querySelector("#pinned-only");
 const selectedOnlyInput = document.querySelector("#selected-only");
 const copyButton = document.querySelector("#copy-button");
 const downloadButton = document.querySelector("#download-button");
+const signedOutAuth = document.querySelector("#signed-out-auth");
+const signedInAuth = document.querySelector("#signed-in-auth");
+const authLogin = document.querySelector("#auth-login");
+const privateAuditButton = document.querySelector("#private-audit-button");
+const configureAccessLink = document.querySelector("#configure-access-link");
+const logoutButton = document.querySelector("#logout-button");
+const auditEyebrow = document.querySelector("#audit-eyebrow");
+const auditTitle = document.querySelector("#audit-title");
+const ratingGuide = document.querySelector("#rating-guide");
 const tabButtons = document.querySelectorAll("[data-tab]");
 const tabPanels = document.querySelectorAll(".tab-panel");
 
@@ -31,6 +40,9 @@ const appState = {
   repositories: [],
   audits: [],
   supplemental: null,
+  mode: "public",
+  authUser: null,
+  privateInstallation: false,
 };
 
 form.addEventListener("submit", handleFormSubmit);
@@ -38,6 +50,8 @@ shareButton.addEventListener("click", shareResult);
 scoreCardButton.addEventListener("click", downloadScoreCard);
 copyButton.addEventListener("click", copyMarkdown);
 downloadButton.addEventListener("click", downloadMarkdown);
+privateAuditButton.addEventListener("click", loadPrivateRepositories);
+logoutButton.addEventListener("click", logout);
 includeDetailsInput.addEventListener("change", refreshMarkdown);
 pinnedOnlyInput.addEventListener("change", refreshMarkdown);
 selectedOnlyInput.addEventListener("change", refreshMarkdown);
@@ -48,6 +62,7 @@ for (const tabButton of tabButtons) {
 
 randomizeDoodles();
 initializeFromUrl();
+initializeAuthSession();
 
 /**
  * varies decorative artwork within CSS-enforced gutter zones
@@ -120,6 +135,7 @@ async function loadProfile(username) {
     appState.repositories = repositories;
     appState.audits = audits;
     appState.supplemental = supplemental;
+    appState.mode = "public";
 
     updateShareUrl(user.login);
     renderResults();
@@ -130,6 +146,117 @@ async function loadProfile(username) {
   } finally {
     setLoading(false);
   }
+}
+
+/**
+ * reads safe sign-in state without exposing GitHub credentials to the browser
+ * @returns {Promise<void>} no return value
+ */
+async function initializeAuthSession() {
+  try {
+    const response = await fetch("/api/auth/session", { headers: { Accept: "application/json" } });
+    const data = await response.json();
+    appState.authUser = response.ok && data.authenticated ? data.user : null;
+    renderAuthState();
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("auth") === "success" && appState.authUser) {
+      statusEl.textContent = `Signed in as @${appState.authUser.login}. Choose repositories to audit.`;
+      url.searchParams.delete("auth");
+      history.replaceState(null, "", url);
+    }
+  } catch {
+    appState.authUser = null;
+    renderAuthState();
+  }
+}
+
+function renderAuthState() {
+  const authenticated = Boolean(appState.authUser);
+  signedOutAuth.hidden = authenticated;
+  signedInAuth.hidden = !authenticated;
+  authLogin.textContent = authenticated ? `@${appState.authUser.login}` : "";
+  if (!authenticated) configureAccessLink.hidden = true;
+}
+
+/**
+ * loads only repositories authorized through the signed-in user's GitHub App installations
+ * @returns {Promise<void>} no return value
+ */
+async function loadPrivateRepositories() {
+  if (!appState.authUser) {
+    showError("Sign in with GitHub before auditing authorized repositories.");
+    return;
+  }
+  privateAuditButton.disabled = true;
+  statusEl.classList.remove("error");
+  statusEl.textContent = "Fetching repositories authorized for GitProfileLens…";
+
+  try {
+    const response = await fetch("/api/private-repositories", { headers: { Accept: "application/json" } });
+    const data = await response.json().catch(() => null);
+    if (response.status === 401) {
+      appState.authUser = null;
+      renderAuthState();
+      throw new Error(data?.error || "Your GitHub session expired. Please sign in again.");
+    }
+    if (!response.ok || !data || !Array.isArray(data.repositories) || typeof data.readmes !== "object") {
+      throw new Error(data?.error || "GitHub could not return authorized repositories.");
+    }
+
+    const supplemental = { pinnedRepositories: [], readmes: data.readmes };
+    const repositories = transformRepositories(data.repositories, supplemental);
+    appState.user = appState.authUser;
+    appState.repositories = repositories;
+    appState.audits = repositories.map(scoreTransformedRepository);
+    appState.supplemental = supplemental;
+    appState.mode = "private";
+    appState.privateInstallation = Boolean(data.installation);
+    configureAccessLink.hidden = !data.configure_url;
+    if (data.configure_url) configureAccessLink.href = data.configure_url;
+
+    clearPublicAuditUrl();
+    renderResults();
+    resultSection.hidden = false;
+    if (!data.installation) {
+      statusEl.textContent = "GitProfileLens is connected, but no GitHub App installation is available.";
+    } else {
+      statusEl.textContent = `Analyzed ${repositories.length} authorized ${repositories.length === 1 ? "repository" : "repositories"}. Private repositories remain separate from your public score.`;
+    }
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    privateAuditButton.disabled = false;
+  }
+}
+
+async function logout() {
+  logoutButton.disabled = true;
+  try {
+    await fetch("/api/auth/logout", { method: "POST", headers: { Accept: "application/json" } });
+  } finally {
+    appState.authUser = null;
+    configureAccessLink.hidden = true;
+    if (appState.mode === "private") {
+      appState.mode = "public";
+      appState.user = null;
+      appState.repositories = [];
+      appState.audits = [];
+      appState.supplemental = null;
+      resultSection.hidden = true;
+    }
+    renderAuthState();
+    logoutButton.disabled = false;
+    statusEl.classList.remove("error");
+    statusEl.textContent = "Signed out of GitProfileLens.";
+  }
+}
+
+function clearPublicAuditUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("user");
+  url.searchParams.delete("view");
+  url.searchParams.delete("auth");
+  history.replaceState(null, "", url);
 }
 
 /**
@@ -270,11 +397,43 @@ function formatRateLimitReset(resetHeader) {
  * @returns {void} no return value
  */
 function renderResults() {
+  if (appState.mode === "private") {
+    renderPrivateResults();
+    return;
+  }
+  setResultMode("public");
   renderProfileHeader();
   renderOverview();
   renderAudits();
   renderRepositories();
   refreshMarkdown();
+}
+
+function renderPrivateResults() {
+  setResultMode("private");
+  profileAvatar.crossOrigin = "anonymous";
+  profileAvatar.src = appState.authUser.avatar_url;
+  profileAvatar.alt = `${appState.authUser.login}'s GitHub avatar`;
+  profileName.textContent = "Private Repository Audit";
+  profileLink.href = `https://github.com/${encodeURIComponent(appState.authUser.login)}`;
+  profileLink.textContent = `@${appState.authUser.login}`;
+  profileInsight.textContent = "Review authorized repositories and identify projects worth preparing for your public portfolio.";
+  renderAudits();
+  activateTab("audit", false);
+}
+
+function setResultMode(mode) {
+  const privateMode = mode === "private";
+  shareButton.hidden = privateMode;
+  scoreCardButton.hidden = privateMode;
+  for (const button of tabButtons) {
+    button.hidden = privateMode && button.dataset.tab !== "audit";
+  }
+  auditEyebrow.textContent = privateMode ? "Authorized repositories only" : "Lowest scores first";
+  auditTitle.textContent = privateMode ? "Private Repository Audit" : "Repository audit";
+  ratingGuide.textContent = privateMode
+    ? "90–100 strong portfolio candidate · 70–89 worth polishing · below 70 needs presentation work"
+    : "90–100 strong · 70–89 minor improvements · below 70 needs attention";
 }
 
 /**
@@ -320,6 +479,7 @@ function getStrongestCategory(categories) {
  * @returns {void} no return value
  */
 function renderOverview() {
+  if (appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
   const recommendations = GitHubAudit.generateRecommendations(appState.audits);
   overallScore.textContent = profileScore.overall;
@@ -513,7 +673,12 @@ function renderAudits() {
   auditList.replaceChildren();
 
   if (sortedAudits.length === 0) {
-    auditList.appendChild(createEmptyState("No public repositories are available to audit."));
+    const message = appState.mode === "private"
+      ? appState.privateInstallation
+        ? "No repositories owned by this account are currently authorized for GitProfileLens. Configure the GitHub App to select repositories."
+        : "Install or configure the GitHub App to choose repositories for this private audit."
+      : "No public repositories are available to audit.";
+    auditList.appendChild(createEmptyState(message));
     return;
   }
 
@@ -570,13 +735,21 @@ function createAuditCard(audit) {
   const facts = document.createElement("div");
   const readmeChecklist = createReadmeChecklist(repository.readme, audit.categoryScores.readme);
   const findings = document.createElement("div");
+  const candidate = document.createElement("p");
   card.className = "audit-card";
   header.className = "audit-card-header";
   link.href = repository.url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   link.textContent = repository.name;
-  title.appendChild(link);
+  if (appState.mode === "private") {
+    const privacy = document.createElement("span");
+    privacy.className = "privacy-badge";
+    privacy.textContent = repository.private ? "Private" : "Public";
+    title.append(privacy, link);
+  } else {
+    title.appendChild(link);
+  }
   metadata.className = "repo-meta-line";
   metadata.textContent = `${repository.language || "Language unknown"} · ★ ${repository.stars} · Forks ${repository.forks} · Updated ${formatShortDate(repository.updatedAt)}`;
   titleArea.append(title, metadata);
@@ -586,12 +759,15 @@ function createAuditCard(audit) {
   description.className = "current-description";
   description.textContent = repository.description || "No description";
   facts.className = "fact-row";
-  facts.append(
+  const factBadges = [
     createFactBadge(`Topics: ${repository.topics.length || "none"}`),
     createFactBadge(`License: ${repository.license || "none"}`),
     createFactBadge(`README: ${formatReadmeStatus(repository.readme)}`),
-    createFactBadge(repository.pinned === null ? "Pin: unknown" : repository.pinned ? "Pinned" : "Not pinned")
-  );
+  ];
+  if (appState.mode === "public") {
+    factBadges.push(createFactBadge(repository.pinned === null ? "Pin: unknown" : repository.pinned ? "Pinned" : "Not pinned"));
+  }
+  facts.append(...factBadges);
   findings.className = "finding-list";
 
   if (audit.findings.length === 0) {
@@ -603,6 +779,15 @@ function createAuditCard(audit) {
   }
 
   card.append(header, description, facts);
+  if (appState.mode === "private") {
+    candidate.className = "candidate-label";
+    candidate.textContent = audit.score >= 90
+      ? "Strong portfolio candidate"
+      : audit.score >= 70
+        ? "Worth polishing before publishing"
+        : "Needs presentation work before publishing";
+    card.appendChild(candidate);
+  }
   if (readmeChecklist) card.appendChild(readmeChecklist);
   card.appendChild(findings);
   return card;
@@ -709,6 +894,7 @@ function getScoreClass(score) {
  * @returns {void} no return value
  */
 function renderRepositories() {
+  if (appState.mode !== "public") return;
   const repositories = [...appState.repositories].sort(compareCreationDatesNewestFirst);
   repositorySummary.textContent = `${repositories.length} public repositories fetched.`;
   repositoryList.replaceChildren();
@@ -766,6 +952,7 @@ function createRepositoryCard(repository) {
  * @returns {void} no return value
  */
 function handleRepositorySelection(event) {
+  if (appState.mode !== "public") return;
   const repository = appState.repositories.find(
     (item) => item.name === event.currentTarget.dataset.repository
   );
@@ -788,7 +975,7 @@ function compareCreationDatesNewestFirst(repositoryA, repositoryB) {
  * @returns {void} no return value
  */
 function refreshMarkdown() {
-  if (!appState.user) return;
+  if (!appState.user || appState.mode !== "public") return;
   const options = {
     includeDetails: includeDetailsInput.checked,
     pinnedOnly: pinnedOnlyInput.checked,
@@ -909,6 +1096,7 @@ function handleTabClick(event) {
  * @returns {void} no return value
  */
 function activateTab(tabName, updateUrl) {
+  if (appState.mode === "private") tabName = "audit";
   const validTab = ["overview", "audit", "repositories", "markdown"].includes(tabName)
     ? tabName
     : "overview";
@@ -923,7 +1111,9 @@ function activateTab(tabName, updateUrl) {
     panel.hidden = panel.id !== `${validTab}-panel`;
   }
 
-  if (updateUrl && appState.user) updateShareUrl(appState.user.login, validTab);
+  if (updateUrl && appState.user && appState.mode === "public") {
+    updateShareUrl(appState.user.login, validTab);
+  }
 }
 
 /**
@@ -933,6 +1123,7 @@ function activateTab(tabName, updateUrl) {
  * @returns {void} no return value
  */
 function updateShareUrl(username, tabName = null) {
+  if (appState.mode !== "public") return;
   const url = new URL(window.location.href);
   url.searchParams.set("user", username);
   const activeTab = tabName || url.searchParams.get("view");
@@ -966,7 +1157,7 @@ function initializeFromUrl() {
  * @returns {Promise<void>} no return value
  */
 async function shareResult() {
-  if (!appState.user) return;
+  if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
   const shareText = GitProfileShare.buildShareText(appState.user.login, profileScore.overall);
 
@@ -993,7 +1184,7 @@ async function shareResult() {
  * @returns {Promise<void>} resolves after the card image has been prepared
  */
 async function downloadScoreCard() {
-  if (!appState.user) return;
+  if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
   const cardData = GitProfileShare.buildScoreCardData(appState.user.login, profileScore);
   scoreCardButton.disabled = true;
@@ -1159,6 +1350,7 @@ function drawRoundedRectangle(context, x, y, width, height, radius) {
  * @returns {Promise<void>} no return value
  */
 async function copyMarkdown() {
+  if (appState.mode !== "public") return;
   try {
     await navigator.clipboard.writeText(output.value);
     showTemporaryButtonText(copyButton, "Copied");
@@ -1172,7 +1364,7 @@ async function copyMarkdown() {
  * @returns {void} no return value
  */
 function downloadMarkdown() {
-  if (!output.value) return;
+  if (!output.value || appState.mode !== "public") return;
   const blob = new Blob([output.value], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
