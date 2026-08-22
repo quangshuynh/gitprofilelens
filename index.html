@@ -7,8 +7,10 @@
   <meta name="application-name" content="GitProfileLens" />
   <meta property="og:title" content="GitProfileLens - What's your GitHub portfolio score?" />
   <meta property="og:description" content="Enter a GitHub username for a transparent 0–100 portfolio presentation score and actionable recommendations." />
+  <meta property="og:image" content="https://gitprofilelens.vercel.app/docs/images/logo.png" />
   <meta property="og:type" content="website" />
   <title>GitProfileLens - GitHub Profile and Portfolio Analysis</title>
+  <link rel="icon" type="image/png" href="docs/images/logo.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -22,7 +24,7 @@
   </div>
   <main class="container">
     <header class="hero">
-      <p class="brand-name">GitProfileLens</p>
+      <img class="hero-logo" src="docs/images/logo.png" alt="GitProfileLens" />
       <h1>What's your GitHub portfolio score?</h1>
       <p class="subtitle">Enter a GitHub username to get a transparent 0–100 score and actionable recommendations for improving how the public profile and repositories present themselves.</p>
       <p class="product-pillars" aria-label="GitProfileLens features">
@@ -64,7 +66,10 @@
 
     <section id="result-page" class="result-page" hidden>
       <header class="result-page-header">
-        <a class="result-brand" href="/" aria-label="Start a new GitProfileLens audit">GitProfileLens</a>
+        <a class="result-brand" href="/" aria-label="Start a new GitProfileLens audit">
+          <span class="result-logo-crop" aria-hidden="true"><img src="docs/images/logo.png" alt="" /></span>
+          <span>GitProfileLens</span>
+        </a>
         <section class="result-auth" aria-label="Private repository auditing">
           <div id="signed-out-auth">
             <a class="button-link github-button compact" href="/api/auth/github">

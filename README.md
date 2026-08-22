@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="GitProfileLens logo" width="280" />
+</p>
+
 # GitProfileLens
 
 [![CI](https://github.com/quangshuynh/gitprofilelens/actions/workflows/ci.yml/badge.svg)](https://github.com/quangshuynh/gitprofilelens/actions/workflows/ci.yml)

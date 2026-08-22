@@ -75,6 +75,7 @@ test("profile flow renders verified README details and switches tabs", { skip: !
   await page.locator("#result-section").waitFor({ state: "visible" });
   assert.equal(await page.locator(".hero").isHidden(), true);
   assert.equal(await page.locator("#result-page").isVisible(), true);
+  assert.equal(await page.locator(".result-brand img").evaluate((image) => image.naturalWidth > 0), true);
   const resultLogin = page.locator("#result-page").getByRole("link", { name: "Sign in with GitHub" });
   assert.equal(await resultLogin.isVisible(), true);
   assert.equal(await resultLogin.locator("svg").count(), 1);
@@ -100,6 +101,8 @@ test("username search transitions through a dedicated loading screen", { skip: !
   await mockGithubRequests(page, [repository, secondRepository], { profileDelay: 250 });
   await page.goto(baseUrl);
   assert.equal(await page.locator(".hero").isVisible(), true);
+  await page.locator(".hero-logo").waitFor({ state: "visible" });
+  assert.equal(await page.locator(".hero-logo").evaluate((image) => image.naturalWidth > 0), true);
   assert.equal(await page.locator("#result-page").isHidden(), true);
   const homeLogin = page.locator(".hero").getByRole("link", { name: "Sign in with GitHub" });
   assert.equal(await homeLogin.isVisible(), true);
