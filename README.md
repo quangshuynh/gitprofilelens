@@ -6,74 +6,79 @@
 
 ## What's your GitHub portfolio score?
 
-Enter a GitHub username to get a transparent 0–100 portfolio presentation score and actionable recommendations for improving how the public profile and repositories present themselves. GitProfileLens evaluates presentation and discoverability, not developer ability or code quality.
+GitProfileLens turns a public GitHub profile into a transparent 0–100 presentation score with actionable recommendations. Public audits require no login. An optional GitHub App connection can also audit authorized private repositories and identify projects worth preparing for a public portfolio.
+
+GitProfileLens evaluates presentation and discoverability, not developer ability, employability, code quality, or engineering skill.
 
 ### [Try the live audit →](https://gitprofilelens.vercel.app/)
 
 ![Completed GitProfileLens audit showing an overall portfolio score, category scores, and prioritized recommendations](docs/images/gitprofilelens-audit.png)
 
-## Product areas
+## Two deliberately separate modes
 
-- **Profile Audit** - Analyze how a developer's public repositories are presented and discovered.
-- **Repository Explorer** - Fetch and inspect useful public repository information in one place.
-- **Markdown Export** - Generate clean, configurable Markdown from the fetched repository data.
+### Public Portfolio Audit
 
-## Key features
+Enter any GitHub username without signing in. The public audit:
 
-- Load every public repository owned by a GitHub user with pagination.
-- Open shareable audits such as `/?user=quangshuynh`.
-- Share a dynamic score message through the native share sheet or clipboard fallback.
-- Download a social-ready PNG score card generated locally in the browser.
-- Calculate an overall portfolio score and six explainable category scores.
-- Expand any category score to see its calculation and the most common signals affecting it.
-- Audit repository names, descriptions, READMEs, topics, licenses, demos, and maintenance signals.
-- Separate factual checks from subjective presentation recommendations.
-- Rank the five highest-impact portfolio improvements.
-- Inspect all fetched repository data without hiding it behind the audit.
-- Detect pinned repositories and root README metadata through an optional serverless GraphQL integration.
-- Preview, copy, and download Markdown.
-- Export all, pinned-only, or manually selected repositories with full or compact details.
-- Handle nonexistent users, empty accounts, rate limits, and unavailable supplemental data.
+- Fetches every public repository owned by the account.
+- Calculates the public GitHub Profile Score and six explainable categories.
+- Audits names, descriptions, READMEs, topics, licenses, demos, and maintenance.
+- Ranks actionable portfolio recommendations.
+- Supports shareable `?user=USERNAME` links and downloadable score cards.
+- Explores public repository metadata and exports it to Markdown.
+- Provides the public JSON endpoint `GET /api/report?user=USERNAME`.
 
-## How the audit works
+### Private Repository Audit
 
-The scoring implementation lives in `audit.js` and is shared by the browser and automated tests. Each repository receives category scores for:
+Sign in with GitHub and install the GitHub App on all or selected repositories. The private audit:
+
+- Retrieves only repositories available to both the signed-in user and the app installation.
+- Focuses on repositories owned by the signed-in account.
+- Reuses the deterministic repository presentation checks.
+- Labels each repository as Private or Public.
+- Classifies projects as strong portfolio candidates, worth polishing, or needing presentation work.
+
+Private repositories never affect the public GitHub Profile Score. Private identifiers are not included in public URLs, score cards, Markdown exports, public metadata endpoints, or `/api/report`.
+
+## How scoring works
+
+The deterministic scoring engine lives in `audit.js` and is shared by the browser, serverless routes, and tests. Each repository receives scores for:
 
 - Repository presentation: name clarity and consistency.
 - Descriptions: specificity, useful length, placeholder text, and basic polish.
-- README quality: presence, useful length, core sections (overview, setup, and usage), examples, code samples, visuals, and contribution guidance.
-- Discoverability: topics, license, and a demo link where it is likely useful.
+- README quality: presence, useful length, overview, setup, usage, examples, code samples, visuals, and contribution guidance.
+- Discoverability: topics, license, and a demo link where useful.
 - Maintenance: push recency while treating archived projects as intentionally complete.
 
-The profile score aggregates those results and adds portfolio focus. Every finding contains a severity, reason, suggested action, and a flag indicating whether it is a factual check or subjective recommendation.
+The public profile score aggregates those repository results and adds portfolio focus. Every finding includes a severity, reason, suggested action, and a factual or advisory classification. Unknown README data receives a neutral score and is marked unverified.
 
-Unknown README data receives a neutral score and is explicitly marked unverified. The app does not invent README results or AI-generated descriptions.
-When structural README data is available, each repository audit card shows a checklist of detected and missing documentation elements alongside its README subscore.
+## Privacy and authentication
+
+GitProfileLens uses the GitHub App web authorization flow and requests read-only repository access. Users choose which repositories the app may access through GitHub's installation interface.
+
+- GitHub access and refresh tokens are encrypted with AES-256-GCM inside an `HttpOnly`, same-site session cookie.
+- Production cookies use `Secure` and expire after eight hours.
+- OAuth requests use unpredictable, short-lived state values that are verified before callback processing.
+- Authenticated endpoints send private, no-store cache headers and are not eligible for shared CDN caching.
+- Browser JavaScript receives only safe sign-in identity data, never raw tokens or session secrets.
+- Private repository responses are processed for the current request and are not permanently stored by GitProfileLens.
+- Logout clears the GitProfileLens session cookie. It does not sign the user out of GitHub.
+
+The server necessarily receives authorized GitHub API responses while producing an audit. Avoid granting the GitHub App access to repositories you do not want GitProfileLens to process.
 
 ## JSON report API
 
-Other tools can consume the same normalized public repository data used by the browser:
+The JSON API remains public-only:
 
 ```text
 GET /api/report?user=quangshuynh
 ```
 
-The endpoint returns the username, public repository count, pinned repository names, and serialized public metadata for each repository. It requires the server-side `GITHUB_TOKEN`, performs no HTML scraping, and never includes credentials or private repositories in responses.
-
-## Markdown export
-
-Markdown remains a first-class feature. The export view supports:
-
-- Full repository metadata or a compact name/description/link format.
-- Only pinned repositories.
-- Only repositories selected in the Repositories view.
-- Clipboard copy and `.md` download.
-
-Audit findings are not inserted into the Markdown report.
+It returns normalized public repository metadata and never uses the signed-in browser session to add private data. The endpoint requires the server-side `GITHUB_TOKEN`.
 
 ## Local setup
 
-No client build step or framework is required.
+The anonymous public experience has no client build step:
 
 ```bash
 git clone https://github.com/quangshuynh/gitprofilelens.git
@@ -81,45 +86,103 @@ cd gitprofilelens
 python -m http.server 8000
 ```
 
-Open `http://localhost:8000`. Core repository fetching, scoring, browsing, and Markdown export work without login. README and pinned-repository checks appear as unverified unless the serverless integration is running.
+Open `http://localhost:8000`. README and pinned-repository checks are marked unverified when the Vercel functions are unavailable.
 
 ### Full local setup
 
-Create `.env.local`:
+Install the Vercel CLI, create `.env.local`, and run `vercel dev`:
 
 ```text
-GITHUB_TOKEN=your_fine_grained_github_token
+GITHUB_TOKEN=your_public_metadata_token
+GITHUB_APP_CLIENT_ID=your_github_app_client_id
+GITHUB_APP_CLIENT_SECRET=your_github_app_client_secret
+GITHUB_APP_CALLBACK_URL=http://localhost:3000/api/auth/callback
+GITHUB_APP_INSTALL_URL=https://github.com/apps/YOUR_APP_SLUG/installations/new
+SESSION_SECRET=at_least_32_random_characters
 ```
-
-Then use the Vercel CLI:
 
 ```bash
 vercel dev
 ```
 
-Never commit `.env.local` or a GitHub token. Local environment files are ignored by Git.
+Add `http://localhost:3000/api/auth/callback` as an additional callback URL in the GitHub App while testing locally. The value of `GITHUB_APP_CALLBACK_URL` must exactly match the callback used by that environment.
+
+Never commit `.env.local`, client secrets, access tokens, refresh tokens, or session secrets. Local environment files and `.vercel` are ignored by Git.
+
+## GitHub App configuration
+
+Create a GitHub App in GitHub Settings under Developer settings, then use these values:
+
+| Setting | Value |
+| --- | --- |
+| GitHub App name | `GitProfileLens`, or another available name |
+| Homepage URL | `https://gitprofilelens.vercel.app/` |
+| Callback URL | `https://gitprofilelens.vercel.app/api/auth/callback` |
+| Callback wildcard matching | Disabled |
+| Request user authorization during installation | Disabled |
+| Setup URL | `https://gitprofilelens.vercel.app/` |
+| Redirect on update | Enabled |
+| Webhook | Disabled |
+| Where can this GitHub App be installed? | Any account for a public app, or only your account for personal testing |
+
+Repository permissions:
+
+- **Metadata:** Read-only. GitHub may apply this automatically.
+- **Contents:** Read-only. This is required to retrieve root README content.
+- Every other repository and organization permission: **No access**.
+- Subscribe to no webhook events.
+
+Under the GitHub App's Optional Features, keep **User-to-server token expiration** enabled. GitHub's expiring access tokens last eight hours and can be refreshed by the server.
+
+After creating the app:
+
+1. Generate a client secret.
+2. Copy the Client ID, not the numeric App ID, into `GITHUB_APP_CLIENT_ID`.
+3. Set `GITHUB_APP_INSTALL_URL` to `https://github.com/apps/YOUR_APP_SLUG/installations/new`.
+4. Install the app and select either all repositories or only selected repositories.
+5. Do not generate or upload a private key. This feature uses user access tokens and does not authenticate as the app installation itself.
+
+## Vercel environment variables
+
+Configure these in the Vercel project settings for Production:
+
+| Variable | Purpose |
+| --- | --- |
+| `GITHUB_TOKEN` | Existing server-only token for public pin and README enrichment |
+| `GITHUB_APP_CLIENT_ID` | GitHub App Client ID |
+| `GITHUB_APP_CLIENT_SECRET` | GitHub App client secret |
+| `GITHUB_APP_CALLBACK_URL` | `https://gitprofilelens.vercel.app/api/auth/callback` |
+| `GITHUB_APP_INSTALL_URL` | `https://github.com/apps/YOUR_APP_SLUG/installations/new` |
+| `SESSION_SECRET` | Random secret of at least 32 characters used to derive the session-encryption key |
+
+Redeploy after changing environment variables. Preview deployments need their own exact callback URL registered with GitHub, so use the stable production domain for routine authentication testing.
 
 ## Architecture
 
 ```text
 gitprofilelens/
 |-- api/
-|   |-- github-metadata.js      # shared authenticated GraphQL enrichment
-|   |-- pinned-repositories.js  # browser metadata endpoint
-|   `-- report.js               # machine-readable JSON report endpoint
-|-- tests/
-|   |-- audit.test.js           # scoring, recommendation, URL, and transform tests
-|   |-- browser.test.js         # anonymous browser flows and responsive checks
-|   `-- share.test.js           # sharing and score-card data tests
-|-- audit.js                     # deterministic scoring and data transformation
-|-- index.html                   # accessible application structure
-|-- share.js                     # pure sharing and score-card helpers
-|-- script.js                    # fetching, state, rendering, URL, and export behavior
-|-- styles.css                   # responsive visual system
-`-- package.json                 # test and syntax-check scripts
+|   |-- auth/
+|   |   |-- authenticated-session.js # decrypts and refreshes server-side session material
+|   |   |-- callback.js              # verifies state and completes GitHub authorization
+|   |   |-- github.js                # starts GitHub authorization
+|   |   |-- logout.js                # clears authentication cookies
+|   |   |-- session-crypto.js        # authenticated encryption and cookie helpers
+|   |   `-- session.js               # safe browser authentication state
+|   |-- github-metadata.js           # public GraphQL enrichment and README analysis
+|   |-- pinned-repositories.js       # public supplemental metadata endpoint
+|   |-- private-repositories.js      # authenticated authorized-repository endpoint
+|   `-- report.js                    # public-only JSON report endpoint
+|-- tests/                            # unit, API, security, and browser tests
+|-- audit.js                          # deterministic scoring and normalization
+|-- index.html                        # accessible application structure
+|-- share.js                          # pure sharing and score-card helpers
+|-- script.js                         # browser state, fetching, rendering, and isolation
+|-- styles.css                        # responsive visual system
+`-- package.json                      # test and syntax-check scripts
 ```
 
-The browser fetches public users and paginated repositories from GitHub REST. The optional Vercel function makes one authenticated GraphQL request for up to 100 root README checks and the profile's pinned repositories. It caches successful responses for five minutes.
+The public supplemental endpoints may cache successful public responses briefly. Authentication and private repository endpoints use `private, no-store` responses. The application has no database, saved audit history, repository cloning, source-code analysis, webhooks, or background jobs.
 
 ## Tests
 
@@ -129,37 +192,38 @@ npm run check
 npm run test:browser
 ```
 
-Tests cover scoring behavior and invariants, recommendations, normalization, API failures, Markdown filtering, anonymous share-link loading, dynamic share content, and responsive browser flows. Network boundaries are mocked in the automated suite.
+Tests cover deterministic scoring, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, and browser-level isolation from public scoring, sharing, score cards, URLs, and Markdown export.
 
-## Deployment
+## Deployment options
 
-### Vercel (all features)
+### Vercel
 
-Deploy the repository and configure `GITHUB_TOKEN` in the Vercel project environment. The token stays in the serverless function and is never sent to the browser.
+Vercel is required for the full public metadata and private GitHub App features. Configure all documented environment variables before deployment.
 
-### GitHub Pages (core features)
+### GitHub Pages
 
-GitHub Pages can host the static client. Repository fetching, auditing, sharing, and Markdown export work, but Pages cannot run the serverless function; README and pinned data will be labeled unverified.
+GitHub Pages can host only the static public client. Public repository fetching, basic auditing, sharing, and Markdown export work, but serverless README enrichment, the JSON API, and private repository authentication do not.
 
 ## Limitations
 
-- Unauthenticated GitHub REST requests have a low hourly rate limit. The app reports the reset time when GitHub supplies it.
-- Root README and pin checks require the optional authenticated function.
-- The GraphQL README query covers the first 100 public repositories and checks common root filenames: `README.md`, `README`, and `readme.md`.
-- README size is only a useful warning signal; it cannot determine writing quality.
-- Recommendations are deterministic presentation guidance, not an assessment of code quality or developer ability.
-- A share URL re-fetches current public data; no audit snapshot or database is stored.
+- Unauthenticated public REST requests have a lower GitHub rate limit.
+- The public GraphQL README query covers the first 100 public repositories and common root README filenames.
+- Private auditing retrieves the preferred root README but does not clone repositories or analyze source code.
+- The private view currently focuses on repositories owned by the signed-in user, not organization administration.
+- Private Markdown export, private report APIs, saved audits, and combined public/private scores are intentionally excluded.
+- README structure and size are presentation signals and cannot determine writing or implementation quality.
+- A public share URL re-fetches current public data; no audit snapshot is stored.
 
 ## Contributing
 
-Think a scoring rule should work differently? [Open an issue](https://github.com/quangshuynh/gitprofilelens/issues) with a concrete example and rationale. Constructive feedback about transparent portfolio scoring is welcome.
+Think a scoring rule should work differently? [Start a discussion](https://github.com/quangshuynh/gitprofilelens/discussions) or [open an issue](https://github.com/quangshuynh/gitprofilelens/issues) with a concrete example and rationale.
 
 1. Create a focused branch.
 2. Keep scoring changes deterministic and document their rationale.
 3. Add or update behavior-focused tests.
-4. Run `npm test` and `npm run check`.
-5. Open a pull request describing user-facing changes and scoring tradeoffs.
+4. Run `npm test`, `npm run check`, and `npm run test:browser`.
+5. Open a pull request describing user-facing changes and tradeoffs.
 
 ## License
 
-Feel free to use, modify, and build on this project.
+Feel free to use, modify, and build on this project under the [MIT License](LICENSE).

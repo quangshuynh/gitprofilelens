@@ -314,7 +314,7 @@ test("private audit mode isolates authorized repositories from public outputs", 
   assert.equal(await page.locator("#output").inputValue(), "");
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  assert.equal(await page.locator("#signed-out-auth").isVisible(), true);
+  await page.locator("#signed-out-auth").waitFor({ state: "visible" });
   assert.equal(await page.locator("#result-section").isHidden(), true);
   assert.deepEqual(browserErrors, []);
   } finally {

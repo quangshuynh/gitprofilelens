@@ -101,6 +101,66 @@ test("callback translates GitHub token exchange failures without leaking details
   }
 });
 
+test("successful callback stores credentials only in an encrypted HttpOnly session", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (url === "https://github.com/login/oauth/access_token") {
+      return {
+        ok: true,
+        json: async () => ({
+          access_token: "github-user-access-token",
+          expires_in: 28800,
+          refresh_token: "github-user-refresh-token",
+          refresh_token_expires_in: 15897600,
+        }),
+      };
+    }
+    if (url === "https://api.github.com/user") {
+      return {
+        ok: true,
+        json: async () => ({ login: "example", avatar_url: "https://avatars.example/example.png" }),
+      };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  try {
+    await withEnvironment({
+      GITHUB_APP_CLIENT_ID: "client-id",
+      GITHUB_APP_CLIENT_SECRET: "client-secret",
+      GITHUB_APP_CALLBACK_URL: "https://example.com/api/auth/callback",
+      SESSION_SECRET: "a-test-session-secret-that-is-longer-than-32-characters",
+      VERCEL_ENV: "production",
+    }, async () => {
+      const { response, result } = createResponse();
+      await callbackHandler({
+        method: "GET",
+        query: { code: "valid-code", state: "matching-state" },
+        headers: { cookie: "gpl_oauth_state=matching-state" },
+      }, response);
+
+      assert.equal(result.statusCode, 302);
+      assert.equal(result.headers.Location, "/?auth=success");
+      const cookies = result.headers["Set-Cookie"];
+      const sessionCookie = cookies.find((cookie) => cookie.startsWith("gpl_session="));
+      assert.match(sessionCookie, /HttpOnly/);
+      assert.match(sessionCookie, /Secure/);
+      assert.match(sessionCookie, /SameSite=Lax/);
+      assert.doesNotMatch(sessionCookie, /github-user-access-token|github-user-refresh-token/);
+
+      const sessionValue = cookieValue(cookies, "gpl_session");
+      const sessionResponse = createResponse();
+      sessionHandler({ method: "GET", headers: { cookie: `gpl_session=${sessionValue}` } }, sessionResponse.response);
+      assert.deepEqual(sessionResponse.result.body, {
+        authenticated: true,
+        user: { login: "example", avatar_url: "https://avatars.example/example.png" },
+      });
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("session endpoint returns safe identity and never exposes credentials", async () => {
   await withEnvironment({ SESSION_SECRET: "a-test-session-secret-that-is-longer-than-32-characters" }, () => {
     const session = seal({

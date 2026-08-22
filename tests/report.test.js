@@ -54,14 +54,14 @@ function createMetadata(repositoryNames = ["portfolio-lens", "minimal-project"])
   };
 }
 
-async function runHandler(query, fetchImplementation) {
+async function runHandler(query, fetchImplementation, requestOverrides = {}) {
   const originalFetch = global.fetch;
   const originalToken = process.env.GITHUB_TOKEN;
   process.env.GITHUB_TOKEN = "server-secret-token";
   global.fetch = fetchImplementation;
   const { response, result } = createResponse();
   try {
-    await handler({ method: "GET", query }, response);
+    await handler({ method: "GET", query, ...requestOverrides }, response);
     return result;
   } finally {
     global.fetch = originalFetch;
@@ -141,6 +141,29 @@ test("report serializes public metadata, pins, topics, and nullable fields", asy
   assert.equal(result.body.repositories[1].archived, true);
   assert.equal(result.body.repositories[1].forked, true);
   assert.doesNotMatch(JSON.stringify(result.body), /server-secret-token|must-not-leak|authorization|GITHUB_TOKEN/i);
+});
+
+test("report remains public-only when the request includes an authenticated session cookie", async () => {
+  const repositories = [
+    createRepository(),
+    createRepository({
+      name: "secret-project",
+      full_name: "example/secret-project",
+      html_url: "https://github.com/example/secret-project",
+      private: true,
+      description: "Private repository metadata",
+    }),
+  ];
+  const result = await runHandler(
+    { user: "example" },
+    successfulFetch(repositories),
+    { headers: { cookie: "gpl_session=encrypted-session-placeholder" } }
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.public_repositories, 1);
+  assert.equal(result.body.repositories.length, 1);
+  assert.doesNotMatch(JSON.stringify(result.body), /secret-project|Private repository metadata/);
 });
 
 test("report returns 404 for a nonexistent GitHub user", async () => {
