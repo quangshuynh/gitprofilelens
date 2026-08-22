@@ -41,6 +41,7 @@ const privateAuditButton = document.querySelector("#private-audit-button");
 const homePrivateAuditButton = document.querySelector("#home-private-audit-button");
 const configureAccessLink = document.querySelector("#configure-access-link");
 const logoutButton = document.querySelector("#logout-button");
+const homeLogoutButton = document.querySelector("#home-logout-button");
 const auditEyebrow = document.querySelector("#audit-eyebrow");
 const auditTitle = document.querySelector("#audit-title");
 const ratingGuide = document.querySelector("#rating-guide");
@@ -66,6 +67,7 @@ downloadButton.addEventListener("click", downloadMarkdown);
 privateAuditButton.addEventListener("click", loadPrivateRepositories);
 homePrivateAuditButton.addEventListener("click", loadPrivateRepositories);
 logoutButton.addEventListener("click", logout);
+homeLogoutButton.addEventListener("click", logout);
 includeDetailsInput.addEventListener("change", refreshMarkdown);
 pinnedOnlyInput.addEventListener("change", refreshMarkdown);
 selectedOnlyInput.addEventListener("change", refreshMarkdown);
@@ -294,6 +296,7 @@ async function loadPrivateRepositories() {
 
 async function logout() {
   logoutButton.disabled = true;
+  homeLogoutButton.disabled = true;
   try {
     await fetch("/api/auth/logout", { method: "POST", headers: { Accept: "application/json" } });
   } finally {
@@ -310,6 +313,7 @@ async function logout() {
     }
     renderAuthState();
     logoutButton.disabled = false;
+    homeLogoutButton.disabled = false;
     statusEl.classList.remove("error");
     statusEl.textContent = "Signed out of GitProfileLens.";
   }

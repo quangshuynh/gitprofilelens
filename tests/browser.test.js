@@ -255,6 +255,33 @@ test("sharing uses the dynamic score and opens anonymously from its URL", { skip
   }
 });
 
+test("signed-in users can sign out from the homepage", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
+    let logoutRequests = 0;
+    await page.route("**/api/auth/session", (route) => route.fulfill({
+      json: {
+        authenticated: true,
+        user: { login: "example", avatar_url: "https://avatars.example/example.png" },
+      },
+    }));
+    await page.route("**/api/auth/logout", (route) => {
+      logoutRequests += 1;
+      route.fulfill({ json: { authenticated: false } });
+    });
+    await page.goto(baseUrl);
+    await page.locator("#home-signed-in-auth").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#home-logout-button").isVisible(), true);
+    await page.locator("#home-logout-button").click();
+    await page.locator("#home-signed-out-auth").waitFor({ state: "visible" });
+    assert.equal(logoutRequests, 1);
+    assert.match(await page.locator("#status").innerText(), /signed out/i);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("private audit mode isolates authorized repositories from public outputs", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
