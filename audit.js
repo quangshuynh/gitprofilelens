@@ -74,15 +74,23 @@
   /**
    * scores the clarity and completeness of a repository description
    * @param {string|null} description github repository description
+   * @param {boolean} archived whether the repository has been retired
    * @returns {{score: number, findings: Array<Object>}} description score and findings
    */
-  function scoreDescription(description) {
+  function scoreDescription(description, archived = false) {
     const value = (description || "").trim();
     const findings = [];
     let score = 100;
 
     if (!value) {
-      findings.push(createFinding("Descriptions", "high", "Description is missing.", "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.", true));
+      // An archived repository is still listed on the profile, so the missing
+      // description still costs presentation. What changes is priority: this is
+      // work its owner deliberately retired, and it should not outrank the same
+      // gap on active projects. The separate action text also keeps the two from
+      // merging into one recommendation that would report a single severity.
+      findings.push(archived
+        ? createFinding("Descriptions", "low", "Description is missing.", "Add a one-line description so visitors can tell what this archived project was.", true)
+        : createFinding("Descriptions", "high", "Description is missing.", "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.", true));
       return { score: 0, findings };
     }
 
@@ -157,9 +165,10 @@
   /**
    * scores repository readme quality using available metadata
    * @param {{present: boolean|null, size: number|null}} readme readme metadata
+   * @param {boolean} archived whether the repository has been retired
    * @returns {{score: number, findings: Array<Object>}} readme score and findings
    */
-  function scoreReadme(readme) {
+  function scoreReadme(readme, archived = false) {
     const findings = [];
 
     if (!readme || readme.present === null) {
@@ -168,7 +177,10 @@
     }
 
     if (!readme.present) {
-      findings.push(createFinding("README quality", "high", "Repository has no root README.", "Add a README explaining the problem, setup, usage, and important implementation decisions.", true));
+      // Lower priority on retired work, for the reasons given in scoreDescription.
+      findings.push(archived
+        ? createFinding("README quality", "low", "Repository has no root README.", "Add a short README so visitors can tell what this archived project did.", true)
+        : createFinding("README quality", "high", "Repository has no root README.", "Add a README explaining the problem, setup, usage, and important implementation decisions.", true));
       return { score: 10, findings };
     }
 
@@ -367,8 +379,8 @@
    */
   function scoreRepository(repository, now = new Date()) {
     const name = scoreName(repository.name);
-    const description = scoreDescription(repository.description);
-    const readme = scoreReadme(repository.readme);
+    const description = scoreDescription(repository.description, repository.archived);
+    const readme = scoreReadme(repository.readme, repository.archived);
     const discoverability = scoreDiscoverability(repository);
     const maintenance = scoreMaintenance(repository, now);
     const findings = [

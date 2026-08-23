@@ -167,13 +167,15 @@ test("advice affecting a different set of repositories is reported at an unchang
 });
 
 test("advice that changes severity is reported without changing its identity", () => {
+  const before = SNAPSHOT.profiles["archive-heavy"].recommendations[0].severity;
+  const after = before === "low" ? "high" : "low";
   const current = perturb((profiles) => {
-    profiles["archive-heavy"].recommendations[0].severity = "low";
+    profiles["archive-heavy"].recommendations[0].severity = after;
   });
   const diff = onlyDiff("archive-heavy", current);
 
   assert.deepEqual(diff.recommendations.map((change) => change.change), ["changed"]);
-  assert.match(renderDiff(SNAPSHOT, current).join("\n"), /\(severity high -> low\)/);
+  assert.match(renderDiff(SNAPSHOT, current).join("\n"), new RegExp(`\\(severity ${before} -> ${after}\\)`));
 });
 
 test("advice whose explanation changes is reported even when nothing else moves", () => {

@@ -110,7 +110,7 @@ Starts at 100 and subtracts, except that a missing description short-circuits to
 
 | Condition | Result | Severity |
 |---|---|---|
-| Missing or whitespace-only | **score 0**, returns immediately | high |
+| Missing or whitespace-only | **score 0**, returns immediately | high, or low when archived |
 | Exactly `test`, `todo`, `tbd`, `wip`, `sample`, `demo`, … | −55 | high |
 | Otherwise matches a generic pattern (`a python app`, `web project`, …) | −35 | high |
 | Fewer than 30 characters | −25 | medium |
@@ -137,7 +137,7 @@ The only category whose branches return fixed scores rather than accumulating pe
 | Condition | Score | Severity |
 |---|---|---|
 | `present === null` — README status unknown | 60 | info |
-| `present === false` — no root README | 10 | high |
+| `present === false` — no root README | 10 | high, or low when archived |
 | Present, smaller than 500 bytes | 55 | medium |
 | Present, ≥ 500 bytes, no section analysis available | 100 | — |
 | Present, ≥ 500 bytes, analyzed | 35 + structure below | varies |
@@ -388,9 +388,18 @@ first". Exposed by `fork-dominated`.
 Portfolio-level advice competes with per-repository advice on a count-dominated scale.
 `archive-heavy` has a clear pin candidate whose advice lands at rank 9 and is never shown.
 
-### F8 — Archived repositories still get high-severity content advice
-Description and README scoring never consult `archived`, so a repository archived in 2018 is
-told at `high` severity to add a README. Exposed by `archive-heavy`.
+### F8 — Archived repositories still get high-severity content advice — FIXED
+Description and README scoring never consulted `archived`, so a repository archived in 2018 was
+told at `high` severity to add a README, ahead of the same gap on active projects.
+
+Resolved: `scoreDescription` and `scoreReadme` take the archived flag. A missing description or
+README on retired work is reported at `low` severity with its own action text. The **scores are
+unchanged** — an archived repository is still listed on the profile, so the gap still costs
+presentation; only the priority claim changed.
+
+The separate action text is load-bearing. Recommendations group by `category|action` and keep
+the first finding's severity, so sharing an action between retired and active advice would
+make one group report a single severity for both. Exposed by `archive-heavy`.
 
 ### F9 — Private repositories are treated as unpinned — FIXED
 The authenticated audit forces `pinnedRepositories: []`, so private repositories read as
@@ -483,7 +492,7 @@ never a claim about a kind of developer.
 | `fixtures/index.js` | `PERSONAS` (9), `EDGE_CASES` (4), `CORPUS`, `getProfile(id)` |
 | `harness.js` | `auditProfile` runs the real pipeline at a frozen `EVALUATION_DATE` of 2026-08-21 |
 | `expectations.js` | Band and advice assertions that print the full ranked advice list on failure |
-| `harness.test.js` (9), `personas.test.js` (31), `edge-cases.test.js` (9), `report.test.js` (15) | 64 tests |
+| `harness.test.js` (9), `personas.test.js` (32), `edge-cases.test.js` (9), `report.test.js` (15) | 65 tests |
 
 Fixtures are authored at the **raw REST payload** boundary, so `transformRepository` stays
 inside the tested surface.
@@ -495,7 +504,7 @@ inside the tested surface.
 | `oss-maintainer` | 9 | 95 | Six pins suppress pin advice; over-long description; old but active repository |
 | `polished-professional` | 6 | 94 | Curated baseline; pin candidates ranked by score |
 | `fork-dominated` | 9 | 86 | Forks inherit upstream presentation; fork curation bonus (F2, F6) |
-| `archive-heavy` | 10 | 85 | Archived maintenance floor; highest focus in the corpus (F7, F8, F11) |
+| `archive-heavy` | 10 | 85 | Archived maintenance floor; highest focus in the corpus; retired work scored but deprioritized (F7) |
 | `prolific-account` | 112 | 76 | Ranking past 100 repositories; README metadata limit (F1, F11) |
 | `student-coursework` | 8 | 73 | Clutter names; a weak pinned repository |
 | `strong-work-weak-presentation` | 5 | 62 | Popularity recorded but never scored |

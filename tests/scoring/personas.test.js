@@ -327,18 +327,42 @@ test("archived repositories are never offered as pin candidates", () => {
   assert.ok(checked >= 3, `only ${checked} profiles produced pin suggestions to check`);
 });
 
-test("archived repositories still receive advice about work their owner retired", () => {
-  // Records current behavior. Description and README scoring do not consider
-  // `archived`, so a repository retired in 2018 is still told to add a README.
-  // Flagged as a scoring question rather than changed here.
-  assertAdvice(archiveHeavy, "README quality", /add a readme explaining/i, {
-    severity: "high",
-    repositories: ["first-startup-backend"],
-  });
-  assertAdvice(archiveHeavy, "Descriptions", /add one sentence stating/i, {
-    severity: "high",
-    repositories: ["first-startup-backend"],
-  });
+test("retired work is still scored for what it fails to explain", () => {
+  // An archived repository is still listed on the profile, so a visitor still
+  // cannot tell what it was. The gap keeps costing presentation.
+  const retired = archiveHeavy.audits.find((audit) => audit.repository.name === "first-startup-backend");
+
+  assert.equal(retired.repository.archived, true);
+  assert.equal(retired.categoryScores.descriptions, 0);
+  assert.equal(retired.categoryScores.readme, 10);
+});
+
+test("retired work is not told to fix itself ahead of active projects", () => {
+  const retired = archiveHeavy.audits.find((audit) => audit.repository.name === "first-startup-backend");
+  const contentGaps = retired.findings
+    .filter((finding) => ["Descriptions", "README quality"].includes(finding.category));
+  const active = beginner.audits.find((audit) => audit.repository.name === "hello-world");
+
+  assert.deepEqual(contentGaps.map((finding) => finding.severity), ["low", "low"]);
+  assertNoAdvice(
+    archiveHeavy, "README quality", /add a readme explaining/i,
+    "That action addresses active work; retired work receives its own lower-priority advice."
+  );
+  assertNoAdvice(
+    archiveHeavy, "Descriptions", /add one sentence stating/i,
+    "That action addresses active work; retired work receives its own lower-priority advice."
+  );
+
+  // Recommendations group by category and action text, keeping the first
+  // finding's severity, so retired and active advice must never share an action.
+  for (const gap of contentGaps) {
+    const activeEquivalent = active.findings.find((finding) => finding.category === gap.category);
+    assert.notEqual(
+      gap.action,
+      activeEquivalent.action,
+      `retired and active ${gap.category} advice share an action, so one group would report both severities`
+    );
+  }
 });
 
 test("a full set of six pins suppresses further pin suggestions", () => {
