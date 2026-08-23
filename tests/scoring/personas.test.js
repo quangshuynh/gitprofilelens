@@ -99,10 +99,10 @@ test("complete presentation metadata scores a repository perfectly", () => {
   // ledger-sync states a specific purpose, carries topics, a license, a demo
   // link, a comprehensive README, and a recent push. If a scoring change makes
   // a perfect presentation impossible, that is a decision worth reviewing.
-  const flagship = polished.audits.find((audit) => audit.repository.name === "ledger-sync");
+  const ledgerSync = polished.audits.find((audit) => audit.repository.name === "ledger-sync");
 
-  assert.equal(flagship.score, 100, `ledger-sync scored ${flagship.score} with complete presentation metadata`);
-  assert.deepEqual(flagship.findings, []);
+  assert.equal(ledgerSync.score, 100, `ledger-sync scored ${ledgerSync.score} with complete presentation metadata`);
+  assert.deepEqual(ledgerSync.findings, []);
 });
 
 test("a curated profile is told to polish, never to start over", () => {
