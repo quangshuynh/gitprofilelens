@@ -36,3 +36,12 @@ jobs:
 
       - name: Run unit, API, and browser tests
         run: npm test
+
+      # Prints how corpus scoring outcomes moved against evaluation/baseline.json.
+      # Informational only: the report exits 0 whether or not outcomes changed, so
+      # deliberate scoring changes are reviewed in the log rather than blocked here.
+      - name: Report scoring evaluation diff
+        # Runs even when the tests fail, because a scoring change that breaks a
+        # test is exactly when the corpus diff explains what moved.
+        if: always()
+        run: npm run eval

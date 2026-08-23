@@ -60,24 +60,37 @@
    * @param {string} reason explanation of the detected condition
    * @param {string} action suggested action for addressing the condition
    * @param {boolean} factual whether the finding is a factual check
+   * @param {string} groupReason reason to use when several repositories are grouped under one recommendation
    * @returns {Object} structured audit finding
    */
-  function createFinding(category, severity, reason, action, factual) {
-    return { category, severity, reason, action, factual };
+  function createFinding(category, severity, reason, action, factual, groupReason) {
+    const finding = { category, severity, reason, action, factual };
+    // Reasons that quote a repository's own measurements cannot describe a group.
+    // Such findings supply a plural-safe reason that stays true of every member.
+    if (groupReason) finding.groupReason = groupReason;
+    return finding;
   }
 
   /**
    * scores the clarity and completeness of a repository description
    * @param {string|null} description github repository description
+   * @param {boolean} archived whether the repository has been retired
    * @returns {{score: number, findings: Array<Object>}} description score and findings
    */
-  function scoreDescription(description) {
+  function scoreDescription(description, archived = false) {
     const value = (description || "").trim();
     const findings = [];
     let score = 100;
 
     if (!value) {
-      findings.push(createFinding("Descriptions", "high", "Description is missing.", "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.", true));
+      // An archived repository is still listed on the profile, so the missing
+      // description still costs presentation. What changes is priority: this is
+      // work its owner deliberately retired, and it should not outrank the same
+      // gap on active projects. The separate action text also keeps the two from
+      // merging into one recommendation that would report a single severity.
+      findings.push(archived
+        ? createFinding("Descriptions", "low", "Description is missing.", "Add a one-line description so visitors can tell what this archived project was.", true)
+        : createFinding("Descriptions", "high", "Description is missing.", "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.", true));
       return { score: 0, findings };
     }
 
@@ -91,7 +104,7 @@
 
     if (value.length < 30) {
       score -= 25;
-      findings.push(createFinding("Descriptions", "medium", `Description is only ${value.length} characters.`, "Add concrete context so the purpose is clear without opening the repository.", true));
+      findings.push(createFinding("Descriptions", "medium", `Description is only ${value.length} characters.`, "Add concrete context so the purpose is clear without opening the repository.", true, "Descriptions are shorter than 30 characters."));
     }
 
     if (value.length > 160) {
@@ -152,9 +165,10 @@
   /**
    * scores repository readme quality using available metadata
    * @param {{present: boolean|null, size: number|null}} readme readme metadata
+   * @param {boolean} archived whether the repository has been retired
    * @returns {{score: number, findings: Array<Object>}} readme score and findings
    */
-  function scoreReadme(readme) {
+  function scoreReadme(readme, archived = false) {
     const findings = [];
 
     if (!readme || readme.present === null) {
@@ -163,12 +177,15 @@
     }
 
     if (!readme.present) {
-      findings.push(createFinding("README quality", "high", "Repository has no root README.", "Add a README explaining the problem, setup, usage, and important implementation decisions.", true));
+      // Lower priority on retired work, for the reasons given in scoreDescription.
+      findings.push(archived
+        ? createFinding("README quality", "low", "Repository has no root README.", "Add a short README so visitors can tell what this archived project did.", true)
+        : createFinding("README quality", "high", "Repository has no root README.", "Add a README explaining the problem, setup, usage, and important implementation decisions.", true));
       return { score: 10, findings };
     }
 
     if (readme.size !== null && readme.size < 500) {
-      findings.push(createFinding("README quality", "medium", `README is only ${readme.size} bytes.`, "Expand it with purpose, setup, usage, and a screenshot or example where useful.", true));
+      findings.push(createFinding("README quality", "medium", `README is only ${readme.size} bytes.`, "Expand it with purpose, setup, usage, and a screenshot or example where useful.", true, "READMEs are shorter than 500 bytes."));
       return { score: 55, findings };
     }
 
@@ -256,7 +273,7 @@
     }
 
     if (ageInDays > 1095) {
-      findings.push(createFinding("Project maintenance", "medium", `Repository has not been pushed to in ${Math.floor(ageInDays / 365)} years.`, "Update it, clearly mark it complete, or archive it if it is no longer maintained.", true));
+      findings.push(createFinding("Project maintenance", "medium", `Repository has not been pushed to in ${Math.floor(ageInDays / 365)} years.`, "Update it, clearly mark it complete, or archive it if it is no longer maintained.", true, "Repositories have not been pushed to in more than three years."));
       return { score: 35, findings };
     }
 
@@ -362,8 +379,8 @@
    */
   function scoreRepository(repository, now = new Date()) {
     const name = scoreName(repository.name);
-    const description = scoreDescription(repository.description);
-    const readme = scoreReadme(repository.readme);
+    const description = scoreDescription(repository.description, repository.archived);
+    const readme = scoreReadme(repository.readme, repository.archived);
     const discoverability = scoreDiscoverability(repository);
     const maintenance = scoreMaintenance(repository, now);
     const findings = [
@@ -520,10 +537,27 @@
       }
     }
 
-    const recommendations = [...groups.values()];
+    const recommendations = [...groups.values()].map(summarizeRecommendation);
     addPinningRecommendations(recommendations, audits);
     recommendations.sort(compareRecommendations);
     return recommendations.slice(0, 5);
+  }
+
+  /**
+   * finalizes a grouped recommendation so its reason describes every repository it names
+   *
+   * A group keeps the first matching finding, whose reason may quote that one
+   * repository's measurements. The card renders the reason directly above the
+   * affected repository list, so once a group covers more than one repository the
+   * plural-safe reason is used instead.
+   *
+   * @param {Object} group grouped finding with its affected repositories
+   * @returns {Object} portfolio recommendation
+   */
+  function summarizeRecommendation(group) {
+    const { groupReason, ...recommendation } = group;
+    if (!groupReason || recommendation.repositories.length < 2) return recommendation;
+    return { ...recommendation, reason: groupReason };
   }
 
   /**
@@ -579,11 +613,25 @@
 
   /**
    * determines whether an audit is strong, unpinned, and has verified pin data
+   *
+   * The suggestion names "the work you want visitors to notice first", so three
+   * kinds of repository are excluded even when they score well:
+   *
+   * - archived, because retired work is not what a profile leads with;
+   * - private, because the public audience this score describes cannot see it;
+   * - forked, because a fork inherits its description, README, topics, and license
+   *   from upstream, so the score qualifying it measures another author's
+   *   presentation rather than this account's.
+   *
    * @param {Object} audit repository audit
    * @returns {boolean} true when the repository is a pin candidate
    */
   function isStrongUnpinnedAudit(audit) {
-    return audit.repository.pinned === false && audit.score >= 85 && !audit.repository.archived;
+    return audit.repository.pinned === false
+      && audit.score >= 85
+      && !audit.repository.archived
+      && !audit.repository.private
+      && !audit.repository.fork;
   }
 
   /**

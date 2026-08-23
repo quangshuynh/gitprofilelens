@@ -430,6 +430,71 @@ test("private audit mode isolates authorized repositories from public outputs", 
   }
 });
 
+test("authorized audit resolves pins from the public profile", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  await mockGithubRequests(page, [repository, secondRepository], {
+    pinnedRepositories: ["authorized-public-project", "portfolio-lens"],
+  });
+  await page.route("**/api/auth/session", (route) => route.fulfill({
+    json: {
+      authenticated: true,
+      user: { login: "example", avatar_url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' fill='%2358a6ff'/%3E%3C/svg%3E" },
+    },
+  }));
+  await page.route("**/api/private-repositories", (route) => route.fulfill({
+    json: {
+      installation: true,
+      repositories: [
+        { ...repository, name: "secret-project", full_name: "example/secret-project", html_url: "https://github.com/example/secret-project", private: true, visibility: "private" },
+        { ...secondRepository, name: "authorized-public-project", full_name: "example/authorized-public-project", html_url: "https://github.com/example/authorized-public-project", private: false, visibility: "public" },
+      ],
+      readmes: { "secret-project": readme, "authorized-public-project": readme },
+    },
+  }));
+  await page.goto(baseUrl);
+  await page.locator("#home-signed-in-auth").waitFor({ state: "visible" });
+  await page.locator("#home-private-audit-button").click();
+  await page.locator("#audit-title").filter({ hasText: "Private Repository Audit" }).waitFor();
+
+  // The authorized set is joined against the real pin list rather than an empty one,
+  // so a pinned public repository is not mistaken for a verified-unpinned repository.
+  assert.deepEqual(
+    await page.evaluate(() => appState.supplemental.pinnedRepositories),
+    ["authorized-public-project", "portfolio-lens"]
+  );
+  assert.deepEqual(
+    await page.evaluate(() => appState.repositories.map((item) => ({
+      name: item.name,
+      pinned: item.pinned,
+      pinnedPosition: item.pinnedPosition,
+    }))),
+    [
+      { name: "secret-project", pinned: false, pinnedPosition: null },
+      { name: "authorized-public-project", pinned: true, pinnedPosition: 0 },
+    ]
+  );
+
+  // READMEs must still come from the authorized endpoint; the public metadata cannot see them.
+  assert.deepEqual(
+    await page.evaluate(() => Object.keys(appState.supplemental.readmes).sort()),
+    ["authorized-public-project", "secret-project"]
+  );
+  assert.equal(
+    await page.evaluate(() => appState.repositories.every((item) => item.readme.present === true)),
+    true
+  );
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 async function mockGithubRequests(page, repositories = [repository, secondRepository], options = {}) {
   const avatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' fill='%2358a6ff'/%3E%3C/svg%3E";
   await page.route("**/api/auth/session", (route) =>
