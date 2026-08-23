@@ -258,7 +258,12 @@ async function loadPrivateRepositories() {
       throw new Error(data?.error || "GitHub could not return authorized repositories.");
     }
 
-    const supplemental = { pinnedRepositories: [], readmes: data.readmes };
+    // Pins live on the public profile, so the authorized audit reuses the public pin list
+    // already fetched above. Private repositories simply never appear in it.
+    const supplemental = {
+      pinnedRepositories: publicSupplemental?.pinnedRepositories || [],
+      readmes: data.readmes,
+    };
     const repositories = transformRepositories(data.repositories, supplemental);
     const publicRepositories = transformRepositories(rawPublicRepositories, publicSupplemental)
       .filter((repository) => !repository.private);

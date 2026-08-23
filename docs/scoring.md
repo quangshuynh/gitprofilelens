@@ -25,7 +25,7 @@ and no change should give it one.
 This is not a disclaimer bolted onto a general-purpose quality score. It is a structural
 property of the implementation, and it is worth stating what enforces it:
 
-- **The only inputs are presentation metadata.** `transformRepository` (audit.js:281)
+- **The only inputs are presentation metadata.** `transformRepository` (audit.js:298)
   normalizes the GitHub REST repository payload plus optional README structure and pin
   metadata. Nothing else reaches the scorer.
 - **Popularity is recorded but never scored.** `stars`, `forks`, and `openIssues` are
@@ -50,10 +50,10 @@ There is no single "score a profile" entry point. Callers assemble four pure fun
 
 ```
 raw GitHub REST repositories + supplemental metadata
-  -> transformRepository(repository, supplemental)   audit.js:281
-  -> scoreRepository(repository, now)                audit.js:363
-  -> scoreProfile(audits)                            audit.js:434
-  -> generateRecommendations(audits)                 audit.js:510
+  -> transformRepository(repository, supplemental)   audit.js:298
+  -> scoreRepository(repository, now)                audit.js:380
+  -> scoreProfile(audits)                            audit.js:451
+  -> generateRecommendations(audits)                 audit.js:527
 ```
 
 `supplemental` carries README structure and the pinned repository list from the serverless
@@ -73,11 +73,11 @@ time; the evaluation corpus pins the date instead.
 
 | Category | Weight | Function |
 |---|---|---|
-| presentation | 0.15 | `scoreName` (audit.js:120) |
-| descriptions | 0.25 | `scoreDescription` (audit.js:74) |
-| readme | 0.25 | `scoreReadme` (audit.js:157) |
-| discoverability | 0.20 | `scoreDiscoverability` (audit.js:215) |
-| maintenance | 0.15 | `scoreMaintenance` (audit.js:243) |
+| presentation | 0.15 | `scoreName` (audit.js:133) |
+| descriptions | 0.25 | `scoreDescription` (audit.js:80) |
+| readme | 0.25 | `scoreReadme` (audit.js:171) |
+| discoverability | 0.20 | `scoreDiscoverability` (audit.js:232) |
+| maintenance | 0.15 | `scoreMaintenance` (audit.js:260) |
 
 Descriptions and READMEs carry half the weight between them. That is the implementation's
 strongest editorial position: the two things a visitor reads first, before deciding whether
@@ -237,7 +237,7 @@ exists so that any change to it is visible rather than incidental.
 
 ### focus — does the portfolio read as coherent
 
-`scorePortfolioFocus` (audit.js:403) is the only profile category not derived from
+`scorePortfolioFocus` (audit.js:420) is the only profile category not derived from
 repository audits:
 
 ```
