@@ -283,7 +283,9 @@ Two rules, both requiring verified pin metadata:
 - **Weak pins** — any pinned repository scoring below 60 produces one `high` recommendation
   to improve or unpin them.
 - **Pin candidates** — if fewer than 6 repositories are pinned, the three highest-scoring
-  unpinned, non-archived repositories scoring ≥ 85 produce one `medium` recommendation.
+  unpinned, non-archived, **non-private** repositories scoring ≥ 85 produce one `medium`
+  recommendation. Private repositories are excluded because the suggestion names the work a
+  visitor should notice first, and a visitor cannot see them.
 
 Pinning is the single highest-leverage presentation control GitHub offers: it decides what a
 visitor sees before they scroll. Six is GitHub's own limit.
@@ -390,10 +392,21 @@ Portfolio-level advice competes with per-repository advice on a count-dominated 
 Description and README scoring never consult `archived`, so a repository archived in 2018 is
 told at `high` severity to add a README. Exposed by `archive-heavy`.
 
-### F9 — Private repositories are treated as unpinned
+### F9 — Private repositories are treated as unpinned — FIXED
 The authenticated audit forces `pinnedRepositories: []`, so private repositories read as
-unpinned and become pin candidates — advice that cannot be acted on, because private
-repositories cannot be pinned publicly. Exposed by `private-audit-scope`.
+explicitly unpinned and became pin candidates, advised as "the work you want visitors to
+notice first" even though no visitor can see them.
+
+Resolved: `isStrongUnpinnedAudit` now excludes private repositories. They are still scored
+normally — privacy changes what the tool points a visitor at, never how it judges a
+repository. Exposed by `private-audit-scope`.
+
+**Still open in the same code path:** `script.js:261` builds the authenticated audit's
+supplemental metadata with an empty pin list even though the real one was fetched into
+`publicSupplemental` on line 246. Public repositories therefore read as unpinned in
+authenticated mode even when they are pinned, so an already-pinned project can be suggested
+as a pin candidate and the weak-pin rule can never fire. That is a browser-layer defect, not
+a scoring rule, and the corpus cannot reach it.
 
 ### F10 — `NOASSERTION` passes as a license
 GitHub returns `spdx_id: "NOASSERTION"` for a license file it cannot identify.
@@ -494,7 +507,7 @@ inside the tested surface.
 | id | repos | overall | exercises |
 |---|---|---|---|
 | `unusual-metadata` | 4 | 80 | `pushed_at: null`, `NOASSERTION` license, over-long name (F10) |
-| `private-audit-scope` | 6 | 81 | Authenticated mode: 4 private, 2 public, forced-empty pin list (F9) |
+| `private-audit-scope` | 6 | 81 | Authenticated mode: 4 private, 2 public, forced-empty pin list; private work excluded from pin advice |
 | `unverified-metadata` | 5 | 84 | `supplemental === null`, the static-deployment path |
 | `empty-account` | 0 | 0 | Nothing to audit (F5) |
 

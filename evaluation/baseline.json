@@ -783,19 +783,6 @@
           ]
         },
         {
-          "key": "portfolio-focus:consider-pinning-these-projects-fd9a",
-          "severity": "medium",
-          "category": "Portfolio focus",
-          "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
-          "reason": "Strong repository candidates are not currently pinned.",
-          "repositoryCount": 3,
-          "repositorySample": [
-            "openapi-tools",
-            "status-page",
-            "billing-core"
-          ]
-        },
-        {
           "key": "discoverability:add-three-to-five-4891",
           "severity": "medium",
           "category": "Discoverability",
@@ -817,6 +804,18 @@
           "repositorySample": [
             "infra",
             "spike-pricing-model"
+          ]
+        },
+        {
+          "key": "portfolio-focus:consider-pinning-these-projects-fd9a",
+          "severity": "medium",
+          "category": "Portfolio focus",
+          "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "reason": "Strong repository candidates are not currently pinned.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "openapi-tools",
+            "status-page"
           ]
         }
       ]

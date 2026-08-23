@@ -14,7 +14,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { getProfile } = require("./fixtures/index.js");
 const { auditProfile, recommendationKeys } = require("./harness.js");
-const { assertAdvice, assertNoAdvice, describeAdvice } = require("./expectations.js");
+const { assertAdvice, assertNoAdvice, describeAdvice, findAdvice } = require("./expectations.js");
 
 const empty = auditProfile(getProfile("empty-account"));
 const unverified = auditProfile(getProfile("unverified-metadata"));
@@ -71,7 +71,7 @@ test("missing metadata does not suppress advice the public data supports", () =>
   assertAdvice(unverified, "Project maintenance", /update it, clearly mark it complete/i, { repositories: ["logbook"] });
 });
 
-test("privacy changes which repositories are audited, never how they are judged", () => {
+test("privacy changes what visitors are pointed at, never how repositories are judged", () => {
   const profile = getProfile("private-audit-scope");
   const asPublic = auditProfile({
     ...profile,
@@ -81,6 +81,10 @@ test("privacy changes which repositories are audited, never how they are judged"
       visibility: "public",
     })),
   });
+  // Pin advice is the one output privacy is allowed to change, because it names
+  // the work a visitor should see first. Every other recommendation must match.
+  const withoutPinAdvice = (result) =>
+    recommendationKeys(result).filter((key) => !key.startsWith("portfolio-focus:consider-pinning"));
 
   assert.equal(privateScope.repositories.filter((repository) => repository.private).length, 4);
   assert.deepEqual(
@@ -88,24 +92,34 @@ test("privacy changes which repositories are audited, never how they are judged"
     privateScope.profile,
     "making every repository public changed the scores, so privacy is leaking into scoring"
   );
-  assert.deepEqual(recommendationKeys(asPublic), recommendationKeys(privateScope));
+  assert.deepEqual(withoutPinAdvice(asPublic), withoutPinAdvice(privateScope));
+  assert.ok(
+    findAdvice(asPublic, "Portfolio focus", /consider pinning/i).repositories.includes("billing-core"),
+    "publishing strong private work should make it a pin candidate"
+  );
 });
 
-test("an authenticated audit suggests pinning private repositories", () => {
-  // Records current behavior. The authenticated audit builds supplemental
-  // metadata with an empty pin list, so every repository reads as explicitly
-  // unpinned and strong private work becomes a pin candidate, advised as "the
-  // work you want visitors to notice first". Private repositories cannot be
-  // pinned to a public profile. Flagged as a scoring question.
-  const advice = assertAdvice(privateScope, "Portfolio focus", /consider pinning/i, { severity: "medium" });
-  const privateNames = new Set(
-    privateScope.repositories.filter((repository) => repository.private).map((repository) => repository.name)
+test("an authenticated audit suggests pinning only publicly visible work", () => {
+  // The authenticated audit scores private repositories normally, but the pin
+  // suggestion names the work a visitor should notice first, and a visitor cannot
+  // see private work. billing-core outscores both public repositories and is still
+  // excluded.
+  const advice = assertAdvice(privateScope, "Portfolio focus", /consider pinning/i, {
+    severity: "medium",
+    repositories: ["openapi-tools", "status-page"],
+  });
+  const strongPrivate = privateScope.audits.filter(
+    (audit) => audit.repository.private && audit.score >= 85
   );
 
-  assert.ok(
-    advice.repositories.some((name) => privateNames.has(name)),
-    `no private repository was suggested for pinning; the private pin path may have changed.\n${describeAdvice(privateScope)}`
-  );
+  assert.ok(strongPrivate.length >= 2, "the fixture no longer models strong private work");
+  for (const audit of strongPrivate) {
+    assert.equal(
+      advice.repositories.includes(audit.repository.name),
+      false,
+      `${audit.repository.name} is private and cannot be shown to visitors.\n${describeAdvice(privateScope)}`
+    );
+  }
 });
 
 test("a repository with no commits falls back to its updated date", () => {

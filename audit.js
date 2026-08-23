@@ -601,11 +601,20 @@
 
   /**
    * determines whether an audit is strong, unpinned, and has verified pin data
+   *
+   * Private repositories are excluded. The pin suggestion is about the work a
+   * visitor should notice first, and a private repository is not visible to the
+   * public audience this score describes, so surfacing it there would be advice
+   * the reader cannot act on for the outcome the advice claims.
+   *
    * @param {Object} audit repository audit
    * @returns {boolean} true when the repository is a pin candidate
    */
   function isStrongUnpinnedAudit(audit) {
-    return audit.repository.pinned === false && audit.score >= 85 && !audit.repository.archived;
+    return audit.repository.pinned === false
+      && audit.score >= 85
+      && !audit.repository.archived
+      && !audit.repository.private;
   }
 
   /**
