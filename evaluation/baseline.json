@@ -1,0 +1,838 @@
+{
+  "evaluationDate": "2026-08-21T00:00:00.000Z",
+  "profileCount": 13,
+  "repositoryCount": 185,
+  "profiles": {
+    "oss-maintainer": {
+      "repositoryCount": 9,
+      "overall": 95,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 98,
+        "readme": 96,
+        "discoverability": 90,
+        "maintenance": 98,
+        "focus": 80
+      },
+      "recommendations": [
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "hexline-rfcs",
+            ".github"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            ".github"
+          ]
+        },
+        {
+          "key": "readme-quality:show-the-project-in-e65c",
+          "severity": "low",
+          "category": "README quality",
+          "action": "Show the project in action with a concise example, screenshot, or demo section.",
+          "repositoryCount": 4,
+          "repositorySample": [
+            "hexline-docs",
+            "hexline-devtools",
+            "hexline-rfcs",
+            ".github"
+          ]
+        },
+        {
+          "key": "descriptions:condense-it-to-one-17e7",
+          "severity": "low",
+          "category": "Descriptions",
+          "action": "Condense it to one focused sentence of 160 characters or fewer.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "hexline"
+          ]
+        }
+      ]
+    },
+    "polished-professional": {
+      "repositoryCount": 6,
+      "overall": 94,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 100,
+        "readme": 88,
+        "discoverability": 93,
+        "maintenance": 100,
+        "focus": 75
+      },
+      "recommendations": [
+        {
+          "key": "portfolio-focus:consider-pinning-these-projects-fd9a",
+          "severity": "medium",
+          "category": "Portfolio focus",
+          "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "receipt-ocr",
+            "envelope"
+          ]
+        },
+        {
+          "key": "readme-quality:expand-it-with-purpose-cc2f",
+          "severity": "medium",
+          "category": "README quality",
+          "action": "Expand it with purpose, setup, usage, and a screenshot or example where useful.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "dotfiles"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "dotfiles"
+          ]
+        },
+        {
+          "key": "readme-quality:show-the-project-in-e65c",
+          "severity": "low",
+          "category": "README quality",
+          "action": "Show the project in action with a concise example, screenshot, or demo section.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "queue-lens",
+            "envelope",
+            "receipt-ocr"
+          ]
+        },
+        {
+          "key": "discoverability:add-a-live-demo-425f",
+          "severity": "low",
+          "category": "Discoverability",
+          "action": "Add a live demo URL when the project is deployable.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "envelope"
+          ]
+        }
+      ]
+    },
+    "fork-dominated": {
+      "repositoryCount": 9,
+      "overall": 86,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 82,
+        "readme": 83,
+        "discoverability": 84,
+        "maintenance": 84,
+        "focus": 84
+      },
+      "recommendations": [
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "scripts"
+          ]
+        },
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "scripts"
+          ]
+        },
+        {
+          "key": "descriptions:add-the-problem-solved-6a49",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "notes-app"
+          ]
+        },
+        {
+          "key": "portfolio-focus:consider-pinning-these-projects-fd9a",
+          "severity": "medium",
+          "category": "Portfolio focus",
+          "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "docs-theme",
+            "pgmigrate",
+            "yaml-lint"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "scripts",
+            "notes-app"
+          ]
+        }
+      ]
+    },
+    "archive-heavy": {
+      "repositoryCount": 10,
+      "overall": 85,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 84,
+        "readme": 74,
+        "discoverability": 77,
+        "maintenance": 91,
+        "focus": 97
+      },
+      "recommendations": [
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "first-startup-backend"
+          ]
+        },
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "first-startup-backend"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 4,
+          "repositorySample": [
+            "old-dashboard",
+            "prototype-scheduler",
+            "experiments-2019",
+            "first-startup-backend"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "old-dashboard",
+            "experiments-2019",
+            "first-startup-backend"
+          ]
+        },
+        {
+          "key": "descriptions:add-concrete-context-so-04e6",
+          "severity": "medium",
+          "category": "Descriptions",
+          "action": "Add concrete context so the purpose is clear without opening the repository.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "old-dashboard",
+            "experiments-2019"
+          ]
+        }
+      ]
+    },
+    "prolific-account": {
+      "repositoryCount": 112,
+      "overall": 76,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 100,
+        "readme": 85,
+        "discoverability": 37,
+        "maintenance": 65,
+        "focus": 70
+      },
+      "recommendations": [
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 106,
+          "repositorySample": [
+            "json-diff",
+            "csv-diff",
+            "yaml-diff",
+            "http-diff",
+            "dns-diff",
+            "tcp-diff"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 106,
+          "repositorySample": [
+            "json-diff",
+            "csv-diff",
+            "yaml-diff",
+            "http-diff",
+            "dns-diff",
+            "tcp-diff"
+          ]
+        },
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "json-diff",
+            "cron-dump",
+            "s3-proxy"
+          ]
+        },
+        {
+          "key": "project-maintenance:update-it-clearly-mark-17e4",
+          "severity": "medium",
+          "category": "Project maintenance",
+          "action": "Update it, clearly mark it complete, or archive it if it is no longer maintained.",
+          "repositoryCount": 45,
+          "repositorySample": [
+            "csv-proxy",
+            "yaml-proxy",
+            "http-proxy",
+            "dns-proxy",
+            "tcp-proxy",
+            "regex-proxy"
+          ]
+        },
+        {
+          "key": "portfolio-focus:consider-pinning-these-projects-fd9a",
+          "severity": "medium",
+          "category": "Portfolio focus",
+          "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "hookshot",
+            "dotpath",
+            "chronograph"
+          ]
+        }
+      ]
+    },
+    "student-coursework": {
+      "repositoryCount": 8,
+      "overall": 73,
+      "categories": {
+        "presentation": 93,
+        "descriptions": 77,
+        "readme": 58,
+        "discoverability": 59,
+        "maintenance": 88,
+        "focus": 74
+      },
+      "recommendations": [
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "cs101-homework-3",
+            "cs261-lab-4"
+          ]
+        },
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "cs101-homework-3"
+          ]
+        },
+        {
+          "key": "descriptions:add-the-problem-solved-6a49",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "weather-app"
+          ]
+        },
+        {
+          "key": "portfolio-focus:improve-or-unpin-these-8ef8",
+          "severity": "high",
+          "category": "Portfolio focus",
+          "action": "Improve or unpin these repositories so pinned work represents the strongest public projects.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "weather-app"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 6,
+          "repositorySample": [
+            "cs101-homework-3",
+            "cs261-lab-4",
+            "data-structures-practice",
+            "algorithms-course-notes",
+            "personal-portfolio",
+            "weather-app"
+          ]
+        }
+      ]
+    },
+    "strong-work-weak-presentation": {
+      "repositoryCount": 5,
+      "overall": 62,
+      "categories": {
+        "presentation": 98,
+        "descriptions": 37,
+        "readme": 36,
+        "discoverability": 53,
+        "maintenance": 100,
+        "focus": 67
+      },
+      "recommendations": [
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "distributed-queue",
+            "pytorch-experiments"
+          ]
+        },
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "pytorch-experiments",
+            "vector-index"
+          ]
+        },
+        {
+          "key": "descriptions:add-the-problem-solved-6a49",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "vector-index"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 4,
+          "repositorySample": [
+            "distributed-queue",
+            "pytorch-experiments",
+            "fastcache",
+            "vector-index"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "pytorch-experiments",
+            "tokenizer_rs",
+            "vector-index"
+          ]
+        }
+      ]
+    },
+    "flagship-dominated": {
+      "repositoryCount": 8,
+      "overall": 50,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 39,
+        "readme": 32,
+        "discoverability": 36,
+        "maintenance": 47,
+        "focus": 66
+      },
+      "recommendations": [
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 5,
+          "repositorySample": [
+            "blog",
+            "chatbot-demo",
+            "todo-app",
+            "resume",
+            "notes"
+          ]
+        },
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "blog",
+            "scraper",
+            "notes"
+          ]
+        },
+        {
+          "key": "descriptions:replace-it-with-the-721a",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Replace it with the project's purpose and key capability.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "chatbot-demo"
+          ]
+        },
+        {
+          "key": "descriptions:add-the-problem-solved-6a49",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "todo-app"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 7,
+          "repositorySample": [
+            "blog",
+            "chatbot-demo",
+            "todo-app",
+            "old-portfolio",
+            "resume",
+            "scraper"
+          ]
+        }
+      ]
+    },
+    "beginner-account": {
+      "repositoryCount": 3,
+      "overall": 48,
+      "categories": {
+        "presentation": 82,
+        "descriptions": 23,
+        "readme": 25,
+        "discoverability": 25,
+        "maintenance": 100,
+        "focus": 65
+      },
+      "recommendations": [
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "hello-world",
+            "calculator"
+          ]
+        },
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "hello-world",
+            "calculator"
+          ]
+        },
+        {
+          "key": "repository-presentation:choose-a-short-distinctive-88d7",
+          "severity": "high",
+          "category": "Repository presentation",
+          "action": "Choose a short, distinctive name related to what the project does.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "hello-world"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "hello-world",
+            "My_First_Website",
+            "calculator"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "hello-world",
+            "My_First_Website",
+            "calculator"
+          ]
+        }
+      ]
+    },
+    "unusual-metadata": {
+      "repositoryCount": 4,
+      "overall": 80,
+      "categories": {
+        "presentation": 95,
+        "descriptions": 75,
+        "readme": 63,
+        "discoverability": 80,
+        "maintenance": 100,
+        "focus": 70
+      },
+      "recommendations": [
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "tessellate-web"
+          ]
+        },
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "tessellate-web"
+          ]
+        },
+        {
+          "key": "repository-presentation:shorten-the-name-so-fc8b",
+          "severity": "medium",
+          "category": "Repository presentation",
+          "action": "Shorten the name so it is easier to scan, remember, and type.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "tiling-algorithms-reference-implementations-and-notes"
+          ]
+        },
+        {
+          "key": "readme-quality:add-clearly-labeled-sections-526b",
+          "severity": "medium",
+          "category": "README quality",
+          "action": "Add clearly labeled sections so visitors can understand, install, and use the project quickly.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "tiling-algorithms-reference-implementations-and-notes"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "tessellate-web"
+          ]
+        }
+      ]
+    },
+    "private-audit-scope": {
+      "repositoryCount": 6,
+      "overall": 81,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 79,
+        "readme": 67,
+        "discoverability": 73,
+        "maintenance": 100,
+        "focus": 75
+      },
+      "recommendations": [
+        {
+          "key": "readme-quality:add-a-readme-explaining-a531",
+          "severity": "high",
+          "category": "README quality",
+          "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "infra",
+            "spike-pricing-model"
+          ]
+        },
+        {
+          "key": "descriptions:add-one-sentence-stating-a56d",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "infra"
+          ]
+        },
+        {
+          "key": "portfolio-focus:consider-pinning-these-projects-fd9a",
+          "severity": "medium",
+          "category": "Portfolio focus",
+          "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "repositoryCount": 3,
+          "repositorySample": [
+            "openapi-tools",
+            "status-page",
+            "billing-core"
+          ]
+        },
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "infra",
+            "spike-pricing-model"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "infra",
+            "spike-pricing-model"
+          ]
+        }
+      ]
+    },
+    "unverified-metadata": {
+      "repositoryCount": 5,
+      "overall": 84,
+      "categories": {
+        "presentation": 100,
+        "descriptions": 95,
+        "readme": 60,
+        "discoverability": 87,
+        "maintenance": 87,
+        "focus": 73
+      },
+      "recommendations": [
+        {
+          "key": "discoverability:add-three-to-five-4891",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "buoy-feed"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "buoy-feed"
+          ]
+        },
+        {
+          "key": "descriptions:add-concrete-context-so-04e6",
+          "severity": "medium",
+          "category": "Descriptions",
+          "action": "Add concrete context so the purpose is clear without opening the repository.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "knot"
+          ]
+        },
+        {
+          "key": "project-maintenance:update-it-clearly-mark-17e4",
+          "severity": "medium",
+          "category": "Project maintenance",
+          "action": "Update it, clearly mark it complete, or archive it if it is no longer maintained.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "logbook"
+          ]
+        }
+      ]
+    },
+    "empty-account": {
+      "repositoryCount": 0,
+      "overall": 0,
+      "categories": {
+        "presentation": 0,
+        "descriptions": 0,
+        "readme": 0,
+        "discoverability": 0,
+        "maintenance": 0,
+        "focus": 0
+      },
+      "recommendations": []
+    }
+  }
+}
