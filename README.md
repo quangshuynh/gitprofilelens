@@ -57,6 +57,8 @@ The deterministic scoring engine lives in `audit.js` and is shared by the browse
 
 The public profile score aggregates those repository results and adds portfolio focus. Every finding includes a severity, reason, suggested action, and a factual or advisory classification. Unknown README data receives a neutral score and is marked unverified.
 
+[docs/scoring.md](docs/scoring.md) documents every rule and weight, what the score intentionally does not measure, known limitations, and how to change scoring safely.
+
 ## Privacy and authentication
 
 GitProfileLens uses the GitHub App web authorization flow and requests read-only repository access. Users choose which repositories the app may access through GitHub's installation interface.
