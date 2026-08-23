@@ -11,16 +11,26 @@
  * existing persona reaches.
  */
 
+const archiveHeavy = require("./archive-heavy.js");
 const beginnerAccount = require("./beginner-account.js");
+const flagshipDominated = require("./flagship-dominated.js");
 const forkDominated = require("./fork-dominated.js");
+const ossMaintainer = require("./oss-maintainer.js");
 const polishedProfessional = require("./polished-professional.js");
+const prolificAccount = require("./prolific-account.js");
+const strongWorkWeakPresentation = require("./strong-work-weak-presentation.js");
 const studentCoursework = require("./student-coursework.js");
 
 /** Corpus profiles in a stable order, strongest presentation first. */
 const CORPUS = [
+  ossMaintainer,
   polishedProfessional,
   forkDominated,
+  archiveHeavy,
+  prolificAccount,
   studentCoursework,
+  strongWorkWeakPresentation,
+  flagshipDominated,
   beginnerAccount,
 ];
 
