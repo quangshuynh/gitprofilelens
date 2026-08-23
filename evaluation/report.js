@@ -466,4 +466,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { BASELINE_PATH, buildSnapshot, diffSnapshot, run };
+module.exports = { BASELINE_PATH, buildSnapshot, diffSnapshot, renderDiff, run };
