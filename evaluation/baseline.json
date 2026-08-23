@@ -183,24 +183,23 @@
           ]
         },
         {
-          "key": "portfolio-focus:consider-pinning-these-projects-fd9a",
-          "severity": "medium",
-          "category": "Portfolio focus",
-          "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
-          "reason": "Strong repository candidates are not currently pinned.",
-          "repositoryCount": 3,
-          "repositorySample": [
-            "docs-theme",
-            "pgmigrate",
-            "yaml-lint"
-          ]
-        },
-        {
           "key": "discoverability:add-three-to-five-4891",
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
           "reason": "Repository has no topics.",
+          "repositoryCount": 2,
+          "repositorySample": [
+            "scripts",
+            "notes-app"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 2,
           "repositorySample": [
             "scripts",

@@ -283,9 +283,10 @@ Two rules, both requiring verified pin metadata:
 - **Weak pins** — any pinned repository scoring below 60 produces one `high` recommendation
   to improve or unpin them.
 - **Pin candidates** — if fewer than 6 repositories are pinned, the three highest-scoring
-  unpinned, non-archived, **non-private** repositories scoring ≥ 85 produce one `medium`
-  recommendation. Private repositories are excluded because the suggestion names the work a
-  visitor should notice first, and a visitor cannot see them.
+  unpinned repositories scoring ≥ 85 produce one `medium` recommendation. Archived, private, and
+  forked repositories are excluded: the suggestion names the work a visitor should notice
+  first, and retired work is not what a profile leads with, private work is invisible to that
+  visitor, and a fork's qualifying score measures its upstream author's presentation.
 
 Pinning is the single highest-leverage presentation control GitHub offers: it decides what a
 visitor sees before they scroll. Six is GitHub's own limit.
@@ -379,10 +380,20 @@ Unit-level.
 to one presenting badly. Separately, profile READMEs are unmodeled: `username/username` is
 scored as an ordinary repository. Exposed by `empty-account`.
 
-### F6 — Pin candidates can be other people's work
-`isStrongUnpinnedAudit` excludes archived repositories but not forks, so fork-heavy accounts
-are advised to pin projects they did not write, as "the work you want visitors to notice
-first". Exposed by `fork-dominated`.
+### F6 — Pin candidates can be other people's work — FIXED
+`isStrongUnpinnedAudit` excluded archived repositories but not forks, so fork-heavy accounts
+were advised to pin projects they did not write, as "the work you want visitors to notice
+first".
+
+Resolved: forks are excluded from pin candidacy. A fork inherits its description, README,
+topics, and license from upstream, so the score qualifying it is not a measure of this
+account's presentation.
+
+**This is the most arguable of the fixes.** GitHub does let you pin a fork, and people do
+legitimately showcase forks they maintain. The implementation has no divergence signal to
+tell a maintained fork from a one-click copy, so the rule is binary. The consequence, visible
+on `fork-dominated`, is that an account whose only strong repositories are forks now receives no
+pin suggestion at all. Reversing this is one line. Exposed by `fork-dominated`.
 
 ### F7 — The five-item cap can hide portfolio advice
 Portfolio-level advice competes with per-repository advice on a count-dominated scale.
@@ -503,7 +514,7 @@ inside the tested surface.
 |---|---|---|---|
 | `oss-maintainer` | 9 | 95 | Six pins suppress pin advice; over-long description; old but active repository |
 | `polished-professional` | 6 | 94 | Curated baseline; pin candidates ranked by score |
-| `fork-dominated` | 9 | 86 | Forks inherit upstream presentation; fork curation bonus (F2, F6) |
+| `fork-dominated` | 9 | 86 | Forks inherit upstream presentation; fork curation bonus; forks excluded from pin advice (F2) |
 | `archive-heavy` | 10 | 85 | Archived maintenance floor; highest focus in the corpus; retired work scored but deprioritized (F7) |
 | `prolific-account` | 112 | 76 | Ranking past 100 repositories; README metadata limit (F1, F11) |
 | `student-coursework` | 8 | 73 | Clutter names; a weak pinned repository |

@@ -220,19 +220,22 @@ test("portfolio focus rewards forking as curation", () => {
   assertScoreInRange("polished-professional focus", polished.profile.categories.focus, 70, 82);
 });
 
-test("pin suggestions treat forks as pinnable work", () => {
-  // Records current behavior. isStrongUnpinnedAudit excludes archived
-  // repositories but not forks, so a fork-heavy account is advised to pin
-  // projects it did not write.
-  const advice = assertAdvice(forkDominated, "Portfolio focus", /consider pinning/i);
-  const forks = new Set(
-    forkDominated.repositories.filter((repository) => repository.fork).map((repository) => repository.name)
-  );
+test("a well-presented fork is not offered as work to showcase", () => {
+  // The forks here score 95 to 100, but that presentation was written upstream.
+  // The account's own repositories score below the threshold, so the honest
+  // outcome is no suggestion rather than someone else's project to lead with.
+  const strongForks = forkDominated.audits.filter((audit) => audit.repository.fork && audit.score >= 85);
+  const originals = forkDominated.audits.filter((audit) => !audit.repository.fork);
 
-  assert.equal(advice.repositories.length, 3);
-  for (const name of advice.repositories) {
-    assert.ok(forks.has(name), `pin advice named ${name}, which is not a fork; the fork exclusion may have changed`);
-  }
+  assert.ok(strongForks.length >= 3, "the fixture no longer models well-presented forks");
+  assert.ok(
+    originals.every((audit) => audit.score < 85),
+    "an original repository now clears the threshold, so this no longer isolates the fork rule"
+  );
+  assertNoAdvice(
+    forkDominated, "Portfolio focus", /consider pinning/i,
+    "Every repository strong enough to suggest is a fork, whose presentation belongs to its upstream author."
+  );
 });
 
 test("popularity is recorded but never scored", () => {
@@ -300,11 +303,10 @@ test("archiving is the curation signal portfolio focus is meant to reward", () =
   assert.ok(archiveHeavy.profile.categories.focus > polished.profile.categories.focus);
 });
 
-test("archived repositories are never offered as pin candidates", () => {
-  // Asserted across the corpus rather than on archive-heavy alone: that persona
-  // generates enough repository-level advice to push its pin suggestion past
-  // the five-recommendation cap, so the invariant is checked wherever pin
-  // advice actually surfaces.
+test("pin suggestions only ever name active, public, original work", () => {
+  // Asserted across the corpus rather than on one persona: some profiles generate
+  // enough repository-level advice to push their pin suggestion past the
+  // five-recommendation cap, so the invariant is checked wherever it surfaces.
   let checked = 0;
 
   for (const profile of CORPUS) {
@@ -312,14 +314,14 @@ test("archived repositories are never offered as pin candidates", () => {
     const advice = findAdvice(result, "Portfolio focus", /consider pinning/i);
     if (!advice) continue;
     checked += 1;
-    const archived = new Set(
-      result.repositories.filter((repository) => repository.archived).map((repository) => repository.name)
-    );
+
     for (const name of advice.repositories) {
-      assert.equal(
-        archived.has(name),
-        false,
-        `${result.id} suggested pinning ${name}, which is archived.\n${describeAdvice(result)}`
+      const repository = result.repositories.find((candidate) => candidate.name === name);
+      const disqualifying = ["archived", "private", "fork"].filter((property) => repository[property]);
+      assert.deepEqual(
+        disqualifying,
+        [],
+        `${result.id} suggested pinning ${name}, which is ${disqualifying.join(" and ")}.\n${describeAdvice(result)}`
       );
     }
   }

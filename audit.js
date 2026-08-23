@@ -614,10 +614,14 @@
   /**
    * determines whether an audit is strong, unpinned, and has verified pin data
    *
-   * Private repositories are excluded. The pin suggestion is about the work a
-   * visitor should notice first, and a private repository is not visible to the
-   * public audience this score describes, so surfacing it there would be advice
-   * the reader cannot act on for the outcome the advice claims.
+   * The suggestion names "the work you want visitors to notice first", so three
+   * kinds of repository are excluded even when they score well:
+   *
+   * - archived, because retired work is not what a profile leads with;
+   * - private, because the public audience this score describes cannot see it;
+   * - forked, because a fork inherits its description, README, topics, and license
+   *   from upstream, so the score qualifying it measures another author's
+   *   presentation rather than this account's.
    *
    * @param {Object} audit repository audit
    * @returns {boolean} true when the repository is a pin candidate
@@ -626,7 +630,8 @@
     return audit.repository.pinned === false
       && audit.score >= 85
       && !audit.repository.archived
-      && !audit.repository.private;
+      && !audit.repository.private
+      && !audit.repository.fork;
   }
 
   /**
