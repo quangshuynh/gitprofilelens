@@ -26,7 +26,7 @@ const { CORPUS } = require("./fixtures/index.js");
 const { EVALUATION_DATE } = require("./harness.js");
 
 const CATEGORIES = ["presentation", "descriptions", "readme", "discoverability", "maintenance", "focus"];
-const RECOMMENDATION_FIELDS = ["action", "category", "key", "repositoryCount", "repositorySample", "severity"];
+const RECOMMENDATION_FIELDS = ["action", "category", "key", "reason", "repositoryCount", "repositorySample", "severity"];
 const CORPUS_IDS = CORPUS.map((profile) => profile.id);
 
 /** One real corpus run, reused as the baseline every perturbation starts from. */
@@ -174,6 +174,17 @@ test("advice that changes severity is reported without changing its identity", (
 
   assert.deepEqual(diff.recommendations.map((change) => change.change), ["changed"]);
   assert.match(renderDiff(SNAPSHOT, current).join("\n"), /\(severity high -> low\)/);
+});
+
+test("advice whose explanation changes is reported even when nothing else moves", () => {
+  const current = perturb((profiles) => {
+    profiles["archive-heavy"].recommendations[0].reason = "Rewritten explanation.";
+  });
+  const diff = onlyDiff("archive-heavy", current);
+
+  assert.deepEqual(diff.recommendations.map((change) => change.change), ["changed"]);
+  assert.equal(diff.categories.length, 0);
+  assert.match(renderDiff(SNAPSHOT, current).join("\n"), /\(reason ".+" -> "Rewritten explanation\."\)/);
 });
 
 test("a corpus profile appearing or disappearing is reported rather than skipped", () => {

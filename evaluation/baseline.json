@@ -20,6 +20,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 2,
           "repositorySample": [
             "hexline-rfcs",
@@ -31,6 +32,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 1,
           "repositorySample": [
             ".github"
@@ -41,6 +43,7 @@
           "severity": "low",
           "category": "README quality",
           "action": "Show the project in action with a concise example, screenshot, or demo section.",
+          "reason": "README has no detected example, demo, screenshot, or image.",
           "repositoryCount": 4,
           "repositorySample": [
             "hexline-docs",
@@ -54,6 +57,7 @@
           "severity": "low",
           "category": "Descriptions",
           "action": "Condense it to one focused sentence of 160 characters or fewer.",
+          "reason": "Description is 187 characters and difficult to scan.",
           "repositoryCount": 1,
           "repositorySample": [
             "hexline"
@@ -78,6 +82,7 @@
           "severity": "medium",
           "category": "Portfolio focus",
           "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "reason": "Strong repository candidates are not currently pinned.",
           "repositoryCount": 2,
           "repositorySample": [
             "receipt-ocr",
@@ -89,6 +94,7 @@
           "severity": "medium",
           "category": "README quality",
           "action": "Expand it with purpose, setup, usage, and a screenshot or example where useful.",
+          "reason": "README is only 180 bytes.",
           "repositoryCount": 1,
           "repositorySample": [
             "dotfiles"
@@ -99,6 +105,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 1,
           "repositorySample": [
             "dotfiles"
@@ -109,6 +116,7 @@
           "severity": "low",
           "category": "README quality",
           "action": "Show the project in action with a concise example, screenshot, or demo section.",
+          "reason": "README has no detected example, demo, screenshot, or image.",
           "repositoryCount": 3,
           "repositorySample": [
             "queue-lens",
@@ -121,6 +129,7 @@
           "severity": "low",
           "category": "Discoverability",
           "action": "Add a live demo URL when the project is deployable.",
+          "reason": "Web project has no homepage or demo URL.",
           "repositoryCount": 1,
           "repositorySample": [
             "envelope"
@@ -145,6 +154,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 1,
           "repositorySample": [
             "scripts"
@@ -155,6 +165,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 1,
           "repositorySample": [
             "scripts"
@@ -165,6 +176,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "reason": "Description is too generic to distinguish the project.",
           "repositoryCount": 1,
           "repositorySample": [
             "notes-app"
@@ -175,6 +187,7 @@
           "severity": "medium",
           "category": "Portfolio focus",
           "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "reason": "Strong repository candidates are not currently pinned.",
           "repositoryCount": 3,
           "repositorySample": [
             "docs-theme",
@@ -187,6 +200,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 2,
           "repositorySample": [
             "scripts",
@@ -212,6 +226,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 1,
           "repositorySample": [
             "first-startup-backend"
@@ -222,6 +237,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 1,
           "repositorySample": [
             "first-startup-backend"
@@ -232,6 +248,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 4,
           "repositorySample": [
             "old-dashboard",
@@ -245,6 +262,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 3,
           "repositorySample": [
             "old-dashboard",
@@ -257,6 +275,7 @@
           "severity": "medium",
           "category": "Descriptions",
           "action": "Add concrete context so the purpose is clear without opening the repository.",
+          "reason": "Descriptions are shorter than 30 characters.",
           "repositoryCount": 2,
           "repositorySample": [
             "old-dashboard",
@@ -282,6 +301,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 106,
           "repositorySample": [
             "json-diff",
@@ -297,6 +317,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 106,
           "repositorySample": [
             "json-diff",
@@ -312,6 +333,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 3,
           "repositorySample": [
             "json-diff",
@@ -324,6 +346,7 @@
           "severity": "medium",
           "category": "Project maintenance",
           "action": "Update it, clearly mark it complete, or archive it if it is no longer maintained.",
+          "reason": "Repositories have not been pushed to in more than three years.",
           "repositoryCount": 45,
           "repositorySample": [
             "csv-proxy",
@@ -339,6 +362,7 @@
           "severity": "medium",
           "category": "Portfolio focus",
           "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "reason": "Strong repository candidates are not currently pinned.",
           "repositoryCount": 3,
           "repositorySample": [
             "hookshot",
@@ -365,6 +389,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 2,
           "repositorySample": [
             "cs101-homework-3",
@@ -376,6 +401,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 1,
           "repositorySample": [
             "cs101-homework-3"
@@ -386,6 +412,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "reason": "Description is too generic to distinguish the project.",
           "repositoryCount": 1,
           "repositorySample": [
             "weather-app"
@@ -396,6 +423,7 @@
           "severity": "high",
           "category": "Portfolio focus",
           "action": "Improve or unpin these repositories so pinned work represents the strongest public projects.",
+          "reason": "One or more pinned repositories have weak presentation scores.",
           "repositoryCount": 1,
           "repositorySample": [
             "weather-app"
@@ -406,6 +434,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 6,
           "repositorySample": [
             "cs101-homework-3",
@@ -435,6 +464,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 2,
           "repositorySample": [
             "distributed-queue",
@@ -446,6 +476,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 2,
           "repositorySample": [
             "pytorch-experiments",
@@ -457,6 +488,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "reason": "Description is too generic to distinguish the project.",
           "repositoryCount": 1,
           "repositorySample": [
             "vector-index"
@@ -467,6 +499,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 4,
           "repositorySample": [
             "distributed-queue",
@@ -480,6 +513,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 3,
           "repositorySample": [
             "pytorch-experiments",
@@ -506,6 +540,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 5,
           "repositorySample": [
             "blog",
@@ -520,6 +555,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 3,
           "repositorySample": [
             "blog",
@@ -532,6 +568,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Replace it with the project's purpose and key capability.",
+          "reason": "Description is placeholder text.",
           "repositoryCount": 1,
           "repositorySample": [
             "chatbot-demo"
@@ -542,6 +579,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "reason": "Description is too generic to distinguish the project.",
           "repositoryCount": 1,
           "repositorySample": [
             "todo-app"
@@ -552,6 +590,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 7,
           "repositorySample": [
             "blog",
@@ -581,6 +620,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 2,
           "repositorySample": [
             "hello-world",
@@ -592,6 +632,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 2,
           "repositorySample": [
             "hello-world",
@@ -603,6 +644,7 @@
           "severity": "high",
           "category": "Repository presentation",
           "action": "Choose a short, distinctive name related to what the project does.",
+          "reason": "Repository name is too generic to communicate its purpose.",
           "repositoryCount": 1,
           "repositorySample": [
             "hello-world"
@@ -613,6 +655,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 3,
           "repositorySample": [
             "hello-world",
@@ -625,6 +668,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 3,
           "repositorySample": [
             "hello-world",
@@ -651,6 +695,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 1,
           "repositorySample": [
             "tessellate-web"
@@ -661,6 +706,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 1,
           "repositorySample": [
             "tessellate-web"
@@ -671,6 +717,7 @@
           "severity": "medium",
           "category": "Repository presentation",
           "action": "Shorten the name so it is easier to scan, remember, and type.",
+          "reason": "Repository name exceeds 50 characters.",
           "repositoryCount": 1,
           "repositorySample": [
             "tiling-algorithms-reference-implementations-and-notes"
@@ -681,6 +728,7 @@
           "severity": "medium",
           "category": "README quality",
           "action": "Add clearly labeled sections so visitors can understand, install, and use the project quickly.",
+          "reason": "README is missing clear installation or setup, usage guidance.",
           "repositoryCount": 1,
           "repositorySample": [
             "tiling-algorithms-reference-implementations-and-notes"
@@ -691,6 +739,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 1,
           "repositorySample": [
             "tessellate-web"
@@ -715,6 +764,7 @@
           "severity": "high",
           "category": "README quality",
           "action": "Add a README explaining the problem, setup, usage, and important implementation decisions.",
+          "reason": "Repository has no root README.",
           "repositoryCount": 2,
           "repositorySample": [
             "infra",
@@ -726,6 +776,7 @@
           "severity": "high",
           "category": "Descriptions",
           "action": "Add one sentence stating what the project does, its audience, and a distinguishing technology or outcome.",
+          "reason": "Description is missing.",
           "repositoryCount": 1,
           "repositorySample": [
             "infra"
@@ -736,6 +787,7 @@
           "severity": "medium",
           "category": "Portfolio focus",
           "action": "Consider pinning these projects if they represent the work you want visitors to notice first.",
+          "reason": "Strong repository candidates are not currently pinned.",
           "repositoryCount": 3,
           "repositorySample": [
             "openapi-tools",
@@ -748,6 +800,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 2,
           "repositorySample": [
             "infra",
@@ -759,6 +812,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 2,
           "repositorySample": [
             "infra",
@@ -784,6 +838,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add three to five specific topics covering the project domain, stack, and use case.",
+          "reason": "Repository has no topics.",
           "repositoryCount": 1,
           "repositorySample": [
             "buoy-feed"
@@ -794,6 +849,7 @@
           "severity": "medium",
           "category": "Discoverability",
           "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
           "repositoryCount": 1,
           "repositorySample": [
             "buoy-feed"
@@ -804,6 +860,7 @@
           "severity": "medium",
           "category": "Descriptions",
           "action": "Add concrete context so the purpose is clear without opening the repository.",
+          "reason": "Description is only 17 characters.",
           "repositoryCount": 1,
           "repositorySample": [
             "knot"
@@ -814,6 +871,7 @@
           "severity": "medium",
           "category": "Project maintenance",
           "action": "Update it, clearly mark it complete, or archive it if it is no longer maintained.",
+          "reason": "Repository has not been pushed to in 3 years.",
           "repositoryCount": 1,
           "repositorySample": [
             "logbook"

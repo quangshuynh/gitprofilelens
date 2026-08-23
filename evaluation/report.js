@@ -102,6 +102,9 @@ function describeRecommendation(recommendation) {
     severity: recommendation.severity,
     category: recommendation.category,
     action: recommendation.action,
+    // Recorded because the reason is rendered above the affected repository list,
+    // so a grouped reason that describes only one of them is a visible change.
+    reason: recommendation.reason,
     repositoryCount: recommendation.repositories.length,
     repositorySample: recommendation.repositories.slice(0, REPOSITORY_SAMPLE_LIMIT),
   };
@@ -173,9 +176,10 @@ function diffRecommendations(before, after) {
 
     const rankMoved = previous.rank !== current.rank;
     const severityMoved = previous.entry.severity !== current.entry.severity;
+    const reasonMoved = previous.entry.reason !== current.entry.reason;
     const countMoved = previous.entry.repositoryCount !== current.entry.repositoryCount;
     const sampleMoved = previous.entry.repositorySample.join() !== current.entry.repositorySample.join();
-    if (!rankMoved && !severityMoved && !countMoved && !sampleMoved) continue;
+    if (!rankMoved && !severityMoved && !reasonMoved && !countMoved && !sampleMoved) continue;
 
     changes.push({
       change: "changed",
@@ -277,6 +281,9 @@ function renderRecommendationChange(change) {
   if (change.previousRank !== change.rank) details.push(`rank ${change.previousRank} -> ${change.rank}`);
   if (change.previousEntry.severity !== entry.severity) {
     details.push(`severity ${change.previousEntry.severity} -> ${entry.severity}`);
+  }
+  if (change.previousEntry.reason !== entry.reason) {
+    details.push(`reason "${elide(change.previousEntry.reason)}" -> "${elide(entry.reason)}"`);
   }
   if (change.previousEntry.repositoryCount !== entry.repositoryCount) {
     details.push(`repos ${change.previousEntry.repositoryCount} -> ${entry.repositoryCount}`);

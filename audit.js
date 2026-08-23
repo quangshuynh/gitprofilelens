@@ -60,10 +60,15 @@
    * @param {string} reason explanation of the detected condition
    * @param {string} action suggested action for addressing the condition
    * @param {boolean} factual whether the finding is a factual check
+   * @param {string} groupReason reason to use when several repositories are grouped under one recommendation
    * @returns {Object} structured audit finding
    */
-  function createFinding(category, severity, reason, action, factual) {
-    return { category, severity, reason, action, factual };
+  function createFinding(category, severity, reason, action, factual, groupReason) {
+    const finding = { category, severity, reason, action, factual };
+    // Reasons that quote a repository's own measurements cannot describe a group.
+    // Such findings supply a plural-safe reason that stays true of every member.
+    if (groupReason) finding.groupReason = groupReason;
+    return finding;
   }
 
   /**
@@ -91,7 +96,7 @@
 
     if (value.length < 30) {
       score -= 25;
-      findings.push(createFinding("Descriptions", "medium", `Description is only ${value.length} characters.`, "Add concrete context so the purpose is clear without opening the repository.", true));
+      findings.push(createFinding("Descriptions", "medium", `Description is only ${value.length} characters.`, "Add concrete context so the purpose is clear without opening the repository.", true, "Descriptions are shorter than 30 characters."));
     }
 
     if (value.length > 160) {
@@ -168,7 +173,7 @@
     }
 
     if (readme.size !== null && readme.size < 500) {
-      findings.push(createFinding("README quality", "medium", `README is only ${readme.size} bytes.`, "Expand it with purpose, setup, usage, and a screenshot or example where useful.", true));
+      findings.push(createFinding("README quality", "medium", `README is only ${readme.size} bytes.`, "Expand it with purpose, setup, usage, and a screenshot or example where useful.", true, "READMEs are shorter than 500 bytes."));
       return { score: 55, findings };
     }
 
@@ -256,7 +261,7 @@
     }
 
     if (ageInDays > 1095) {
-      findings.push(createFinding("Project maintenance", "medium", `Repository has not been pushed to in ${Math.floor(ageInDays / 365)} years.`, "Update it, clearly mark it complete, or archive it if it is no longer maintained.", true));
+      findings.push(createFinding("Project maintenance", "medium", `Repository has not been pushed to in ${Math.floor(ageInDays / 365)} years.`, "Update it, clearly mark it complete, or archive it if it is no longer maintained.", true, "Repositories have not been pushed to in more than three years."));
       return { score: 35, findings };
     }
 
@@ -520,10 +525,27 @@
       }
     }
 
-    const recommendations = [...groups.values()];
+    const recommendations = [...groups.values()].map(summarizeRecommendation);
     addPinningRecommendations(recommendations, audits);
     recommendations.sort(compareRecommendations);
     return recommendations.slice(0, 5);
+  }
+
+  /**
+   * finalizes a grouped recommendation so its reason describes every repository it names
+   *
+   * A group keeps the first matching finding, whose reason may quote that one
+   * repository's measurements. The card renders the reason directly above the
+   * affected repository list, so once a group covers more than one repository the
+   * plural-safe reason is used instead.
+   *
+   * @param {Object} group grouped finding with its affected repositories
+   * @returns {Object} portfolio recommendation
+   */
+  function summarizeRecommendation(group) {
+    const { groupReason, ...recommendation } = group;
+    if (!groupReason || recommendation.repositories.length < 2) return recommendation;
+    return { ...recommendation, reason: groupReason };
   }
 
   /**

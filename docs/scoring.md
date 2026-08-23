@@ -264,7 +264,10 @@ focus. See [F2](#f2--forking-counts-as-curation).
 
 1. **Drop `info` findings.** Anything the tool could not verify produces no advice.
 2. **Group by `category|action`.** Findings that recommend the same action merge into one
-   recommendation carrying the list of affected repository names.
+   recommendation carrying the list of affected repository names. The group keeps the first
+   finding's `reason`, so a finding whose reason quotes its own measurements declares a
+   plural-safe `groupReason` that is substituted once the group covers more than one
+   repository.
 3. **Append pin advice** after grouping, so portfolio advice never merges with per-repository
    advice.
 4. **Rank** by `severityWeight * 100 + repositoryCount`, where high = 3, medium = 2, low = 1.
@@ -397,18 +400,14 @@ GitHub returns `spdx_id: "NOASSERTION"` for a license file it cannot identify.
 `scoreDiscoverability` only checks presence, so it passes with no finding. Exposed by
 `unusual-metadata`.
 
-### F11 — Merged advice displays one repository's specifics
-Findings group by `category|action`, but the group keeps the **first** finding's `reason`
-text, which `script.js:731` renders. Reasons that embed per-repository numbers are therefore
-wrong for every repository after the first:
+### F11 — Merged advice displays one repository's specifics — FIXED
+Findings group by `category|action`, and the group kept the **first** finding's `reason`,
+which `script.js:731` renders directly above the affected repository list. Reasons that embed
+per-repository numbers were therefore wrong for every repository after the first.
 
-- `archive-heavy` shows *"Description is only 9 characters."* for a recommendation covering
-  `old-dashboard` (9 characters) and `experiments-2019` (20 characters).
-- `prolific-account` merges repositories that are 3, 4, and 5 years stale into one
-  recommendation reading *"has not been pushed to in 3 years."*
-
-The ranking, severity, and repository list are all correct; only the displayed explanation
-is misleading.
+Resolved: a finding may now declare a plural-safe `groupReason`, and `summarizeRecommendation`
+substitutes it once a group covers more than one repository. Repository-level findings keep
+their specific reasons, which the category explanation panel counts individually.
 
 ---
 
@@ -442,7 +441,9 @@ not belong.
 - Give it an `action` that is constant across repositories. Grouping keys on
   `category|action`, so an action containing repository-specific text produces one
   recommendation per repository and floods the five-item cap.
-- Keep repository-specific detail in `reason` — while remembering [F11](#f11--merged-advice-displays-one-repositorys-specifics).
+- Keep repository-specific detail in `reason`. If that detail quotes the repository's own
+  measurements, pass a plural-safe `groupReason` as well, so the recommendation stays true
+  once several repositories are grouped under it.
 - Use `info` severity for anything the tool cannot verify. `info` findings never become
   advice.
 - Add a corpus fixture that triggers it, or extend an existing persona. Every fixture
@@ -469,7 +470,7 @@ never a claim about a kind of developer.
 | `fixtures/index.js` | `PERSONAS` (9), `EDGE_CASES` (4), `CORPUS`, `getProfile(id)` |
 | `harness.js` | `auditProfile` runs the real pipeline at a frozen `EVALUATION_DATE` of 2026-08-21 |
 | `expectations.js` | Band and advice assertions that print the full ranked advice list on failure |
-| `harness.test.js` (9), `personas.test.js` (28), `edge-cases.test.js` (9), `report.test.js` (14) | 60 tests |
+| `harness.test.js` (9), `personas.test.js` (31), `edge-cases.test.js` (9), `report.test.js` (15) | 64 tests |
 
 Fixtures are authored at the **raw REST payload** boundary, so `transformRepository` stays
 inside the tested surface.

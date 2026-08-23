@@ -450,6 +450,61 @@ test("widespread advice outranks severe advice past a hundred repositories", () 
   );
 });
 
+test("grouped advice explains itself in terms true of every repository it names", () => {
+  // A group keeps its first matching finding, whose reason may quote that one
+  // repository's own measurements, and the card renders the reason directly above
+  // the affected repository list. Once members disagree, the shared condition has
+  // to be stated instead.
+  let checked = 0;
+
+  for (const profile of CORPUS) {
+    const result = auditProfile(profile);
+
+    for (const recommendation of result.recommendations) {
+      if (recommendation.repositories.length < 2) continue;
+      const members = result.audits.flatMap((audit) => audit.findings.filter((finding) =>
+        finding.category === recommendation.category && finding.action === recommendation.action
+      ));
+      const reasons = new Set(members.map((finding) => finding.reason));
+      // Pin advice has no member findings, and an agreeing group needs no rewrite.
+      if (reasons.size < 2) continue;
+      checked += 1;
+      assert.equal(
+        reasons.has(recommendation.reason),
+        false,
+        `${result.id} explains advice covering ${recommendation.repositories.length} repositories with ` +
+        `one repository's own measurement: "${recommendation.reason}".\n${describeAdvice(result)}`
+      );
+    }
+  }
+
+  assert.ok(checked >= 2, `only ${checked} grouped recommendations had disagreeing reasons to check`);
+});
+
+test("grouping advice does not erase the measurement each repository reported", () => {
+  const advice = assertAdvice(archiveHeavy, "Descriptions", /add concrete context/i, {
+    repositories: ["old-dashboard", "experiments-2019"],
+  });
+  const specific = advice.repositories.map((name) => archiveHeavy.audits
+    .find((audit) => audit.repository.name === name).findings
+    .find((finding) => /^Description is only/.test(finding.reason)).reason);
+
+  assert.equal(advice.reason, "Descriptions are shorter than 30 characters.");
+  // The category explanation panel counts repository-level reasons, so those must
+  // stay specific even though the recommendation above them no longer is.
+  assert.deepEqual(specific, ["Description is only 9 characters.", "Description is only 20 characters."]);
+});
+
+test("advice about a single repository keeps that repository's own measurement", () => {
+  const advice = assertAdvice(polished, "README quality", /expand it with purpose/i, { repositories: ["dotfiles"] });
+
+  assert.match(
+    advice.reason,
+    /^README is only \d+ bytes\.$/,
+    `single-repository advice lost its specific reason: "${advice.reason}"`
+  );
+});
+
 test("every corpus recommendation is actionable, attributed, and ranked by severity", () => {
   for (const profile of CORPUS) {
     const result = auditProfile(profile);
