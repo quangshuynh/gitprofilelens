@@ -33,6 +33,8 @@ const REPOSITORY_KEYS = new Set([
   "readme",
 ]);
 
+const PROFILE_KEYS = new Set(["id", "username", "summary", "repositories", "supplementalMetadata"]);
+
 const MAXIMUM_PINNED_REPOSITORIES = 6;
 
 /**
@@ -58,7 +60,16 @@ function buildRepository(username, fixture) {
   }
   if (!fixture.name) throw new Error("Repository fixtures require a name.");
   if (!fixture.note) throw new Error(`Repository fixture ${fixture.name} requires a note explaining why it exists.`);
-  if (!fixture.pushedAt) throw new Error(`Repository fixture ${fixture.name} requires a pushedAt date.`);
+  if (!("pushedAt" in fixture)) {
+    throw new Error(`Repository fixture ${fixture.name} requires a pushedAt date, or an explicit null for a repository with no commits.`);
+  }
+
+  // GitHub reports pushed_at as null for a repository that has never received a
+  // commit, and falls back to the creation time for updated_at.
+  const createdAt = fixture.createdAt ?? fixture.pushedAt;
+  if (!createdAt) {
+    throw new Error(`Repository fixture ${fixture.name} requires a createdAt date when it has never been pushed to.`);
+  }
 
   return {
     name: fixture.name,
@@ -68,7 +79,9 @@ function buildRepository(username, fixture) {
     homepage: fixture.homepage ?? null,
     language: fixture.language ?? null,
     topics: fixture.topics ?? [],
-    license: fixture.license ? { spdx_id: fixture.license } : null,
+    // A string names an SPDX identifier; an object is passed through so fixtures
+    // can model what GitHub returns for a license file it cannot identify.
+    license: buildLicense(fixture.license),
     stargazers_count: fixture.stars ?? 0,
     forks_count: fixture.forks ?? 0,
     open_issues_count: fixture.openIssues ?? 0,
@@ -76,10 +89,20 @@ function buildRepository(username, fixture) {
     fork: fixture.fork ?? false,
     private: fixture.private ?? false,
     visibility: fixture.visibility ?? (fixture.private ? "private" : "public"),
-    created_at: timestamp(fixture.createdAt ?? fixture.pushedAt),
-    updated_at: timestamp(fixture.updatedAt ?? fixture.pushedAt),
-    pushed_at: timestamp(fixture.pushedAt),
+    created_at: timestamp(createdAt),
+    updated_at: timestamp(fixture.updatedAt ?? fixture.pushedAt ?? createdAt),
+    pushed_at: fixture.pushedAt === null ? null : timestamp(fixture.pushedAt),
   };
+}
+
+/**
+ * builds the license field of a github repository payload
+ * @param {string|Object|undefined} license spdx identifier, raw license object, or nothing
+ * @returns {Object|null} github license object
+ */
+function buildLicense(license) {
+  if (!license) return null;
+  return typeof license === "string" ? { spdx_id: license } : license;
 }
 
 /**
@@ -88,8 +111,12 @@ function buildRepository(username, fixture) {
  * @returns {Object} corpus profile with rest repositories and supplemental metadata
  */
 function buildProfile(persona) {
+  for (const key of Object.keys(persona)) {
+    if (!PROFILE_KEYS.has(key)) throw new Error(`Unknown profile fixture field "${key}" on ${persona.id}.`);
+  }
   if (!persona.id) throw new Error("Profile fixtures require an id.");
   if (!persona.summary) throw new Error(`Profile fixture ${persona.id} requires a summary explaining its expected outcome.`);
+  if (!Array.isArray(persona.repositories)) throw new Error(`Profile fixture ${persona.id} requires a repositories array.`);
 
   const username = persona.username ?? persona.id;
   const names = new Set();
@@ -109,12 +136,21 @@ function buildProfile(persona) {
     throw new Error(`Profile fixture ${persona.id} pins ${pinnedRepositories.length} repositories; GitHub allows ${MAXIMUM_PINNED_REPOSITORIES}.`);
   }
 
+  // `supplementalMetadata: false` models a deployment where the serverless
+  // metadata endpoint is unavailable, such as the static GitHub Pages client.
+  // README and pin state are then unknown rather than absent, so a fixture that
+  // still declares them would be describing data the scorer never receives.
+  const metadataAvailable = persona.supplementalMetadata !== false;
+  if (!metadataAvailable && (pinnedRepositories.length > 0 || Object.keys(readmes).length > 0)) {
+    throw new Error(`Profile fixture ${persona.id} declares README or pin data that an unavailable metadata endpoint could not return.`);
+  }
+
   return {
     id: persona.id,
     username,
     summary: persona.summary,
     repositories: persona.repositories.map((fixture) => buildRepository(username, fixture)),
-    supplemental: { pinnedRepositories, readmes },
+    supplemental: metadataAvailable ? { pinnedRepositories, readmes } : null,
   };
 }
 

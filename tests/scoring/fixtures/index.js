@@ -13,16 +13,22 @@
 
 const archiveHeavy = require("./archive-heavy.js");
 const beginnerAccount = require("./beginner-account.js");
+const emptyAccount = require("./empty-account.js");
 const flagshipDominated = require("./flagship-dominated.js");
 const forkDominated = require("./fork-dominated.js");
 const ossMaintainer = require("./oss-maintainer.js");
 const polishedProfessional = require("./polished-professional.js");
+const privateAuditScope = require("./private-audit-scope.js");
 const prolificAccount = require("./prolific-account.js");
 const strongWorkWeakPresentation = require("./strong-work-weak-presentation.js");
 const studentCoursework = require("./student-coursework.js");
+const unusualMetadata = require("./unusual-metadata.js");
+const unverifiedMetadata = require("./unverified-metadata.js");
 
-/** Corpus profiles in a stable order, strongest presentation first. */
-const CORPUS = [
+/**
+ * Personas: representative accounts, strongest presentation first.
+ */
+const PERSONAS = [
   ossMaintainer,
   polishedProfessional,
   forkDominated,
@@ -35,6 +41,19 @@ const CORPUS = [
 ];
 
 /**
+ * Edge cases: data shapes and audit modes rather than kinds of account.
+ */
+const EDGE_CASES = [
+  unusualMetadata,
+  privateAuditScope,
+  unverifiedMetadata,
+  emptyAccount,
+];
+
+/** Every corpus profile. */
+const CORPUS = [...PERSONAS, ...EDGE_CASES];
+
+/**
  * finds a corpus profile by id
  * @param {string} id persona identifier
  * @returns {Object} corpus profile
@@ -45,4 +64,4 @@ function getProfile(id) {
   return profile;
 }
 
-module.exports = { CORPUS, getProfile };
+module.exports = { CORPUS, EDGE_CASES, PERSONAS, getProfile };

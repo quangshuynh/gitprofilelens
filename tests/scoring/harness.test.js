@@ -112,6 +112,32 @@ test("fixture builders reject malformed personas instead of scoring them", () =>
       name: `repo-${index}`, note: "Pinned.", pushedAt: "2026-08-01", pinned: true,
     })),
   }), /GitHub allows 6/);
+  assert.throws(() => buildProfile({
+    id: "x",
+    summary: "Declares README data an unavailable metadata endpoint could not return.",
+    supplementalMetadata: false,
+    repositories: [{ ...repository, readme: missingReadme() }],
+  }), /could not return/);
+  assert.throws(() => buildRepository("example", {
+    name: "one", note: "No commits and no creation date.", pushedAt: null,
+  }), /requires a createdAt date/);
+  assert.throws(() => buildProfile({
+    id: "x", summary: "Uses a profile field that does not exist.", repositories: [], supplemental: null,
+  }), /Unknown profile fixture field "supplemental"/);
+});
+
+test("an unavailable metadata endpoint produces no supplemental data at all", () => {
+  const profile = buildProfile({
+    id: "example-profile",
+    summary: "Audited where README and pin metadata could not be fetched.",
+    supplementalMetadata: false,
+    repositories: [{ name: "one", note: "Public REST data only.", pushedAt: "2026-08-01" }],
+  });
+  const normalized = transformRepository(profile.repositories[0], profile.supplemental);
+
+  assert.equal(profile.supplemental, null);
+  assert.equal(normalized.pinned, null);
+  assert.equal(normalized.readme.present, null);
 });
 
 test("corpus scoring is deterministic and driven by the injected evaluation date", () => {
@@ -145,9 +171,13 @@ test("every corpus profile documents itself and produces bounded scores", () => 
     assert.equal(identifiers.has(profile.id), false, `${profile.id} is declared twice`);
     identifiers.add(profile.id);
     assert.ok(profile.summary.length > 40, `${profile.id} needs a summary explaining its expected outcome`);
-    assert.ok(profile.repositories.length > 0, `${profile.id} has no repositories`);
+    // empty-account is the one profile that intentionally owns nothing.
+    assert.ok(
+      profile.repositories.length > 0 || profile.id === "empty-account",
+      `${profile.id} built no repositories, which is almost certainly a fixture mistake`
+    );
 
-    for (const name of profile.supplemental.pinnedRepositories) {
+    for (const name of profile.supplemental?.pinnedRepositories ?? []) {
       assert.ok(
         profile.repositories.some((repository) => repository.name === name),
         `${profile.id} pins ${name}, which it does not own`
