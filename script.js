@@ -77,6 +77,7 @@ for (const scopeInput of privateExportScopeInputs) {
 
 for (const tabButton of tabButtons) {
   tabButton.addEventListener("click", handleTabClick);
+  tabButton.addEventListener("keydown", handleTabKeydown);
 }
 
 randomizeDoodles();
@@ -1238,6 +1239,33 @@ function handleTabClick(event) {
 }
 
 /**
+ * moves focus between available tabs using the ARIA tabs keyboard pattern
+ * @param {KeyboardEvent} event keyboard event from a tab button
+ * @returns {void} no return value
+ */
+function handleTabKeydown(event) {
+  const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+
+  const availableTabs = [...tabButtons].filter((button) => !button.hidden);
+  const currentIndex = availableTabs.indexOf(event.currentTarget);
+  if (currentIndex < 0) return;
+
+  let nextIndex;
+  if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = availableTabs.length - 1;
+  else {
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    nextIndex = (currentIndex + direction + availableTabs.length) % availableTabs.length;
+  }
+
+  event.preventDefault();
+  const nextTab = availableTabs[nextIndex];
+  nextTab.focus();
+  activateTab(nextTab.dataset.tab, true);
+}
+
+/**
  * activates one result tab and optionally updates the url
  * @param {string} tabName tab identifier
  * @param {boolean} updateUrl whether to write the tab into the url
@@ -1253,6 +1281,7 @@ function activateTab(tabName, updateUrl) {
     const active = button.dataset.tab === validTab;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
   }
 
   for (const panel of tabPanels) {
