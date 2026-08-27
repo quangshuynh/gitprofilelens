@@ -88,9 +88,19 @@ test("profile flow renders verified README details and switches tabs", { skip: !
   await page.getByRole("button", { name: /explain the portfolio focus score/i }).click();
   assert.match(await page.locator("#score-explanation-focus").innerText(), /55-point baseline/i);
   await page.getByRole("tab", { name: "Audit" }).click();
+  assert.equal(await page.locator(".tabs").getAttribute("role"), "tablist");
+  assert.equal(await page.locator("#audit-tab").getAttribute("aria-controls"), "audit-panel");
+  assert.equal(await page.locator("#audit-panel").getAttribute("aria-labelledby"), "audit-tab");
+  assert.equal(await page.locator("#audit-tab").getAttribute("tabindex"), "0");
+  assert.equal(await page.locator("#overview-tab").getAttribute("tabindex"), "-1");
   await page.getByText("README checklist").first().waitFor();
   assert.match(await page.locator(".readme-checklist").first().innerText(), /✓ Overview/);
   assert.match(await page.locator(".readme-checklist").first().innerText(), /– Contribution guide/);
+
+  await page.locator("#audit-tab").press("ArrowRight");
+  assert.equal(await page.locator("#repositories-tab").getAttribute("aria-selected"), "true");
+  await page.locator("#repositories-tab").press("End");
+  assert.equal(await page.locator("#markdown-tab").getAttribute("aria-selected"), "true");
 
   await browser.close();
 });
