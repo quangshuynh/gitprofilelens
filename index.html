@@ -107,14 +107,14 @@
         </div>
       </div>
 
-      <nav class="tabs" aria-label="Profile results">
-        <button class="tab is-active" type="button" role="tab" aria-selected="true" data-tab="overview">Overview</button>
-        <button class="tab" type="button" role="tab" aria-selected="false" data-tab="audit">Audit</button>
-        <button class="tab" type="button" role="tab" aria-selected="false" data-tab="repositories">Repositories</button>
-        <button class="tab" type="button" role="tab" aria-selected="false" data-tab="markdown">Markdown export</button>
+      <nav class="tabs" role="tablist" aria-label="Profile results">
+        <button id="overview-tab" class="tab is-active" type="button" role="tab" aria-selected="true" aria-controls="overview-panel" tabindex="0" data-tab="overview">Overview</button>
+        <button id="audit-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="audit-panel" tabindex="-1" data-tab="audit">Audit</button>
+        <button id="repositories-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="repositories-panel" tabindex="-1" data-tab="repositories">Repositories</button>
+        <button id="markdown-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="markdown-panel" tabindex="-1" data-tab="markdown">Markdown export</button>
       </nav>
 
-      <section id="overview-panel" class="tab-panel" role="tabpanel">
+      <section id="overview-panel" class="tab-panel" role="tabpanel" aria-labelledby="overview-tab" tabindex="0">
         <div class="score-layout">
           <article class="overall-score">
             <p>GitHub Profile Score</p>
@@ -135,7 +135,7 @@
         </details>
       </section>
 
-      <section id="audit-panel" class="tab-panel" role="tabpanel" hidden>
+      <section id="audit-panel" class="tab-panel" role="tabpanel" aria-labelledby="audit-tab" tabindex="0" hidden>
         <div class="section-heading">
           <div><p id="audit-eyebrow" class="eyebrow">Lowest scores first</p><h2 id="audit-title">Repository audit</h2></div>
           <p id="audit-summary" class="summary-text"></p>
@@ -144,7 +144,7 @@
         <div id="audit-list" class="audit-list"></div>
       </section>
 
-      <section id="repositories-panel" class="tab-panel" role="tabpanel" hidden>
+      <section id="repositories-panel" class="tab-panel" role="tabpanel" aria-labelledby="repositories-tab" tabindex="0" hidden>
         <div class="section-heading">
           <div><p class="eyebrow">Fetched GitHub data</p><h2>Repositories</h2></div>
           <p id="repository-summary" class="summary-text"></p>
@@ -153,7 +153,7 @@
         <div id="repository-list" class="repository-list"></div>
       </section>
 
-      <section id="markdown-panel" class="tab-panel" role="tabpanel" hidden>
+      <section id="markdown-panel" class="tab-panel" role="tabpanel" aria-labelledby="markdown-tab" tabindex="0" hidden>
         <div class="section-heading export-heading">
           <div><p class="eyebrow">Preview and export</p><h2>Markdown report</h2></div>
           <div class="actions">
