@@ -107,3 +107,65 @@ test("serverless metadata endpoint transforms pins and README blobs", async () =
     else process.env.GITHUB_TOKEN = originalToken;
   }
 });
+
+test("serverless metadata endpoint paginates README repositories", async () => {
+  const originalFetch = global.fetch;
+  const originalToken = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = "test-token";
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    const variables = JSON.parse(options.body).variables;
+    requests.push(variables.cursor);
+    const laterPage = variables.cursor === "cursor-1";
+    return {
+      ok: true,
+      json: async () => ({ data: { user: {
+        pinnedItems: { nodes: [{ name: "first" }] },
+        repositories: {
+          pageInfo: laterPage ? { hasNextPage: false, endCursor: null } : { hasNextPage: true, endCursor: "cursor-1" },
+          nodes: [{ name: laterPage ? "second" : "first", readmeMarkdown: { byteSize: 20, text: "# README" }, readmeUppercase: null, readmeLowercase: null }],
+        },
+      } } }),
+    };
+  };
+  const { response, result } = createResponse();
+  try {
+    await handler({ method: "GET", query: { username: "example" } }, response);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.repositories, ["first"]);
+    assert.deepEqual(Object.keys(result.body.readmes).sort(), ["first", "second"]);
+    assert.deepEqual(requests, [null, "cursor-1"]);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = originalToken;
+  }
+});
+
+test("serverless metadata endpoint preserves errors from later pages", async () => {
+  const originalFetch = global.fetch;
+  const originalToken = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = "test-token";
+  let requestCount = 0;
+  global.fetch = async () => {
+    requestCount += 1;
+    if (requestCount === 2) return { ok: false, status: 403, json: async () => ({ message: "rate limit" }) };
+    return {
+      ok: true,
+      json: async () => ({ data: { user: {
+        pinnedItems: { nodes: [] },
+        repositories: { pageInfo: { hasNextPage: true, endCursor: "cursor-1" }, nodes: [] },
+      } } }),
+    };
+  };
+  const { response, result } = createResponse();
+  try {
+    await handler({ method: "GET", query: { username: "example" } }, response);
+    assert.equal(result.status, 429);
+    assert.deepEqual(result.body, { error: "GitHub API rate limit reached." });
+  } finally {
+    global.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = originalToken;
+  }
+});

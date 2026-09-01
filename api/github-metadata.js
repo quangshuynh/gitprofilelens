@@ -9,41 +9,58 @@ class GitHubRequestError extends Error {
 }
 
 async function fetchGitHubMetadata(username, token, fetchImplementation = fetch) {
-  let githubResponse;
-  try {
-    githubResponse = await fetchImplementation(GITHUB_GRAPHQL_URL, {
-      method: "POST",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "User-Agent": "gitprofilelens",
-      },
-      body: JSON.stringify({ query: METADATA_QUERY, variables: { username } }),
-    });
-  } catch {
-    throw new GitHubRequestError("GitHub could not return repository metadata.");
-  }
+  const readmes = [];
+  let pinnedRepositories;
+  let cursor = null;
+  let firstPage = true;
 
-  let data;
-  try {
-    data = await githubResponse.json();
-  } catch {
-    throw new GitHubRequestError("GitHub returned an invalid metadata response.");
-  }
-  if (githubResponse.status === 403 || githubResponse.status === 429) {
-    throw new GitHubRequestError("GitHub API rate limit reached.", 429);
-  }
-  if (!githubResponse.ok || data.errors) {
-    throw new GitHubRequestError("GitHub could not return repository metadata.");
-  }
-  if (!data.data?.user) {
-    throw new GitHubRequestError("GitHub user not found.", 404);
+  while (true) {
+    let githubResponse;
+    try {
+      githubResponse = await fetchImplementation(GITHUB_GRAPHQL_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "User-Agent": "gitprofilelens",
+        },
+        body: JSON.stringify({ query: METADATA_QUERY, variables: { username, cursor } }),
+      });
+    } catch {
+      throw new GitHubRequestError("GitHub could not return repository metadata.");
+    }
+
+    let data;
+    try {
+      data = await githubResponse.json();
+    } catch {
+      throw new GitHubRequestError("GitHub returned an invalid metadata response.");
+    }
+    if (githubResponse.status === 403 || githubResponse.status === 429) {
+      throw new GitHubRequestError("GitHub API rate limit reached.", 429);
+    }
+    if (!githubResponse.ok || data.errors) {
+      throw new GitHubRequestError("GitHub could not return repository metadata.");
+    }
+    if (!data.data?.user) {
+      throw new GitHubRequestError("GitHub user not found.", 404);
+    }
+
+    const repositoryConnection = data.data.user.repositories;
+    if (firstPage) pinnedRepositories = data.data.user.pinnedItems.nodes.map((repository) => repository.name);
+    readmes.push(...repositoryConnection.nodes);
+    firstPage = false;
+
+    const pageInfo = repositoryConnection.pageInfo;
+    if (!pageInfo?.hasNextPage) break;
+    if (!pageInfo.endCursor) throw new GitHubRequestError("GitHub returned invalid repository pagination metadata.");
+    cursor = pageInfo.endCursor;
   }
 
   return {
-    pinnedRepositories: data.data.user.pinnedItems.nodes.map((repository) => repository.name),
-    readmes: Object.fromEntries(data.data.user.repositories.nodes.map(getReadmeEntry)),
+    pinnedRepositories,
+    readmes: Object.fromEntries(readmes.map(getReadmeEntry)),
   };
 }
 
@@ -73,10 +90,11 @@ function analyzeReadme(markdown) {
 }
 
 const METADATA_QUERY = `
-  query PinnedRepositories($username: String!) {
+  query PinnedRepositories($username: String!, $cursor: String) {
     user(login: $username) {
       pinnedItems(first: 6, types: REPOSITORY) { nodes { ... on Repository { name } } }
-      repositories(first: 100, ownerAffiliations: OWNER, privacy: PUBLIC) {
+      repositories(first: 100, after: $cursor, ownerAffiliations: OWNER, privacy: PUBLIC) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           name
           readmeMarkdown: object(expression: "HEAD:README.md") { ... on Blob { byteSize text } }
