@@ -339,7 +339,7 @@
     return "present";
   }
 
-  function createReport(username, repositories) {
+  function createReport(username, repositories, contributedRepositories = []) {
     return {
       username,
       public_repositories: repositories.length,
@@ -350,6 +350,7 @@
           - (repositoryB.pinnedPosition ?? Number.MAX_SAFE_INTEGER)
         )
         .map((repository) => repository.name),
+      contributed_repositories: contributedRepositories,
       repositories: repositories.map((repository) => ({
         name: repository.name,
         description: repository.description || null,

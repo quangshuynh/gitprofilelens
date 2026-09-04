@@ -20,6 +20,9 @@ const auditSummary = document.querySelector("#audit-summary");
 const auditList = document.querySelector("#audit-list");
 const repositorySummary = document.querySelector("#repository-summary");
 const repositoryList = document.querySelector("#repository-list");
+const contributionsSection = document.querySelector("#contributions-section");
+const contributionSummary = document.querySelector("#contribution-summary");
+const contributionList = document.querySelector("#contribution-list");
 const output = document.querySelector("#output");
 const exportSummary = document.querySelector("#export-summary");
 const includeDetailsInput = document.querySelector("#include-details");
@@ -51,6 +54,7 @@ const tabPanels = document.querySelectorAll(".tab-panel");
 const appState = {
   user: null,
   repositories: [],
+  contributedRepositories: [],
   audits: [],
   supplemental: null,
   mode: "public",
@@ -144,15 +148,17 @@ async function loadProfile(username) {
     const user = await fetchJson(
       `https://api.github.com/users/${encodeURIComponent(username)}`
     );
-    const [rawRepositories, supplemental] = await Promise.all([
+    const [rawRepositories, supplemental, contributedRepositories] = await Promise.all([
       fetchAllRepositories(user.login),
       fetchSupplementalMetadata(user.login),
+      fetchContributedRepositories(user.login),
     ]);
     const repositories = transformRepositories(rawRepositories, supplemental);
     const audits = repositories.map(scoreTransformedRepository);
 
     appState.user = user;
     appState.repositories = repositories;
+    appState.contributedRepositories = contributedRepositories;
     appState.audits = audits;
     appState.supplemental = supplemental;
     appState.mode = "public";
@@ -271,6 +277,7 @@ async function loadPrivateRepositories() {
     const privateRepositories = repositories.filter((repository) => repository.private);
     appState.user = appState.authUser;
     appState.repositories = repositories;
+    appState.contributedRepositories = [];
     appState.audits = repositories.map(scoreTransformedRepository);
     appState.supplemental = supplemental;
     appState.mode = "private";
@@ -312,6 +319,7 @@ async function logout() {
       appState.mode = "public";
       appState.user = null;
       appState.repositories = [];
+      appState.contributedRepositories = [];
       appState.audits = [];
       appState.supplemental = null;
       clearPrivateExportState();
@@ -439,6 +447,25 @@ async function fetchSupplementalMetadata(username) {
 }
 
 /**
+ * fetches informational external contributions from the public report endpoint
+ * @param {string} username github username
+ * @returns {Promise<Array<Object>>} normalized public contributed repositories
+ */
+async function fetchContributedRepositories(username) {
+  try {
+    const response = await fetch(
+      `/api/report?user=${encodeURIComponent(username)}`,
+      { headers: { Accept: "application/json" } }
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data.contributed_repositories) ? data.contributed_repositories : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * fetches json data and translates github api failures into useful messages
  * @param {string} url url to request
  * @returns {Promise<Object|Array>} parsed json response
@@ -493,6 +520,7 @@ function renderResults() {
   renderOverview();
   renderAudits();
   renderRepositories();
+  renderContributions();
   refreshMarkdown();
 }
 
@@ -518,6 +546,7 @@ function setResultMode(mode) {
     button.hidden = privateMode && !["audit", "markdown"].includes(button.dataset.tab);
   }
   publicExportOptions.hidden = privateMode;
+  if (privateMode) contributionsSection.hidden = true;
   privateExportOptions.hidden = !privateMode;
   privateExportNote.hidden = !privateMode;
   auditEyebrow.textContent = privateMode ? "Authorized repositories only" : "Lowest scores first";
@@ -997,6 +1026,44 @@ function renderRepositories() {
 
   for (const repository of repositories) {
     repositoryList.appendChild(createRepositoryCard(repository));
+  }
+}
+
+function renderContributions() {
+  const repositories = appState.contributedRepositories;
+  contributionsSection.hidden = false;
+  contributionSummary.textContent = `${repositories.length} external ${repositories.length === 1 ? "project" : "projects"} found.`;
+  contributionList.replaceChildren();
+
+  if (repositories.length === 0) {
+    contributionList.appendChild(createEmptyState("No public external repositories with merged authored pull requests were found."));
+    return;
+  }
+
+  for (const repository of repositories) {
+    const card = document.createElement("article");
+    const content = document.createElement("div");
+    const heading = document.createElement("div");
+    const title = document.createElement("a");
+    const count = document.createElement("span");
+    const description = document.createElement("p");
+    const metadata = document.createElement("p");
+    card.className = "repository-card contributed-repository-card";
+    content.className = "repository-card-content";
+    heading.className = "repository-card-heading";
+    title.href = repository.url;
+    title.target = "_blank";
+    title.rel = "noopener noreferrer";
+    title.textContent = repository.full_name;
+    count.className = "contribution-count";
+    count.textContent = `${repository.contribution.merged_pull_requests} merged ${repository.contribution.merged_pull_requests === 1 ? "PR" : "PRs"}`;
+    description.textContent = repository.description || "No description";
+    metadata.className = "repo-meta-line";
+    metadata.textContent = `${repository.primary_language || "Unknown language"} · ${repository.stars} stars · ${repository.forks} forks`;
+    heading.append(title, count);
+    content.append(heading, description, metadata);
+    card.append(content);
+    contributionList.appendChild(card);
   }
 }
 

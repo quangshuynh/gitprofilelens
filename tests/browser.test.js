@@ -199,6 +199,46 @@ test("profile pins retain their GitHub order in repositories and Markdown", { sk
   await browser.close();
 });
 
+test("renders external contributions separately and handles the empty state", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+    await mockGithubRequests(page, [repository, secondRepository], {
+      contributions: [
+        {
+          owner: "hymical", name: "forms", full_name: "hymical/forms",
+          url: "https://github.com/hymical/forms", description: "Forms library",
+          primary_language: "Python", stars: 3, forks: 1,
+          contribution: { pull_requests: 4, merged_pull_requests: 4 },
+        },
+        {
+          owner: "octo", name: "tools", full_name: "octo/tools",
+          url: "https://github.com/octo/tools", description: null,
+          primary_language: null, stars: 0, forks: 0,
+          contribution: { pull_requests: 2, merged_pull_requests: 1 },
+        },
+      ],
+    });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    await page.getByRole("tab", { name: "Repositories" }).click();
+    assert.deepEqual(await page.locator("#contribution-list .repository-card-heading a").allTextContents(), ["hymical/forms", "octo/tools"]);
+    assert.match(await page.locator("#contribution-list").innerText(), /4 merged PRs/);
+    assert.equal(await page.locator("#repository-list .repository-card").count(), 2);
+    assert.doesNotMatch(await page.locator("#repository-list").innerText(), /hymical\/forms/);
+    assert.doesNotMatch(await page.locator("#output").inputValue(), /hymical\/forms/);
+
+    const emptyPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+    await mockGithubRequests(emptyPage, [repository], { contributions: [] });
+    await emptyPage.goto(`${baseUrl}/?user=example`);
+    await emptyPage.locator("#result-section").waitFor({ state: "visible" });
+    await emptyPage.getByRole("tab", { name: "Repositories" }).click();
+    assert.match(await emptyPage.locator("#contribution-list").innerText(), /No public external repositories/i);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("empty and nonexistent profiles show useful states", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   const emptyPage = await browser.newPage({ viewport: { width: 900, height: 700 } });
@@ -526,6 +566,9 @@ async function mockGithubRequests(page, repositories = [repository, secondReposi
         readmes: Object.fromEntries(repositories.map((item) => [item.name, readme])),
       },
     })
+  );
+  await page.route("**/api/report?user=example", (route) =>
+    route.fulfill({ json: { contributed_repositories: options.contributions || [] } })
   );
 }
 
