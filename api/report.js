@@ -1,5 +1,6 @@
 const { createReport, isValidUsername, transformRepository } = require("../audit.js");
 const { fetchGitHubMetadata, GitHubRequestError } = require("./github-metadata.js");
+const { fetchGitHubContributions } = require("./github-contributions.js");
 
 const GITHUB_API_URL = "https://api.github.com";
 
@@ -26,20 +27,36 @@ async function reportHandler(request, response) {
 
   try {
     await fetchGitHubRest(`/users/${encodeURIComponent(username)}`, process.env.GITHUB_TOKEN);
-    const [rawRepositories, supplemental] = await Promise.all([
+    const [rawRepositories, supplemental, contributedRepositories] = await Promise.all([
       fetchPublicRepositories(username, process.env.GITHUB_TOKEN),
       fetchGitHubMetadata(username, process.env.GITHUB_TOKEN),
+      fetchContributionsGracefully(username, process.env.GITHUB_TOKEN),
     ]);
     const repositories = rawRepositories
       .filter((repository) => !repository.private)
       .map((repository) => transformRepository(repository, supplemental));
     response.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
-    response.status(200).json(createReport(username, repositories));
+    response.status(200).json(createReport(username, repositories, contributedRepositories));
   } catch (error) {
     const knownError = error instanceof GitHubRequestError;
     response.status(knownError ? error.status : 502).json({
       error: knownError ? error.message : "GitHub could not generate the report.",
     });
+  }
+}
+
+async function fetchContributionsGracefully(username, token) {
+  try {
+    return await fetchGitHubContributions(username, token);
+  } catch (error) {
+    // Contributions are supplemental. A safe diagnostic is logged, while the
+    // owned-repository report remains available even for contribution rate limits.
+    console.error("GitHub contribution discovery failed", {
+      username,
+      status: error instanceof GitHubRequestError ? error.status : 502,
+      message: error instanceof GitHubRequestError ? error.message : "Unexpected contribution error",
+    });
+    return [];
   }
 }
 

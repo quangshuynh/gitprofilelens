@@ -176,6 +176,8 @@ button.secondary { border-color: #30363d; background: #21262d; }
 .repository-card-content { min-width: 0; flex: 1; }
 .repository-card-heading { display: flex; justify-content: space-between; gap: 14px; font-weight: 750; }
 .repository-flags { color: #d29922; font-size: .75rem; font-weight: 700; }
+.contribution-count { color: #56d364; font-size: .75rem; font-weight: 750; white-space: nowrap; }
+.contributed-repository-card { border-left: 3px solid #3fb950; }
 .privacy-badge { display: inline-block; margin-right: 7px; padding: 3px 7px; border-radius: 99px; background: rgba(210,168,255,.13); color: #d2a8ff; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
 .candidate-label { margin: 12px 0 0; color: #79c0ff; font-size: .8rem; font-weight: 750; }
 .repository-card p:not(.repo-meta-line) { margin: 7px 0 0; color: #b1bac4; line-height: 1.45; }

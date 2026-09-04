@@ -73,6 +73,7 @@ async function runHandler(query, fetchImplementation, requestOverrides = {}) {
 function successfulFetch(repositories) {
   return async (url) => {
     if (url === "https://api.github.com/graphql") return jsonResponse(200, createMetadata());
+    if (/\/search\/issues\?/.test(url)) return jsonResponse(200, { total_count: 0, items: [] });
     if (/\/users\/example\/repos/.test(url)) return jsonResponse(200, repositories);
     if (url === "https://api.github.com/users/example") return jsonResponse(200, { login: "example" });
     throw new Error(`Unexpected URL: ${url}`);
@@ -131,6 +132,7 @@ test("report serializes public metadata, pins, topics, and nullable fields", asy
   assert.equal(result.status, 200);
   assert.equal(result.body.username, "example");
   assert.equal(result.body.public_repositories, 2);
+  assert.deepEqual(result.body.contributed_repositories, []);
   assert.deepEqual(result.body.pinned_repositories, ["minimal-project", "portfolio-lens"]);
   assert.deepEqual(result.body.repositories[0].topics, ["github", "developer-tools"]);
   assert.equal(result.body.repositories[0].pinned, true);
@@ -141,6 +143,70 @@ test("report serializes public metadata, pins, topics, and nullable fields", asy
   assert.equal(result.body.repositories[1].archived, true);
   assert.equal(result.body.repositories[1].forked, true);
   assert.doesNotMatch(JSON.stringify(result.body), /server-secret-token|must-not-leak|authorization|GITHUB_TOKEN/i);
+});
+
+test("report keeps external contributions separate from owned repositories, pins, and scoring", async () => {
+  const repositories = [createRepository()];
+  const fetchImplementation = async (url) => {
+    if (url === "https://api.github.com/graphql") return jsonResponse(200, createMetadata(["portfolio-lens"]));
+    if (/\/users\/example\/repos/.test(url)) return jsonResponse(200, repositories);
+    if (url === "https://api.github.com/users/example") return jsonResponse(200, { login: "example" });
+    if (/\/search\/issues\?/.test(url)) return jsonResponse(200, {
+      total_count: 1,
+      items: [{
+        id: 42,
+        repository_url: "https://api.github.com/repos/hymical/forms",
+        pull_request: { merged_at: "2026-01-01T00:00:00Z" },
+      }],
+    });
+    if (url === "https://api.github.com/repos/hymical/forms") return jsonResponse(200, {
+      owner: { login: "hymical" }, name: "forms", full_name: "hymical/forms",
+      html_url: "https://github.com/hymical/forms", description: "Forms", language: "Python",
+      stargazers_count: 0, forks_count: 0, private: false, token: "must-not-leak",
+    });
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  const result = await runHandler({ user: "example" }, fetchImplementation);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.public_repositories, result.body.repositories.length);
+  assert.equal(result.body.public_repositories, 1);
+  assert.deepEqual(result.body.pinned_repositories, ["portfolio-lens"]);
+  assert.equal(result.body.repositories.some((item) => item.name === "forms"), false);
+  assert.equal(result.body.contributed_repositories[0].full_name, "hymical/forms");
+  assert.doesNotMatch(JSON.stringify(result.body), /must-not-leak|authorization|server-secret-token/i);
+
+  const audit = require("../audit.js");
+  const transformed = audit.transformRepository(repositories[0], {
+    pinnedRepositories: ["portfolio-lens"],
+    readmes: { "portfolio-lens": { present: true, size: 1600 } },
+  });
+  const scoreBefore = audit.scoreProfile([audit.scoreRepository(transformed)]);
+  const reportWithContribution = audit.createReport("example", [transformed], result.body.contributed_repositories);
+  const scoreAfter = audit.scoreProfile([audit.scoreRepository(transformed)]);
+  assert.deepEqual(scoreAfter, scoreBefore);
+  assert.deepEqual(reportWithContribution.repositories, audit.createReport("example", [transformed]).repositories);
+});
+
+test("report degrades contribution discovery failures to an empty array", async () => {
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args);
+  try {
+    const fetchImplementation = async (url) => {
+      if (url === "https://api.github.com/graphql") return jsonResponse(200, createMetadata(["portfolio-lens"]));
+      if (/\/users\/example\/repos/.test(url)) return jsonResponse(200, [createRepository()]);
+      if (url === "https://api.github.com/users/example") return jsonResponse(200, { login: "example" });
+      if (/\/search\/issues\?/.test(url)) return jsonResponse(429, { token: "upstream-secret" });
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+    const result = await runHandler({ user: "example" }, fetchImplementation);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.contributed_repositories, []);
+    assert.equal(logs.length, 1);
+    assert.doesNotMatch(JSON.stringify(logs), /upstream-secret|server-secret-token|authorization/i);
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 test("report remains public-only when the request includes an authenticated session cookie", async () => {

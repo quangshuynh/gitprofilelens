@@ -84,6 +84,35 @@ GET /api/report?user=quangshuynh
 
 It returns normalized public repository metadata and never uses the signed-in browser session to add private data. The endpoint requires the server-side `GITHUB_TOKEN`.
 
+The response distinguishes repositories owned by the requested account from external contributed repositories:
+
+- `repositories` contains public repositories owned by the account. `public_repositories` is always the length of this array.
+- `pinned_repositories` contains only profile pins from those owned repositories.
+- `contributed_repositories` contains public repositories owned by someone else where GitHub attributes at least one merged pull request to the requested account.
+
+External contributions are informational. They are not added to owned repositories or pins, exported as owned work, or included in the portfolio score because the contributor may not control the repository's presentation and maintenance. Discovery uses authored public pull requests, groups them by repository, and reports both total authored and merged counts; v1 requires at least one merged pull request for inclusion. It does not infer contributions from membership, stars, watches, or forks.
+
+Only normalized public fields are returned. Private repository and pull-request details are excluded. Contribution discovery is bounded to GitHub Search's first 1,000 results and may be incomplete for unusually prolific accounts or when GitHub Search indexing lags. If this supplemental lookup fails or is rate-limited, the owned-repository report remains available with `contributed_repositories: []`.
+
+Example contribution entry:
+
+```json
+{
+  "owner": "hymical",
+  "name": "forms",
+  "full_name": "hymical/forms",
+  "url": "https://github.com/hymical/forms",
+  "description": "Repository description",
+  "primary_language": "Python",
+  "stars": 0,
+  "forks": 0,
+  "contribution": {
+    "pull_requests": 4,
+    "merged_pull_requests": 4
+  }
+}
+```
+
 ## Local setup
 
 The anonymous public experience has no client build step:
