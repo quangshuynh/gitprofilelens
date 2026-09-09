@@ -36,11 +36,11 @@ test("compact markdown produces a readable linked repository summary", () => {
   assert.match(markdown, /^# GitProfileLens Repository Report/m);
   assert.match(markdown, /\*\*GitHub:\*\* @quangshuynh/);
   assert.match(markdown, /## Pinned repositories/);
-  assert.match(markdown, /\[case\\-notes\]\(https:\/\/github\.com\/example\/case-notes\)/);
-  assert.match(markdown, /Local\\-first notes app/);
+  assert.match(markdown, /\[case-notes\]\(https:\/\/github\.com\/example\/case-notes\)/);
+  assert.match(markdown, /Local-first notes app/);
   assert.match(markdown, /\*\*Language:\*\* Swift/);
   assert.match(markdown, /\*\*README:\*\* Present/);
-  assert.match(markdown, /\*\*Updated:\*\* 2026\\-09\\-08/);
+  assert.match(markdown, /\*\*Updated:\*\* 2026-09-08/);
   assert.doesNotMatch(markdown, /last pushed:/i);
   assert.doesNotMatch(markdown, /open issues/i);
 });
