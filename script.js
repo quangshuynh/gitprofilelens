@@ -871,6 +871,12 @@ function createAuditCard(audit) {
   } else {
     title.appendChild(link);
   }
+  if (repository.fork === true) {
+    const forkBadge = document.createElement("span");
+    forkBadge.className = "fork-badge";
+    forkBadge.textContent = "Fork";
+    title.appendChild(forkBadge);
+  }
   metadata.className = "repo-meta-line";
   metadata.textContent = `${repository.language || "Language unknown"} · ★ ${repository.stars} · Forks ${repository.forks} · Updated ${formatShortDate(repository.updatedAt)}`;
   titleArea.append(title, metadata);
@@ -885,6 +891,9 @@ function createAuditCard(audit) {
     createFactBadge(`License: ${repository.license || "none"}`),
     createFactBadge(`README: ${formatReadmeStatus(repository.readme)}`),
   ];
+  if (repository.fork === true) {
+    factBadges.unshift(createFactBadge("Fork: Yes"));
+  }
   if (appState.mode === "public") {
     factBadges.push(createFactBadge(repository.pinned === null ? "Pin: unknown" : repository.pinned ? "Pinned" : "Not pinned"));
   }
@@ -902,11 +911,13 @@ function createAuditCard(audit) {
   card.append(header, description, facts);
   if (appState.mode === "private") {
     candidate.className = "candidate-label";
-    candidate.textContent = audit.score >= 90
-      ? "Strong portfolio candidate"
-      : audit.score >= 70
-        ? "Worth polishing before publishing"
-        : "Needs presentation work before publishing";
+    candidate.textContent = repository.fork === true
+      ? "Forked repository · score reflects repository presentation, not authorship"
+      : audit.score >= 90
+        ? "Strong portfolio candidate"
+        : audit.score >= 70
+          ? "Worth polishing before publishing"
+          : "Needs presentation work before publishing";
     card.appendChild(candidate);
   }
   if (readmeChecklist) card.appendChild(readmeChecklist);
@@ -1095,7 +1106,7 @@ function createRepositoryCard(repository) {
   title.rel = "noopener noreferrer";
   title.textContent = repository.name;
   flags.className = "repository-flags";
-  flags.textContent = [repository.pinned ? "Pinned" : "", repository.archived ? "Archived" : "", repository.fork ? "Fork" : ""].filter(Boolean).join(" · ");
+  flags.textContent = [repository.pinned ? "Pinned" : "", repository.archived ? "Archived" : "", repository.fork === true ? "Fork" : ""].filter(Boolean).join(" · ");
   heading.append(title, flags);
   description.textContent = repository.description || "No description";
   metadata.className = "repo-meta-line";
@@ -1263,6 +1274,7 @@ function createMarkdown(username, repositories, supplemental, options) {
     if (includePinned) {
       repositoryLines.push(`- pinned on profile: ${repository.pinned === null ? "Unavailable" : repository.pinned ? "Yes" : "No"}`);
     }
+    repositoryLines.push(`- forked repository: ${repository.fork === true ? "Yes" : repository.fork === false ? "No" : "Unavailable"}`);
     lines.push(...repositoryLines);
 
     if (options.includeDetails) {
@@ -1277,8 +1289,7 @@ function createMarkdown(username, repositories, supplemental, options) {
         `- forks: ${repository.forks}`,
         `- open issues and pull requests: ${repository.openIssues}`,
         `- README: ${formatReadmeStatus(repository.readme)}`,
-        `- archived: ${repository.archived ? "Yes" : "No"}`,
-        `- forked repository: ${repository.fork ? "Yes" : "No"}`
+        `- archived: ${repository.archived ? "Yes" : "No"}`
       );
     }
 

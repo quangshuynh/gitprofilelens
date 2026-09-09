@@ -57,6 +57,8 @@ The deterministic scoring engine lives in `audit.js` and is shared by the browse
 
 The public profile score aggregates those repository results and adds portfolio focus. Every finding includes a severity, reason, suggested action, and a factual or advisory classification. Unknown README data receives a neutral score and is marked unverified.
 
+Fork status comes directly from GitHub's repository metadata: `fork: true` means GitHub identifies the repository as a fork. GitProfileLens does not infer fork status or estimate how much work the profile owner contributed. Forks remain auditable and are not given an automatic quality penalty; their presentation score describes repository metadata and README quality, not authorship of inherited content.
+
 [docs/scoring.md](docs/scoring.md) documents every rule and weight, what the score intentionally does not measure, known limitations, and how to change scoring safely.
 
 ## Privacy and authentication

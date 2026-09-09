@@ -62,6 +62,17 @@ test("compact markdown labels forks in the repository heading", () => {
   assert.match(markdown, /\*\*README:\*\* Missing/);
 });
 
+test("compact markdown does not label original or unknown repositories as forks", () => {
+  const markdown = createCompactMarkdown(
+    "quangshuynh",
+    [repository({ name: "original", fork: false }), repository({ name: "unknown", fork: null })],
+    {},
+    { includePinned: true }
+  );
+
+  assert.doesNotMatch(markdown, /\(FORKED\)/);
+});
+
 test("compact markdown includes private visibility and treats private repos as unpinned", () => {
   const markdown = createCompactMarkdown(
     "quangshuynh",

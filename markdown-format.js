@@ -55,7 +55,7 @@
     }
 
     for (const repository of sortedRepositories) {
-      const forkLabel = repository.fork ? " (FORKED)" : "";
+      const forkLabel = repository.fork === true ? " (FORKED)" : "";
       lines.push(
         `### [${escapeCompactMarkdown(repository.name)}](${repository.url})${forkLabel}`,
         "",

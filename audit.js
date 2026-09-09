@@ -314,7 +314,7 @@
       forks: repository.forks_count || 0,
       openIssues: repository.open_issues_count || 0,
       archived: Boolean(repository.archived),
-      fork: Boolean(repository.fork),
+      fork: repository.fork === true ? true : repository.fork === false ? false : null,
       private: Boolean(repository.private),
       visibility: repository.visibility || (repository.private ? "private" : "public"),
       createdAt: repository.created_at,

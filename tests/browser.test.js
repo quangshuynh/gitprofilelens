@@ -161,6 +161,7 @@ test("Markdown export respects compact, pinned-only, and manual selection option
   await page.getByRole("tab", { name: "Markdown export" }).click();
   assert.match(await page.locator("#output").inputValue(), /portfolio-lens/);
   assert.match(await page.locator("#output").inputValue(), /api-toolkit/);
+  assert.match(await page.locator("#output").inputValue(), /forked repository: No/);
   assert.doesNotMatch(await page.locator("#output").inputValue(), /README is missing|actionable findings/i);
   await page.getByLabel("Full repository details").uncheck();
   assert.doesNotMatch(await page.locator("#output").inputValue(), /primary language:/i);
@@ -176,6 +177,37 @@ test("Markdown export respects compact, pinned-only, and manual selection option
   assert.match(await page.locator("#output").inputValue(), /portfolio-lens/);
   assert.doesNotMatch(await page.locator("#output").inputValue(), /api-toolkit/);
   await browser.close();
+});
+
+test("fork indicators appear on repository audit and explorer cards without labeling originals", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const fork = { ...repository, name: "upstream-fork", full_name: "example/upstream-fork", html_url: "https://github.com/example/upstream-fork", fork: true };
+    const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+    await mockGithubRequests(page, [fork, secondRepository], { pinnedRepositories: [fork.name] });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+
+    await page.getByRole("tab", { name: "Audit" }).click();
+    const forkAudit = page.locator(".audit-card", { has: page.getByRole("link", { name: fork.name }) });
+    const originalAudit = page.locator(".audit-card", { has: page.getByRole("link", { name: secondRepository.name }) });
+    assert.equal(await forkAudit.locator(".fork-badge").innerText(), "FORK");
+    assert.match(await forkAudit.locator(".fact-row").innerText(), /Fork: Yes/);
+    assert.equal(await originalAudit.locator(".fork-badge").count(), 0);
+
+    await page.getByRole("tab", { name: "Repositories" }).click();
+    const forkCard = page.locator(".repository-card", { has: page.getByRole("link", { name: fork.name }) });
+    const originalCard = page.locator(".repository-card", { has: page.getByRole("link", { name: secondRepository.name }) });
+    assert.match(await forkCard.locator(".repository-flags").innerText(), /Fork/);
+    assert.doesNotMatch(await originalCard.locator(".repository-flags").innerText(), /Fork/);
+
+    await page.getByRole("tab", { name: "Markdown export" }).click();
+    const fullMarkdown = await page.locator("#output").inputValue();
+    assert.match(fullMarkdown, /name: upstream-fork[\s\S]*forked repository: Yes/);
+    assert.match(fullMarkdown, /name: api-toolkit[\s\S]*forked repository: No/);
+  } finally {
+    await browser.close();
+  }
 });
 
 test("profile pins retain their GitHub order in repositories and Markdown", { skip: !chromePath }, async () => {
@@ -378,7 +410,7 @@ test("private audit mode isolates authorized repositories from public outputs", 
       installation: true,
       configure_url: "https://github.com/apps/gitprofilelens/installations/new",
       repositories: [
-        { ...repository, name: "secret-project", full_name: "example/secret-project", html_url: "https://github.com/example/secret-project", private: true, visibility: "private" },
+        { ...repository, name: "secret-project", full_name: "example/secret-project", html_url: "https://github.com/example/secret-project", private: true, visibility: "private", fork: true },
         { ...secondRepository, name: "authorized-public-project", full_name: "example/authorized-public-project", html_url: "https://github.com/example/authorized-public-project", private: false, visibility: "public" },
       ],
       public_repositories: [repository, secondRepository],
@@ -435,9 +467,8 @@ test("private audit mode isolates authorized repositories from public outputs", 
     new Set(["PRIVATE", "PUBLIC"])
   );
   assert.equal(await page.locator(".candidate-label").count(), 2);
-  for (const label of await page.locator(".candidate-label").allInnerTexts()) {
-    assert.match(label, /portfolio candidate|worth polishing|needs presentation work/i);
-  }
+  assert.match(await page.locator(".candidate-label").filter({ hasText: "Forked repository" }).innerText(), /not authorship/i);
+  assert.equal(await page.locator(".fork-badge").count(), 1);
   assert.equal(await page.locator("#share-button").isHidden(), true);
   assert.equal(await page.locator("#score-card-button").isHidden(), true);
   assert.equal(await page.locator('[data-tab="overview"]').isHidden(), true);
@@ -452,6 +483,7 @@ test("private audit mode isolates authorized repositories from public outputs", 
   assert.match(privateMarkdown, /authorized private repositories in report: 1/);
   assert.match(privateMarkdown, /name: secret-project/);
   assert.match(privateMarkdown, /visibility: Private/);
+  assert.match(privateMarkdown, /forked repository: Yes/);
   assert.doesNotMatch(privateMarkdown, /authorized-public-project|portfolio-lens/);
 
   await page.getByLabel("Public repositories only").check();
