@@ -5,6 +5,7 @@ const {
   createCompactMarkdown,
   compactReadmeStatus,
   formatCompactDate,
+  formatCompactPinned,
 } = require("../markdown-format.js");
 
 function repository(overrides = {}) {
@@ -21,41 +22,57 @@ function repository(overrides = {}) {
     pinned: true,
     pinnedPosition: 0,
     private: false,
+    fork: false,
     ...overrides,
   };
 }
 
-test("compact markdown produces a readable linked repository summary", () => {
+test("compact markdown produces the readable repository layout", () => {
   const markdown = createCompactMarkdown(
     "quangshuynh",
     [repository()],
     { pinnedRepositories: ["case-notes"] },
-    { includePinned: true, scope: "public" }
+    { includePinned: true }
   );
 
-  assert.match(markdown, /^# GitProfileLens Repository Report/m);
-  assert.match(markdown, /\*\*GitHub:\*\* @quangshuynh/);
-  assert.match(markdown, /## Pinned repositories/);
-  assert.match(markdown, /\[case-notes\]\(https:\/\/github\.com\/example\/case-notes\)/);
-  assert.match(markdown, /Local-first notes app/);
-  assert.match(markdown, /\*\*Language:\*\* Swift/);
+  assert.match(markdown, /^## Repositories/m);
+  assert.doesNotMatch(markdown, /^# GitProfileLens Repository Report/m);
+  assert.match(markdown, /### \[case-notes\]\(https:\/\/github\.com\/example\/case-notes\)/);
+  assert.match(markdown, /- Local-first notes app/);
+  assert.match(markdown, /- \*\*Visibility:\*\* Public · \*\*Language:\*\* Swift/);
+  assert.match(markdown, /\*\*Topics:\*\* ios, swiftui/);
+  assert.match(markdown, /\*\*License:\*\* MIT/);
   assert.match(markdown, /\*\*README:\*\* Present/);
   assert.match(markdown, /\*\*Updated:\*\* 2026-09-08/);
+  assert.match(markdown, /\*\*Pinned:\*\* Yes/);
   assert.doesNotMatch(markdown, /last pushed:/i);
   assert.doesNotMatch(markdown, /open issues/i);
 });
 
-test("compact markdown includes private visibility without a pinned section", () => {
+test("compact markdown labels forks in the repository heading", () => {
+  const markdown = createCompactMarkdown(
+    "quangshuynh",
+    [repository({ name: "ray", fork: true, language: null, license: "Apache-2.0", readme: { present: false } })],
+    {},
+    { includePinned: true }
+  );
+
+  assert.match(markdown, /### \[ray\]\(https:\/\/github\.com\/example\/case-notes\) \(FORKED\)/);
+  assert.match(markdown, /\*\*Language:\*\* Not specified/);
+  assert.match(markdown, /\*\*README:\*\* Missing/);
+});
+
+test("compact markdown includes private visibility and treats private repos as unpinned", () => {
   const markdown = createCompactMarkdown(
     "quangshuynh",
     [repository({ private: true, pinned: null })],
     null,
-    { includePinned: false, includeVisibility: true, scope: "authorized private" }
+    { includePinned: true }
   );
 
-  assert.match(markdown, /\*\*Scope:\*\* authorized private/);
   assert.match(markdown, /\*\*Visibility:\*\* Private/);
-  assert.doesNotMatch(markdown, /## Pinned repositories/);
+  assert.match(markdown, /\*\*Pinned:\*\* No/);
+  assert.equal(formatCompactPinned({ private: true, pinned: null }), "No");
 });
 
 test("compact markdown represents unknown README metadata honestly", () => {
