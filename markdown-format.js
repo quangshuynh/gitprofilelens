@@ -4,7 +4,7 @@
   function escapeCompactMarkdown(value) {
     return String(value ?? "")
       .replace(/\\/g, "\\\\")
-      .replace(/([`*_{}\[\]()#+.!|>~-])/g, "\\$1");
+      .replace(/([`*_{}\[\]()#+.!|>])/g, "\\$1");
   }
 
   function formatCompactDate(value) {
@@ -111,12 +111,26 @@
     select.id = "export-format";
     select.setAttribute("aria-label", "Markdown export format");
     select.innerHTML = '<option value="full">Full</option><option value="compact">Compact</option>';
+    select.style.marginLeft = ".35rem";
+    select.style.padding = ".45rem .65rem";
+    select.style.borderRadius = ".5rem";
+    select.style.border = "1px solid currentColor";
+    select.style.background = "inherit";
+    select.style.color = "inherit";
     control.appendChild(select);
     exportSummaryElement.before(control);
 
     const originalRefreshMarkdown = typeof refreshMarkdown === "function" ? refreshMarkdown : null;
 
+    function syncFormatControls() {
+      if (typeof includeDetailsInput !== "undefined") {
+        includeDetailsInput.disabled = select.value === "compact";
+        includeDetailsInput.closest("label")?.toggleAttribute("aria-disabled", select.value === "compact");
+      }
+    }
+
     function applyCompactFormat() {
+      syncFormatControls();
       if (select.value !== "compact" || typeof appState === "undefined" || !appState.user) return;
 
       let repositories;
@@ -157,10 +171,7 @@
     }
 
     function refreshSelectedFormat() {
-      if (select.value === "full") {
-        if (originalRefreshMarkdown) originalRefreshMarkdown();
-        return;
-      }
+      syncFormatControls();
       if (originalRefreshMarkdown) originalRefreshMarkdown();
       applyCompactFormat();
     }
@@ -182,6 +193,8 @@
         applyCompactFormat();
       };
     }
+
+    syncFormatControls();
   }
 
   if (typeof module !== "undefined" && module.exports) {
