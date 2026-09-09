@@ -83,6 +83,26 @@ test("repository transformation preserves factual metadata and supplemental read
   assert.deepEqual(transformed.topics, ["fastapi", "postgresql", "validation"]);
 });
 
+test("repository transformation preserves true, false, and unavailable fork metadata", () => {
+  assert.equal(transformRepository(createRepository({ fork: true }), null).fork, true);
+  assert.equal(transformRepository(createRepository({ fork: false }), null).fork, false);
+  assert.equal(transformRepository(createRepository({ fork: undefined }), null).fork, null);
+});
+
+test("fork status does not change repository presentation scoring", () => {
+  const supplemental = {
+    pinnedRepositories: [],
+    readmes: { "transaction-validator": { present: true, size: 1800 } },
+  };
+  const original = transformRepository(createRepository({ fork: false }), supplemental);
+  const fork = transformRepository(createRepository({ fork: true }), supplemental);
+
+  assert.deepEqual(
+    scoreRepository(fork, new Date("2026-08-21T00:00:00Z")),
+    { ...scoreRepository(original, new Date("2026-08-21T00:00:00Z")), repository: fork }
+  );
+});
+
 test("repository scoring identifies missing presentation fundamentals", () => {
   const repository = transformRepository(createRepository({
     name: "test",

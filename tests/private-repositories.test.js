@@ -94,7 +94,7 @@ test("private repository endpoint requires an authenticated session", async () =
 });
 
 test("private repository endpoint paginates, filters to the owner, and analyzes READMEs", async () => {
-  const firstPage = Array.from({ length: 100 }, (_, index) => createRepository(index + 1));
+  const firstPage = Array.from({ length: 100 }, (_, index) => createRepository(index + 1, index === 0 ? { fork: true } : {}));
   const secondPage = [
     createRepository(101, { name: "final-project", full_name: "example/final-project" }),
     createRepository(102, {
@@ -136,6 +136,7 @@ test("private repository endpoint paginates, filters to the owner, and analyzes 
     assert.equal(result.body.repositories.at(-1).name, "final-project");
     assert.equal(result.body.repositories[0].private, true);
     assert.equal(result.body.repositories[0].visibility, "private");
+    assert.equal(result.body.repositories[0].fork, true);
     assert.equal(result.body.repositories.some((repository) => repository.name === "collaborator-project"), false);
     assert.equal(result.body.readmes["project-1"].sections.installation, true);
     assert.equal(result.body.readmes["project-1"].hasCodeBlock, true);
@@ -144,6 +145,21 @@ test("private repository endpoint paginates, filters to the owner, and analyzes 
     assert.equal(result.headers["Cache-Control"], "private, no-store, max-age=0");
     assert.doesNotMatch(JSON.stringify(result.body), /authorized-user-token|clone_url|must-not-be-returned/);
     assert.equal(requestedUrls.some((url) => /page=2$/.test(url)), true);
+  });
+});
+
+test("private repository sanitization preserves unavailable fork metadata", async () => {
+  await withPrivateEnvironment(async (url) => {
+    if (/\/user\/installations\?/.test(url)) return jsonResponse(200, { installations: [{ id: 42 }] });
+    if (/\/user\/installations\/42\/repositories\?/.test(url)) return jsonResponse(200, { repositories: [createRepository(1, { fork: undefined })] });
+    if (/\/users\/example\/repos\?/.test(url)) return jsonResponse(200, []);
+    if (/\/readme$/.test(url)) return jsonResponse(404, { message: "Not Found" });
+    throw new Error(`Unexpected URL: ${url}`);
+  }, async () => {
+    const { response, result } = createResponse();
+    await handler({ method: "GET", headers: { cookie: createSessionCookie() } }, response);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.repositories[0].fork, null);
   });
 });
 

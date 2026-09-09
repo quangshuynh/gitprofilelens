@@ -287,7 +287,7 @@ function sanitizeRepository(repository) {
     forks_count: repository.forks_count || 0,
     open_issues_count: repository.open_issues_count || 0,
     archived: Boolean(repository.archived),
-    fork: Boolean(repository.fork),
+    fork: repository.fork === true ? true : repository.fork === false ? false : null,
     created_at: repository.created_at,
     updated_at: repository.updated_at,
     pushed_at: repository.pushed_at,
