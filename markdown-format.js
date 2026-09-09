@@ -29,40 +29,25 @@
     return positionA - positionB;
   }
 
+  function formatCompactVisibility(repository) {
+    return repository.private ? "Private" : "Public";
+  }
+
+  function formatCompactPinned(repository) {
+    if (repository.private) return "No";
+    if (repository.pinned === true) return "Yes";
+    if (repository.pinned === false) return "No";
+    return "Unavailable";
+  }
+
   function createCompactMarkdown(username, repositories, supplemental, options = {}) {
+    void username;
+    void supplemental;
+
     const sortedRepositories = [...repositories].sort(
       options.pinnedOnly ? compareCompactPinnedPositions : compareCompactCreationDates
     );
-    const includePinned = options.includePinned !== false;
-    const scope = options.scope || "public";
-    const lines = [
-      "# GitProfileLens Repository Report",
-      "",
-      `**GitHub:** @${escapeCompactMarkdown(username)}`,
-      `**Scope:** ${escapeCompactMarkdown(scope)}`,
-      `**Repositories:** ${sortedRepositories.length}`,
-      "",
-    ];
-
-    if (includePinned) {
-      lines.push("## Pinned repositories", "");
-      const pinnedRepositories = sortedRepositories
-        .filter((repository) => repository.pinned === true)
-        .sort(compareCompactPinnedPositions);
-
-      if (supplemental === null) {
-        lines.push("Pinned repository data is unavailable.", "");
-      } else if (pinnedRepositories.length === 0) {
-        lines.push("No pinned repositories are included in this report.", "");
-      } else {
-        for (const repository of pinnedRepositories) {
-          lines.push(`- [${escapeCompactMarkdown(repository.name)}](${repository.url}) — ${escapeCompactMarkdown(repository.description || "No description")}`);
-        }
-        lines.push("");
-      }
-    }
-
-    lines.push("## Repositories", "");
+    const lines = ["## Repositories", ""];
 
     if (sortedRepositories.length === 0) {
       lines.push("No repositories are included in this report.", "");
@@ -70,25 +55,28 @@
     }
 
     for (const repository of sortedRepositories) {
+      const forkLabel = repository.fork ? " (FORKED)" : "";
       lines.push(
-        `### [${escapeCompactMarkdown(repository.name)}](${repository.url})`,
+        `### [${escapeCompactMarkdown(repository.name)}](${repository.url})${forkLabel}`,
         "",
-        escapeCompactMarkdown(repository.description || "No description"),
-        ""
+        `- ${escapeCompactMarkdown(repository.description || "No description")}`
       );
 
-      const metadata = [];
-      if (options.includeVisibility) metadata.push(`**Visibility:** ${repository.private ? "Private" : "Public"}`);
-      metadata.push(`**Language:** ${escapeCompactMarkdown(repository.language || "Not specified")}`);
-      if (repository.topics?.length) metadata.push(`**Topics:** ${repository.topics.map(escapeCompactMarkdown).join(", ")}`);
-      if (repository.license) metadata.push(`**License:** ${escapeCompactMarkdown(repository.license)}`);
+      const metadata = [
+        `**Visibility:** ${formatCompactVisibility(repository)}`,
+        `**Language:** ${escapeCompactMarkdown(repository.language || "Not specified")}`,
+      ];
+      if (repository.topics?.length) {
+        metadata.push(`**Topics:** ${repository.topics.map(escapeCompactMarkdown).join(", ")}`);
+      }
+      if (repository.license) {
+        metadata.push(`**License:** ${escapeCompactMarkdown(repository.license)}`);
+      }
       metadata.push(`**README:** ${compactReadmeStatus(repository.readme)}`);
       metadata.push(`**Updated:** ${formatCompactDate(repository.updatedAt)}`);
-      if (includePinned) {
-        metadata.push(`**Pinned:** ${repository.pinned === null ? "Unavailable" : repository.pinned ? "Yes" : "No"}`);
-      }
+      metadata.push(`**Pinned:** ${formatCompactPinned(repository)}`);
 
-      lines.push(metadata.join(" · "), "");
+      lines.push(`- ${metadata.join(" · ")}`, "");
     }
 
     return lines.join("\n");
@@ -105,18 +93,38 @@
     const control = document.createElement("label");
     control.className = "export-format-control";
     control.htmlFor = "export-format";
-    control.append("Format ");
+    control.style.display = "inline-flex";
+    control.style.alignItems = "center";
+    control.style.gap = ".55rem";
+    control.style.margin = ".25rem 0 .8rem";
+    control.style.fontSize = ".88rem";
+    control.style.fontWeight = "700";
+    control.style.color = "#b1bac4";
+    control.append("Format");
 
     const select = document.createElement("select");
     select.id = "export-format";
     select.setAttribute("aria-label", "Markdown export format");
     select.innerHTML = '<option value="full">Full</option><option value="compact">Compact</option>';
-    select.style.marginLeft = ".35rem";
-    select.style.padding = ".45rem .65rem";
-    select.style.borderRadius = ".5rem";
-    select.style.border = "1px solid currentColor";
-    select.style.background = "inherit";
-    select.style.color = "inherit";
+    select.style.minWidth = "118px";
+    select.style.padding = ".55rem 2rem .55rem .75rem";
+    select.style.border = "1px solid #30363d";
+    select.style.borderRadius = "8px";
+    select.style.background = "#21262d";
+    select.style.color = "#f0f6fc";
+    select.style.font = "inherit";
+    select.style.fontWeight = "700";
+    select.style.cursor = "pointer";
+    select.style.boxShadow = "0 2px 8px rgba(0,0,0,.18)";
+    select.style.outline = "none";
+    select.addEventListener("focus", () => {
+      select.style.borderColor = "#58a6ff";
+      select.style.boxShadow = "0 0 0 2px rgba(88,166,255,.25)";
+    });
+    select.addEventListener("blur", () => {
+      select.style.borderColor = "#30363d";
+      select.style.boxShadow = "0 2px 8px rgba(0,0,0,.18)";
+    });
     control.appendChild(select);
     exportSummaryElement.before(control);
 
@@ -139,24 +147,14 @@
 
       if (appState.mode === "private") {
         const scope = [...privateExportScopeInputs].find((input) => input.checked)?.value || "private";
-        const labels = {
-          public: "public",
-          private: "authorized private",
-          combined: "combined public and authorized private",
-        };
         repositories = appState.privateExports[scope] || [];
         supplemental = scope === "private" ? null : appState.privateExports.publicSupplemental;
-        options = {
-          includePinned: scope !== "private",
-          includeVisibility: true,
-          scope: labels[scope],
-        };
+        options = { includePinned: true };
       } else {
         options = {
           pinnedOnly: pinnedOnlyInput.checked,
           selectedOnly: selectedOnlyInput.checked,
           includePinned: true,
-          scope: "public",
         };
         repositories = filterRepositoriesForExport(appState.repositories, options);
         supplemental = appState.supplemental;
@@ -203,6 +201,8 @@
       compactReadmeStatus,
       formatCompactDate,
       escapeCompactMarkdown,
+      formatCompactVisibility,
+      formatCompactPinned,
     };
   }
 
