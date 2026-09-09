@@ -357,6 +357,10 @@ test("private audit mode isolates authorized repositories from public outputs", 
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  let browserPublicRepositoryRequests = 0;
+  page.on("request", (request) => {
+    if (/api\.github\.com\/users\/example\/repos/.test(request.url())) browserPublicRepositoryRequests += 1;
+  });
   const browserErrors = [];
   page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
   page.on("pageerror", (error) => browserErrors.push(error.message));
@@ -377,7 +381,12 @@ test("private audit mode isolates authorized repositories from public outputs", 
         { ...repository, name: "secret-project", full_name: "example/secret-project", html_url: "https://github.com/example/secret-project", private: true, visibility: "private" },
         { ...secondRepository, name: "authorized-public-project", full_name: "example/authorized-public-project", html_url: "https://github.com/example/authorized-public-project", private: false, visibility: "public" },
       ],
-      readmes: { "secret-project": readme, "authorized-public-project": readme },
+      public_repositories: [repository, secondRepository],
+      readmes: {
+        "secret-project": { present: null, size: null, unavailable_reason: "github_5xx" },
+        "authorized-public-project": readme,
+      },
+      metadata: { complete: false, unavailable_readmes: 1, issues: { github_5xx: 1 } },
     },
   }));
   await page.route("**/api/auth/logout", (route) => route.fulfill({ json: { authenticated: false } }));
@@ -413,6 +422,12 @@ test("private audit mode isolates authorized repositories from public outputs", 
   await page.locator("#audit-title").filter({ hasText: "Private Repository Audit" }).waitFor();
   await page.locator("#signed-in-auth").waitFor({ state: "visible" });
   assert.equal(await page.locator("#auth-login").innerText(), "@example");
+  assert.equal(browserPublicRepositoryRequests, 0);
+  assert.match(await page.locator("#status").innerText(), /1 README was unavailable and scored neutrally as unverified/i);
+  assert.equal(
+    await page.evaluate(() => appState.audits.find((audit) => audit.repository.name === "secret-project").categoryScores.readme),
+    60
+  );
 
   assert.equal(await page.locator("#audit-title").innerText(), "Private Repository Audit");
   assert.deepEqual(
@@ -504,6 +519,7 @@ test("authorized audit resolves pins from the public profile", { skip: !chromePa
         { ...repository, name: "secret-project", full_name: "example/secret-project", html_url: "https://github.com/example/secret-project", private: true, visibility: "private" },
         { ...secondRepository, name: "authorized-public-project", full_name: "example/authorized-public-project", html_url: "https://github.com/example/authorized-public-project", private: false, visibility: "public" },
       ],
+      public_repositories: [repository, secondRepository],
       readmes: { "secret-project": readme, "authorized-public-project": readme },
     },
   }));

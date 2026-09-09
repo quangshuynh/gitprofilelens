@@ -250,20 +250,18 @@ async function loadPrivateRepositories() {
   statusEl.textContent = "Fetching repositories authorized for GitProfileLens…";
 
   try {
-    const [response, rawPublicRepositories, publicSupplemental] = await Promise.all([
-      fetch("/api/private-repositories", { headers: { Accept: "application/json" } }),
-      fetchAllRepositories(appState.authUser.login),
-      fetchSupplementalMetadata(appState.authUser.login),
-    ]);
+    const response = await fetch("/api/private-repositories", { headers: { Accept: "application/json" } });
     const data = await response.json().catch(() => null);
     if (response.status === 401) {
       appState.authUser = null;
       renderAuthState();
       throw new Error(data?.error || "Your GitHub session expired. Please sign in again.");
     }
-    if (!response.ok || !data || !Array.isArray(data.repositories) || typeof data.readmes !== "object") {
+    if (!response.ok || !data || !Array.isArray(data.repositories) ||
+        !Array.isArray(data.public_repositories) || typeof data.readmes !== "object") {
       throw new Error(data?.error || "GitHub could not return authorized repositories.");
     }
+    const publicSupplemental = await fetchSupplementalMetadata(appState.authUser.login);
 
     // Pins live on the public profile, so the authorized audit reuses the public pin list
     // already fetched above. Private repositories simply never appear in it.
@@ -272,7 +270,7 @@ async function loadPrivateRepositories() {
       readmes: data.readmes,
     };
     const repositories = transformRepositories(data.repositories, supplemental);
-    const publicRepositories = transformRepositories(rawPublicRepositories, publicSupplemental)
+    const publicRepositories = transformRepositories(data.public_repositories, publicSupplemental)
       .filter((repository) => !repository.private);
     const privateRepositories = repositories.filter((repository) => repository.private);
     appState.user = appState.authUser;
@@ -296,6 +294,9 @@ async function loadPrivateRepositories() {
     showResultView();
     if (!data.installation) {
       statusEl.textContent = "GitProfileLens is connected, but no GitHub App installation is available.";
+    } else if (data.metadata?.complete === false) {
+      const unavailable = Number(data.metadata.unavailable_readmes) || 0;
+      statusEl.textContent = `Analyzed ${repositories.length} authorized ${repositories.length === 1 ? "repository" : "repositories"}. ${unavailable} ${unavailable === 1 ? "README was" : "READMEs were"} unavailable and scored neutrally as unverified. Private repositories remain separate from your public score.`;
     } else {
       statusEl.textContent = `Analyzed ${repositories.length} authorized ${repositories.length === 1 ? "repository" : "repositories"}. Private repositories remain separate from your public score.`;
     }

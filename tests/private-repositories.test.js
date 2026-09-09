@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const handler = require("../api/private-repositories.js");
 const { seal } = require("../api/auth/session-crypto.js");
+const GitHubAudit = require("../audit.js");
 
 const SESSION_SECRET = "a-test-session-secret-that-is-longer-than-32-characters";
 
@@ -74,7 +75,7 @@ async function withPrivateEnvironment(fetchImplementation, callback) {
 }
 
 function jsonResponse(status, body) {
-  return { ok: status >= 200 && status < 300, status, json: async () => body };
+  return { ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => body };
 }
 
 test("private repository endpoint requires an authenticated session", async () => {
@@ -114,6 +115,9 @@ test("private repository endpoint paginates, filters to the owner, and analyzes 
     if (/\/user\/installations\/42\/repositories\?per_page=100&page=2$/.test(url)) {
       return jsonResponse(200, { repositories: secondPage });
     }
+    if (/\/users\/example\/repos\?type=owner&sort=updated&direction=desc&per_page=100&page=1$/.test(url)) {
+      return jsonResponse(200, [createRepository(201, { private: false, visibility: "public" })]);
+    }
     if (/\/repos\/example\/project-2\/readme$/.test(url)) return jsonResponse(404, { message: "Not Found" });
     if (/\/repos\/example\/.+\/readme$/.test(url)) {
       const markdown = "# Project\n## Overview\n## Installation\n```sh\nnpm install\n```\n## Usage\nRun it.\n## Demo\n![Demo](demo.png)";
@@ -128,6 +132,7 @@ test("private repository endpoint paginates, filters to the owner, and analyzes 
     assert.equal(result.status, 200);
     assert.equal(result.body.installation, true);
     assert.equal(result.body.repositories.length, 101);
+    assert.equal(result.body.public_repositories.length, 1);
     assert.equal(result.body.repositories.at(-1).name, "final-project");
     assert.equal(result.body.repositories[0].private, true);
     assert.equal(result.body.repositories[0].visibility, "private");
@@ -146,6 +151,7 @@ test("authenticated users without an installation receive an explicit empty stat
   await withPrivateEnvironment(
     async (url) => {
       if (/\/user\/installations\?/.test(url)) return jsonResponse(200, { installations: [] });
+      if (/\/users\/example\/repos\?/.test(url)) return jsonResponse(200, []);
       throw new Error(`Unexpected URL: ${url}`);
     },
     async () => {
@@ -157,6 +163,61 @@ test("authenticated users without an installation receive an explicit empty stat
       assert.match(result.body.configure_url, /github\.com\/apps/);
     }
   );
+});
+
+test("one README failure returns neutral unknown metadata and retries transient 5xx only within the bound", async () => {
+  let readmeAttempts = 0;
+  await withPrivateEnvironment(async (url) => {
+    if (/\/user\/installations\?/.test(url)) return jsonResponse(200, { installations: [{ id: 42 }] });
+    if (/\/user\/installations\/42\/repositories\?/.test(url)) return jsonResponse(200, { repositories: [createRepository(1)] });
+    if (/\/users\/example\/repos\?/.test(url)) return jsonResponse(200, []);
+    if (/\/repos\/example\/project-1\/readme$/.test(url)) {
+      readmeAttempts += 1;
+      return jsonResponse(503, { message: "temporary" });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }, async () => {
+    const { response, result } = createResponse();
+    await handler({ method: "GET", headers: { cookie: createSessionCookie() } }, response);
+    assert.equal(result.status, 200);
+    assert.equal(readmeAttempts, 3);
+    assert.deepEqual(result.body.readmes["project-1"], {
+      present: null,
+      size: null,
+      unavailable_reason: "github_5xx",
+    });
+    assert.deepEqual(result.body.metadata, {
+      complete: false,
+      unavailable_readmes: 1,
+      issues: { github_5xx: 1 },
+    });
+    const transformed = GitHubAudit.transformRepository(
+      result.body.repositories[0],
+      { pinnedRepositories: [], readmes: result.body.readmes }
+    );
+    const audit = GitHubAudit.scoreRepository(transformed);
+    assert.equal(transformed.readme.present, null);
+    assert.equal(audit.categoryScores.readme, 60);
+    assert.match(audit.findings.find((finding) => finding.category === "README quality").reason, /could not be verified/i);
+  });
+});
+
+test("permanent README failures are not retried and do not fail the repository list", async () => {
+  let readmeAttempts = 0;
+  await withPrivateEnvironment(async (url) => {
+    if (/\/user\/installations\?/.test(url)) return jsonResponse(200, { installations: [{ id: 42 }] });
+    if (/\/user\/installations\/42\/repositories\?/.test(url)) return jsonResponse(200, { repositories: [createRepository(1)] });
+    if (/\/users\/example\/repos\?/.test(url)) return jsonResponse(200, []);
+    if (/\/readme$/.test(url)) { readmeAttempts += 1; return jsonResponse(422, { message: "invalid" }); }
+    throw new Error(`Unexpected URL: ${url}`);
+  }, async () => {
+    const { response, result } = createResponse();
+    await handler({ method: "GET", headers: { cookie: createSessionCookie() } }, response);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.repositories.length, 1);
+    assert.equal(result.body.readmes["project-1"].present, null);
+    assert.equal(readmeAttempts, 1);
+  });
 });
 
 test("GitHub authorization failures become safe errors and clear the session", async () => {
@@ -171,4 +232,39 @@ test("GitHub authorization failures become safe errors and clear the session", a
       assert.doesNotMatch(JSON.stringify(result.body), /must-not-leak|authorized-user-token/);
     }
   );
+});
+
+test("a README authorization failure remains fatal and clears the session", async () => {
+  await withPrivateEnvironment(async (url) => {
+    if (/\/user\/installations\?/.test(url)) return jsonResponse(200, { installations: [{ id: 42 }] });
+    if (/\/user\/installations\/42\/repositories\?/.test(url)) return jsonResponse(200, { repositories: [createRepository(1)] });
+    if (/\/users\/example\/repos\?/.test(url)) return jsonResponse(200, []);
+    if (/\/readme$/.test(url)) return jsonResponse(401, { message: "Bad credentials" });
+    throw new Error(`Unexpected URL: ${url}`);
+  }, async () => {
+    const { response, result } = createResponse();
+    await handler({ method: "GET", headers: { cookie: createSessionCookie() } }, response);
+    assert.equal(result.status, 401);
+    assert.match(result.body.error, /no longer valid/i);
+    assert.match(result.headers["Set-Cookie"], /^gpl_session=;/);
+  });
+});
+
+test("rate limits are not retried and retain reset guidance", async () => {
+  let attempts = 0;
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  await withPrivateEnvironment(async () => {
+    attempts += 1;
+    return {
+      ...jsonResponse(403, { message: "rate limited" }),
+      headers: { get: (name) => name.toLowerCase() === "x-ratelimit-remaining" ? "0" : name.toLowerCase() === "x-ratelimit-reset" ? `${reset}` : null },
+    };
+  }, async () => {
+    const { response, result } = createResponse();
+    await handler({ method: "GET", headers: { cookie: createSessionCookie() } }, response);
+    assert.equal(result.status, 429);
+    assert.equal(attempts, 1);
+    assert.match(result.body.error, /rate limit reached/i);
+    assert.match(result.body.error, /try again after/i);
+  });
 });
