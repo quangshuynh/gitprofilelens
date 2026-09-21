@@ -270,6 +270,32 @@
   }
 
   /**
+   * derives the accounts a profile follows that do not follow it back
+   *
+   * GitHub logins are case-insensitive identities, so the comparison is folded to
+   * lower case while the returned accounts keep the spelling and ordering of the
+   * following response. The difference is only meaningful when both lists were
+   * retrieved completely: a login missing from a partial followers list may sit on
+   * a page that never arrived, so an incomplete retrieval yields null rather than
+   * an unsafe claim that someone does not follow back.
+   *
+   * @param {Object} network retrieved network result
+   * @returns {Array<Object>|null} following accounts absent from followers, or null
+   */
+  function deriveNotFollowingBack(network) {
+    if (!network || !network.followers?.complete || !network.following?.complete) {
+      return null;
+    }
+
+    const followerLogins = new Set(
+      network.followers.accounts.map((account) => account.login.toLowerCase())
+    );
+    return network.following.accounts.filter(
+      (account) => !followerLogins.has(account.login.toLowerCase())
+    );
+  }
+
+  /**
    * escapes markdown control characters in text taken from github
    * @param {*} value value to escape
    * @returns {string} markdown safe string
@@ -338,13 +364,15 @@
     }
 
     const login = network.user.login;
+    const notFollowingBack = deriveNotFollowingBack(network);
     const lines = [
       "# GitHub Network",
       "",
       `**Username:** [${escapeNetworkMarkdown(login)}](${network.user.profileUrl})`,
       "",
       `**Followers:** ${network.followers.accounts.length}  `,
-      `**Following:** ${network.following.accounts.length}`,
+      `**Following:** ${network.following.accounts.length}  `,
+      `**Following who don't follow back:** ${notFollowingBack.length}`,
       "",
     ];
 
@@ -355,6 +383,8 @@
     appendAccountList(lines, network.followers.accounts);
     lines.push("## Following", "");
     appendAccountList(lines, network.following.accounts);
+    lines.push("## Following who don't follow back", "");
+    appendAccountList(lines, notFollowingBack);
 
     return lines.join("\n");
   }
@@ -395,6 +425,7 @@
     buildFilename,
     buildMarkdown,
     buildProfileUrl,
+    deriveNotFollowingBack,
     describeCountDifference: buildCountNote,
     describeIncompleteRetrieval,
     escapeNetworkMarkdown,

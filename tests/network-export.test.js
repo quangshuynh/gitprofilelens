@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   buildFilename,
   buildMarkdown,
+  deriveNotFollowingBack,
   describeCountDifference,
   describeIncompleteRetrieval,
   fetchNetwork,
@@ -316,7 +317,8 @@ test("markdown reports the username, counts, and profile links", async () => {
   assert.match(markdown, /^# GitHub Network$/m);
   assert.match(markdown, /^\*\*Username:\*\* \[example\]\(https:\/\/github\.com\/example\)$/m);
   assert.match(markdown, /^\*\*Followers:\*\* 2 {2}$/m);
-  assert.match(markdown, /^\*\*Following:\*\* 1$/m);
+  assert.match(markdown, /^\*\*Following:\*\* 1 {2}$/m);
+  assert.match(markdown, /^\*\*Following who don't follow back:\*\* 1$/m);
   assert.match(markdown, /^1\. \[follower-1\]\(https:\/\/github\.com\/follower-1\)$/m);
   assert.match(markdown, /^2\. \[follower-2\]\(https:\/\/github\.com\/follower-2\)$/m);
   assert.match(markdown, /^1\. \[following-1\]\(https:\/\/github\.com\/following-1\)$/m);
@@ -385,6 +387,116 @@ test("download filenames are sanitized and never escape the download name", () =
   assert.equal(buildFilename("---"), "github-user-followers-following.md");
   assert.equal(buildFilename(null), "github-user-followers-following.md");
   assert.doesNotMatch(buildFilename("../../etc/passwd"), /[/\\]/);
+});
+
+/**
+ * builds a network result directly, bypassing retrieval
+ * @param {Array<string>} followerLogins follower logins in GitHub order
+ * @param {Array<string>} followingLogins following logins in GitHub order
+ * @param {Object} completeness per-list completeness overrides
+ * @returns {Object} network result shaped like fetchNetwork's
+ */
+function network(followerLogins, followingLogins, completeness = {}) {
+  const toAccounts = (logins) =>
+    logins.map((login) => ({ login, profileUrl: `https://github.com/${login}` }));
+  const followersComplete = completeness.followers !== false;
+  const followingComplete = completeness.following !== false;
+
+  return {
+    user: {
+      login: "example",
+      name: null,
+      avatarUrl: null,
+      profileUrl: "https://github.com/example",
+      reportedFollowers: null,
+      reportedFollowing: null,
+    },
+    followers: {
+      accounts: toAccounts(followerLogins),
+      complete: followersComplete,
+      error: followersComplete ? null : "page 2 failed",
+      pagesLoaded: 1,
+    },
+    following: {
+      accounts: toAccounts(followingLogins),
+      complete: followingComplete,
+      error: followingComplete ? null : "page 2 failed",
+      pagesLoaded: 1,
+    },
+    complete: followersComplete && followingComplete,
+  };
+}
+
+test("the derived set is following minus followers", () => {
+  const derived = deriveNotFollowingBack(network(["a", "b", "c"], ["a", "b", "d", "e"]));
+  assert.deepEqual(derived.map((account) => account.login), ["d", "e"]);
+});
+
+test("the derived set treats GitHub logins as case-insensitive identities", () => {
+  const derived = deriveNotFollowingBack(network(["Alice"], ["alice", "Bob"]));
+
+  assert.deepEqual(derived.map((account) => account.login), ["Bob"]);
+  assert.deepEqual(
+    deriveNotFollowingBack(network(["Alice", "bob", "charlie"], ["alice", "BOB", "david", "eve"]))
+      .map((account) => account.login),
+    ["david", "eve"]
+  );
+});
+
+test("the derived set preserves the spelling and ordering of the following response", () => {
+  const derived = deriveNotFollowingBack(network(["zeta"], ["Yankee", "ALPHA", "zeta", "mike"]));
+
+  assert.deepEqual(derived.map((account) => account.login), ["Yankee", "ALPHA", "mike"]);
+  assert.equal(derived[0].profileUrl, "https://github.com/Yankee");
+});
+
+test("the derived set is empty when everyone followed also follows back", () => {
+  assert.deepEqual(deriveNotFollowingBack(network(["a", "b", "extra"], ["a", "b"])), []);
+});
+
+test("the derived set is every followed account when nobody follows back", () => {
+  const derived = deriveNotFollowingBack(network([], ["a", "b", "c"]));
+  assert.deepEqual(derived.map((account) => account.login), ["a", "b", "c"]);
+});
+
+test("the derived set is withheld when the followers list is incomplete", () => {
+  // A login absent from a partial followers list may sit on a page that never
+  // arrived, so claiming it does not follow back would be unsound.
+  assert.equal(deriveNotFollowingBack(network(["a"], ["a", "b"], { followers: false })), null);
+});
+
+test("the derived set is withheld when the following list is incomplete", () => {
+  assert.equal(deriveNotFollowingBack(network(["a"], ["a", "b"], { following: false })), null);
+});
+
+test("an incomplete retrieval blocks both the derived set and the export", () => {
+  const incomplete = network(["a"], ["a", "b"], { followers: false });
+
+  assert.equal(deriveNotFollowingBack(incomplete), null);
+  assert.throws(() => buildMarkdown(incomplete), (error) => error.reason === "incomplete");
+  assert.match(describeIncompleteRetrieval(incomplete), /Followers could not be fully retrieved/);
+});
+
+test("markdown lists the derived set after followers and following", () => {
+  const markdown = buildMarkdown(network(["a", "b"], ["a", "c", "D"]));
+
+  assert.match(markdown, /^\*\*Followers:\*\* 2 {2}$/m);
+  assert.match(markdown, /^\*\*Following:\*\* 3 {2}$/m);
+  assert.match(markdown, /^\*\*Following who don't follow back:\*\* 2$/m);
+  assert.match(
+    markdown,
+    /## Following who don't follow back\n\n1\. \[c\]\(https:\/\/github\.com\/c\)\n2\. \[D\]\(https:\/\/github\.com\/D\)\n/
+  );
+  assert.ok(markdown.indexOf("## Followers") < markdown.indexOf("## Following\n"));
+  assert.ok(markdown.indexOf("## Following\n") < markdown.indexOf("## Following who don't follow back"));
+});
+
+test("markdown represents an empty derived set as None rather than unavailable", () => {
+  const markdown = buildMarkdown(network(["a", "b"], ["a"]));
+
+  assert.match(markdown, /^\*\*Following who don't follow back:\*\* 0$/m);
+  assert.match(markdown, /## Following who don't follow back\n\nNone\.\n/);
+  assert.doesNotMatch(markdown, /unavailable/i);
 });
 
 test("the request order of relationship pages is deterministic and uses per_page=100", async () => {

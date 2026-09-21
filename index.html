@@ -30,9 +30,6 @@
       <p class="product-pillars" aria-label="GitProfileLens features">
         <span>Profile audit</span><span>Repository explorer</span><span>Markdown export</span>
       </p>
-      <nav class="tool-nav" aria-label="GitProfileLens tools">
-        <a id="home-network-link" href="?tool=network">Followers / Following export →</a>
-      </nav>
       <form id="github-form" class="search-form">
         <label for="username">GitHub username</label>
         <div class="input-row">
@@ -76,9 +73,6 @@
           <span class="result-logo-crop" aria-hidden="true"><img src="docs/images/logo.png" alt="" /></span>
           <span>GitProfileLens</span>
         </a>
-        <nav class="tool-nav" aria-label="GitProfileLens tools">
-          <a id="result-network-link" href="?tool=network">Followers / Following</a>
-        </nav>
         <section class="result-auth" aria-label="Private repository auditing">
           <div id="signed-out-auth">
             <a class="button-link github-button compact" href="/api/auth/github">
@@ -117,6 +111,7 @@
         <button id="overview-tab" class="tab is-active" type="button" role="tab" aria-selected="true" aria-controls="overview-panel" tabindex="0" data-tab="overview">Overview</button>
         <button id="audit-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="audit-panel" tabindex="-1" data-tab="audit">Audit</button>
         <button id="repositories-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="repositories-panel" tabindex="-1" data-tab="repositories">Repositories</button>
+        <button id="network-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="network-panel" tabindex="-1" data-tab="network">Network</button>
         <button id="markdown-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="markdown-panel" tabindex="-1" data-tab="markdown">Markdown export</button>
       </nav>
 
@@ -168,6 +163,77 @@
         </section>
       </section>
 
+      <section id="network-panel" class="tab-panel" role="tabpanel" aria-labelledby="network-tab" tabindex="0" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Public follower network</p><h2>Network</h2></div>
+          <p id="network-summary" class="summary-text"></p>
+        </div>
+        <p class="panel-help">The public followers and following lists for this profile, retrieved when this tab is first opened. GitProfileLens never follows or unfollows anyone.</p>
+        <p id="network-status" class="status" aria-live="polite"></p>
+        <button id="network-retry-button" class="secondary" type="button" hidden>Try again</button>
+
+        <div id="network-results" hidden>
+          <dl class="network-counts">
+            <div><dt>Followers</dt><dd id="network-follower-count">0</dd></div>
+            <div><dt>Following</dt><dd id="network-following-count">0</dd></div>
+            <div><dt>Following who don't follow back</dt><dd id="network-unreciprocated-count">0</dd></div>
+          </dl>
+          <p id="network-notice" class="network-notice" hidden></p>
+
+          <div id="network-disclosure-controls" class="list-controls network-global-controls" hidden>
+            <button id="network-expand-all" class="secondary" type="button" aria-label="Expand all network lists">Expand all</button>
+            <button id="network-collapse-all" class="secondary" type="button" aria-label="Collapse all network lists">Collapse all</button>
+          </div>
+
+          <section class="section-block network-section">
+            <h3 id="network-followers-heading">Followers</h3>
+            <p id="network-followers-empty" class="empty-state" hidden></p>
+            <ul id="network-follower-list" class="account-list" aria-labelledby="network-followers-heading"></ul>
+            <p id="network-followers-status" class="list-status" hidden></p>
+            <div id="network-followers-controls" class="list-controls" hidden>
+              <button id="network-followers-more" class="secondary" type="button" aria-label="Show 25 more Followers">Show 25 more</button>
+              <button id="network-followers-all" class="secondary" type="button" aria-label="Show all Followers">Show all</button>
+              <button id="network-followers-collapse" class="secondary" type="button" aria-label="Collapse Followers" hidden>Collapse</button>
+            </div>
+          </section>
+
+          <section class="section-block network-section">
+            <h3 id="network-following-heading">Following</h3>
+            <p id="network-following-empty" class="empty-state" hidden></p>
+            <ul id="network-following-list" class="account-list" aria-labelledby="network-following-heading"></ul>
+            <p id="network-following-status" class="list-status" hidden></p>
+            <div id="network-following-controls" class="list-controls" hidden>
+              <button id="network-following-more" class="secondary" type="button" aria-label="Show 25 more Following users">Show 25 more</button>
+              <button id="network-following-all" class="secondary" type="button" aria-label="Show all Following users">Show all</button>
+              <button id="network-following-collapse" class="secondary" type="button" aria-label="Collapse Following users" hidden>Collapse</button>
+            </div>
+          </section>
+
+          <section id="network-unreciprocated-section" hidden class="section-block network-section">
+            <h3 id="network-unreciprocated-heading">Following who don't follow back</h3>
+            <p id="network-unreciprocated-empty" class="empty-state" hidden></p>
+            <ul id="network-unreciprocated-list" class="account-list" aria-labelledby="network-unreciprocated-heading"></ul>
+            <p id="network-unreciprocated-status" class="list-status" hidden></p>
+            <div id="network-unreciprocated-controls" class="list-controls" hidden>
+              <button id="network-unreciprocated-more" class="secondary" type="button" aria-label="Show 25 more users who don't follow back">Show 25 more</button>
+              <button id="network-unreciprocated-all" class="secondary" type="button" aria-label="Show all users who don't follow back">Show all</button>
+              <button id="network-unreciprocated-collapse" class="secondary" type="button" aria-label="Collapse users who don't follow back" hidden>Collapse</button>
+            </div>
+          </section>
+
+          <div id="network-export" class="section-block" hidden>
+            <div class="section-heading export-heading">
+              <div><p class="eyebrow">Preview and export</p><h2>Network Markdown</h2></div>
+              <div class="actions">
+                <button id="network-copy-button" class="secondary" type="button">Copy Markdown</button>
+                <button id="network-download-button" class="secondary" type="button">Download .md</button>
+              </div>
+            </div>
+            <textarea id="network-output" readonly spellcheck="false" aria-label="Generated network Markdown"></textarea>
+          </div>
+        </div>
+      </section>
+
       <section id="markdown-panel" class="tab-panel" role="tabpanel" aria-labelledby="markdown-tab" tabindex="0" hidden>
         <div class="section-heading export-heading">
           <div><p class="eyebrow">Preview and export</p><h2>Markdown report</h2></div>
@@ -192,64 +258,6 @@
         <p id="export-summary" class="panel-help"></p>
         <textarea id="output" readonly spellcheck="false" aria-label="Generated Markdown"></textarea>
       </section>
-      </section>
-    </section>
-
-    <section id="network-page" class="result-page network-page" hidden>
-      <header class="result-page-header">
-        <a class="network-brand" href="/" aria-label="Start a new GitProfileLens audit">
-          <span class="result-logo-crop" aria-hidden="true"><img src="docs/images/logo.png" alt="" /></span>
-          <span>GitProfileLens</span>
-        </a>
-        <nav class="tool-nav" aria-label="GitProfileLens tools">
-          <button id="network-back-button" class="secondary" type="button">Back to portfolio audit</button>
-        </nav>
-      </header>
-
-      <section class="results">
-        <div class="network-intro">
-          <p class="eyebrow">Public network export</p>
-          <h2>Followers / Following</h2>
-          <p class="panel-help">Export the public GitHub follower and following lists for an account as Markdown. This is an export utility only - it does not score, rank, or audit anything, and no repository audit is required.</p>
-          <form id="network-form" class="search-form" novalidate>
-            <label for="network-username">GitHub username</label>
-            <div class="input-row">
-              <input id="network-username" name="network-username" type="text" placeholder="quangshuynh" autocomplete="off" spellcheck="false" />
-              <button id="network-load-button" type="submit">Load</button>
-            </div>
-          </form>
-          <p id="network-status" class="status" aria-live="polite"></p>
-        </div>
-
-        <div id="network-results" class="network-results" hidden>
-          <div class="profile-bar">
-            <div class="profile-identity">
-              <img id="network-avatar" class="avatar" alt="" hidden />
-              <div>
-                <p id="network-login" class="profile-name"></p>
-                <a id="network-profile-link" class="muted-link" target="_blank" rel="noopener noreferrer"></a>
-              </div>
-            </div>
-            <dl class="network-counts">
-              <div><dt>Followers</dt><dd id="network-follower-count">0</dd></div>
-              <div><dt>Following</dt><dd id="network-following-count">0</dd></div>
-            </dl>
-          </div>
-
-          <div class="network-panel">
-            <p id="network-notice" class="network-notice" hidden></p>
-            <div id="network-export" class="network-export" hidden>
-              <div class="section-heading export-heading">
-                <div><p class="eyebrow">Preview and export</p><h2>Markdown</h2></div>
-                <div class="actions">
-                  <button id="network-copy-button" class="secondary" type="button">Copy Markdown</button>
-                  <button id="network-download-button" class="secondary" type="button">Download .md</button>
-                </div>
-              </div>
-              <textarea id="network-output" readonly spellcheck="false" aria-label="Generated network Markdown"></textarea>
-            </div>
-          </div>
-        </div>
       </section>
     </section>
 

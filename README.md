@@ -46,20 +46,28 @@ Sign in with GitHub and install the GitHub App on all or selected repositories. 
 
 Private repositories never affect the public GitHub Profile Score. Private identifiers are not included in public URLs, score cards, public metadata endpoints, or `/api/report`. Private details enter Markdown only when the authenticated user explicitly selects a private or combined export.
 
-## Followers / Following export
+## Network tab
 
-A separate utility, reachable from the **Followers / Following** link on the homepage and in the audit header, or directly at `?tool=network`. Enter a GitHub username and it exports that account's public follower and following lists as Markdown.
+**Network** is one of the profile result tabs, alongside Overview, Audit, Repositories and Markdown export. It retrieves the audited profile's public followers and following lists and exports them as Markdown.
 
-- It reads only publicly accessible follower and following data from GitHub's public REST API.
-- It runs independently of repository auditing. No audit is required first, and running it does not change an existing audit, score, candidacy, repository selection, or repository Markdown export. When an audit is already loaded, its username is prefilled as a convenience.
-- Both lists are paginated at 100 accounts per request until GitHub returns a short page, so the export is not limited to the first 30 or 100 accounts.
-- **Copy Markdown** and **Download .md** appear only after both lists are retrieved completely. If a later page fails, the partial list is shown for diagnosis and clearly labeled incomplete, and no export is produced.
-- GitHub relationship data can change while an export is being generated. When the profile's reported counts disagree with the retrieved lists, the export uses the accounts GitHub actually returned, never invented ones, and states the difference.
-- Accounts are listed in the order GitHub returned them; they are not re-sorted.
-- This is an export utility only. GitProfileLens does not score, rank, or recommend followers, does not suggest who to follow or unfollow, and never follows or unfollows anyone.
+- It operates on the profile already loaded into GitProfileLens. There is no second username to enter.
+- The lists are fetched the first time the tab is opened, not during the audit itself, so an ordinary audit spends none of the limited unauthenticated request budget on them. A successful result is cached for that username, so leaving the tab and returning does not refetch. Auditing a different profile invalidates it.
+- Both lists are paginated at 100 accounts per request until GitHub returns a short page, so the tab is not limited to the first 30 or 100 accounts.
+- It reads only publicly accessible follower and following data from GitHub's public REST API, and needs no additional permissions.
 
-The downloaded file is generated in the browser from a sanitized username, for example `quangshuynh-followers-following.md`. Nothing is sent to another server to produce it.
+### Following who don't follow back
 
+The tab also derives the accounts the profile follows that do not follow it back: the following list minus the followers list, comparing logins case-insensitively because GitHub treats them as case-insensitive identities. Results keep the spelling and ordering GitHub returned for the following list.
+
+This is derived **only when both lists have been retrieved completely**. If either list is incomplete, the section is withheld rather than shown, because a login missing from a partial followers list may simply sit on a page that never arrived - calling that account a non-follower would be unsound. The same completeness rule gates the Markdown export.
+
+It is a factual relationship difference, nothing more. GitProfileLens does not score, rank or recommend followers, does not suggest who to follow or unfollow, and never follows or unfollows anyone.
+
+### Network Markdown
+
+**Copy Markdown** and **Download .md** live inside the Network tab and produce a document separate from the repository report in the Markdown export tab. It contains the username, the three counts, and the Followers, Following, and Following who don't follow back lists. An empty list is written as `None.`, which is known data rather than missing data.
+
+GitHub relationship data can change while the lists are being retrieved. When the profile's reported counts disagree with the retrieved lists, the export uses the accounts GitHub actually returned, never invented ones, and states the difference. The file is generated in the browser from a sanitized username, for example `quangshuynh-followers-following.md`; nothing is sent to another server to produce it.
 ## How scoring works
 
 The deterministic scoring engine lives in `audit.js` and is shared by the browser, serverless routes, and tests. Each repository receives scores for:
@@ -249,7 +257,7 @@ gitprofilelens/
 |-- tests/                            # unit, API, security, and browser tests
 |-- audit.js                          # deterministic scoring and normalization
 |-- index.html                        # accessible application structure
-|-- network-export.js                 # public follower and following retrieval and Markdown
+|-- network-export.js                 # follower and following retrieval, derivation, and Markdown
 |-- share.js                          # pure sharing and score-card helpers
 |-- script.js                         # browser state, fetching, rendering, and isolation
 |-- styles.css                        # responsive visual system
@@ -266,7 +274,7 @@ npm run check
 npm run test:browser
 ```
 
-Tests cover deterministic scoring, portfolio candidacy classification, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs.
+Tests cover deterministic scoring, portfolio candidacy classification, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs.
 
 ## Deployment options
 
@@ -287,8 +295,8 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - Private report APIs, saved audits, and combined public/private scores are intentionally excluded. Private Markdown export is available only through the authenticated browser view.
 - README structure and size are presentation signals and cannot determine writing or implementation quality.
 - A public share URL re-fetches current public data; no audit snapshot is stored.
-- The Followers / Following export sees only what GitHub's public API returns. Accounts GitHub does not expose publicly are not retrievable, and lists can change between the profile request and the last page.
-- The Followers / Following export retrieves at most 10,000 accounts per list; a larger network is reported as incomplete rather than silently truncated.
+- The Network tab sees only what GitHub's public API returns. Accounts GitHub does not expose publicly are not retrievable, and lists can change between the profile request and the last page.
+- The Network tab retrieves at most 10,000 accounts per list; a larger network is reported as incomplete rather than silently truncated. It is available for public audits only, not the private repository audit.
 
 ## Contributing
 

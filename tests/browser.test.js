@@ -611,7 +611,7 @@ test("authorized audit resolves pins from the public profile", { skip: !chromePa
   }
 });
 
-test("network export journey loads, previews, copies, and downloads Markdown", { skip: !chromePath }, async () => {
+test("Network is a profile tab that lazy loads once and is reused", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -627,194 +627,326 @@ test("network export journey loads, previews, copies, and downloads Markdown", {
   page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
   page.on("pageerror", (error) => browserErrors.push(error.message));
 
-  await mockNetworkRequests(page, {
+  await mockGithubRequests(page);
+  const githubApi = await mockNetworkRequests(page, {
     example: {
-      profile: networkProfile(2, 1),
-      followers: [[account("ada-lovelace"), account("grace-hopper")]],
-      following: [[account("linus-t")]],
+      // Mixed casing on both sides proves logins are compared case-insensitively.
+      followers: [[account("ada-lovelace"), account("Grace-Hopper"), account("linus-t")]],
+      following: [[
+        account("ADA-LOVELACE"),
+        account("grace-hopper"),
+        account("katherine-j"),
+        account("margaret-h"),
+      ]],
     },
   });
 
-  await page.goto(baseUrl);
-  await page.getByRole("link", { name: /Followers \/ Following export/ }).click();
-  await page.locator("#network-page").waitFor({ state: "visible" });
-  assert.equal(await page.locator(".hero").isHidden(), true);
-  assert.equal(await page.locator("#network-results").isHidden(), true);
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
 
-  await page.locator("#network-username").fill("example");
-  await page.getByRole("button", { name: "Load", exact: true }).click();
+  // An ordinary audit must not spend the unauthenticated budget on the network.
+  assert.equal(githubApi.relationshipCalls.length, 0);
+  assert.equal(await page.locator("#network-tab").isVisible(), true);
+  assert.equal(await page.locator("#network-tab").getAttribute("aria-controls"), "network-panel");
+  assert.equal(await page.locator("#network-panel").getAttribute("aria-labelledby"), "network-tab");
+  assert.equal(await page.locator("#network-panel").isHidden(), true);
+
+  await page.getByRole("tab", { name: "Network" }).click();
   await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.ok(githubApi.relationshipCalls.length > 0);
 
-  assert.equal(await page.locator("#network-follower-count").innerText(), "2");
-  assert.equal(await page.locator("#network-following-count").innerText(), "1");
-  assert.match(await page.locator("#network-login").innerText(), /Example User \(@example\)/);
-  assert.equal(await page.locator("#network-avatar").isVisible(), true);
-  assert.equal(await page.locator("#network-notice").isHidden(), true);
+  assert.equal(await page.locator("#network-follower-count").innerText(), "3");
+  assert.equal(await page.locator("#network-following-count").innerText(), "4");
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "2");
+
+  assert.deepEqual(await page.locator("#network-follower-list li").allInnerTexts(), [
+    "ada-lovelace", "Grace-Hopper", "linus-t",
+  ]);
+  assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), [
+    "ADA-LOVELACE", "grace-hopper", "katherine-j", "margaret-h",
+  ]);
+  assert.deepEqual(await page.locator("#network-unreciprocated-list li").allInnerTexts(), [
+    "katherine-j", "margaret-h",
+  ]);
+  assert.equal(
+    await page.locator("#network-unreciprocated-list a").first().getAttribute("href"),
+    "https://github.com/katherine-j"
+  );
 
   const markdown = await page.locator("#network-output").inputValue();
-  assert.match(markdown, /^# GitHub Network$/m);
-  assert.match(markdown, /\*\*Username:\*\* \[example\]\(https:\/\/github\.com\/example\)/);
-  assert.match(markdown, /\*\*Followers:\*\* 2/);
-  assert.match(markdown, /\*\*Following:\*\* 1/);
-  assert.match(markdown, /1\. \[ada-lovelace\]\(https:\/\/github\.com\/ada-lovelace\)/);
-  assert.match(markdown, /2\. \[grace-hopper\]\(https:\/\/github\.com\/grace-hopper\)/);
-  assert.match(markdown, /## Following\n\n1\. \[linus-t\]\(https:\/\/github\.com\/linus-t\)/);
-  assert.equal(await page.locator("#network-output").getAttribute("readonly"), "");
+  assert.match(markdown, /^\*\*Followers:\*\* 3 {2}$/m);
+  assert.match(markdown, /^\*\*Following:\*\* 4 {2}$/m);
+  assert.match(markdown, /^\*\*Following who don't follow back:\*\* 2$/m);
+  assert.match(
+    markdown,
+    /## Following who don't follow back\n\n1\. \[katherine-j\]\(https:\/\/github\.com\/katherine-j\)\n2\. \[margaret-h\]/
+  );
 
   await page.getByRole("button", { name: "Copy Markdown" }).click();
   assert.equal(await page.evaluate(() => window.__copiedNetwork), markdown);
-  assert.equal(await page.locator("#network-copy-button").innerText(), "Copied");
-
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download .md" }).click();
-  const download = await downloadPromise;
-  assert.equal(download.suggestedFilename(), "example-followers-following.md");
+  assert.equal((await downloadPromise).suggestedFilename(), "example-followers-following.md");
 
+  // Switching away and back reuses the cached result rather than refetching.
+  const callsAfterFirstLoad = githubApi.relationshipCalls.length;
+  await page.getByRole("tab", { name: "Audit" }).click();
+  await page.locator("#audit-panel").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.equal(githubApi.relationshipCalls.length, callsAfterFirstLoad);
+  assert.equal(await page.locator("#network-follower-count").innerText(), "3");
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "2");
   assert.deepEqual(browserErrors, []);
   } finally {
     await browser.close();
   }
 });
 
-test("network export paginates past the first page instead of truncating", { skip: !chromePath }, async () => {
+test("auditing a new profile invalidates the previous network", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
-  await mockNetworkRequests(page, {
-    example: {
-      profile: networkProfile(117, 0),
-      followers: [accountList("follower", 100), accountList("follower", 17, 100)],
-      following: [[]],
-    },
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockGithubRequests(page, [repository], { login: "second" });
+  const githubApi = await mockNetworkRequests(page, {
+    example: { followers: [[account("alpha-follower")]], following: [[account("alpha-following")]] },
+    second: { followers: [[account("beta-follower")]], following: [[account("beta-following")]] },
   });
 
-  await page.goto(`${baseUrl}/?tool=network&network=example`);
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
   await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.deepEqual(await page.locator("#network-follower-list li").allInnerTexts(), ["alpha-follower"]);
 
-  assert.equal(await page.locator("#network-follower-count").innerText(), "117");
-  assert.equal(await page.locator("#network-following-count").innerText(), "0");
+  // Leave the Network tab so the new audit cannot immediately reload it, making the
+  // invalidation itself observable rather than the reload that would follow it.
+  await page.getByRole("tab", { name: "Overview" }).click();
+  await page.evaluate(() => loadProfile("second"));
+  await page.locator("#profile-link").filter({ hasText: "@second" }).waitFor();
 
-  const markdown = await page.locator("#network-output").inputValue();
-  assert.match(markdown, /101\. \[follower-101\]/);
-  assert.match(markdown, /117\. \[follower-117\]/);
-  assert.match(markdown, /## Following\n\nNone\./);
-  assert.equal(await page.locator("#network-copy-button").isDisabled(), false);
+  // The previous profile's network must be gone, not merely hidden behind a tab.
+  assert.equal(await page.evaluate(() => networkState.username), null);
+  assert.equal(await page.evaluate(() => networkState.status), "idle");
+  assert.equal(await page.evaluate(() => networkState.markdown), "");
+  assert.equal(await page.evaluate(() => networkState.notFollowingBack), null);
+  assert.equal(await page.locator("#network-follower-list li").count(), 0);
+  assert.equal(await page.locator("#network-output").inputValue(), "");
+
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.deepEqual(await page.locator("#network-follower-list li").allInnerTexts(), ["beta-follower"]);
+  assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), ["beta-following"]);
+  assert.doesNotMatch(await page.locator("#network-output").inputValue(), /alpha-/);
+  assert.ok(githubApi.relationshipCalls.some((url) => url.includes("/users/second/")));
   } finally {
     await browser.close();
   }
 });
 
-test("a later pagination failure blocks the export instead of claiming completeness", { skip: !chromePath }, async () => {
+test("a late network response from a previous profile cannot populate the new one", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockGithubRequests(page, [repository], { login: "second" });
   await mockNetworkRequests(page, {
     example: {
-      profile: networkProfile(150, 1),
+      relationshipDelay: 900,
+      followers: [[account("stale-follower")]],
+      following: [[account("stale-following")]],
+    },
+    second: { followers: [[account("fresh-follower")]], following: [[account("fresh-following")]] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.waitForFunction(() => networkState.status === "loading");
+
+  // Audit a different profile while the first network request is still in flight.
+  await page.evaluate(() => loadProfile("second"));
+  await page.locator("#profile-link").filter({ hasText: "@second" }).waitFor();
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.deepEqual(await page.locator("#network-follower-list li").allInnerTexts(), ["fresh-follower"]);
+
+  await page.waitForTimeout(1200);
+
+  assert.equal(await page.evaluate(() => networkState.username), "second");
+  assert.deepEqual(await page.locator("#network-follower-list li").allInnerTexts(), ["fresh-follower"]);
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 1);
+  const markdown = await page.locator("#network-output").inputValue();
+  assert.match(markdown, /fresh-follower/);
+  assert.doesNotMatch(markdown, /stale-/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an incomplete retrieval withholds the derived set and the export", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: {
       followers: [accountList("follower", 100), { failWith: 500 }],
-      following: [[account("linus-t")]],
+      following: [[account("katherine-j")]],
     },
   });
 
-  await page.goto(`${baseUrl}/?tool=network&network=example`);
+  await page.goto(`${baseUrl}/?user=example&view=network`);
   await page.locator("#network-results").waitFor({ state: "visible" });
 
   assert.match(await page.locator("#network-follower-count").innerText(), /100 retrieved \(incomplete\)/);
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "Unavailable");
+  assert.equal(await page.locator("#network-unreciprocated-section").isHidden(), true);
   assert.match(await page.locator("#network-notice").innerText(), /Followers could not be fully retrieved/);
-  assert.match(await page.locator("#network-notice").innerText(), /export is unavailable until the complete lists/);
   assert.equal(await page.locator("#network-export").isHidden(), true);
   assert.equal(await page.locator("#network-output").inputValue(), "");
-  assert.match(await page.locator("#network-status").innerText(), /could not be completely retrieved/);
   assert.equal(await page.evaluate(() => networkState.markdown), "");
+  assert.equal(await page.evaluate(() => networkState.notFollowingBack), null);
+
+  // katherine-j is followed but absent from the partial followers list; the page
+  // must not claim she does not follow back.
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 0);
   } finally {
     await browser.close();
   }
 });
 
-test("network export reports missing users, rate limits, and invalid usernames distinctly", { skip: !chromePath }, async () => {
+test("an empty derived set is reported as zero rather than unavailable", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
-  const githubApi = await mockNetworkRequests(page, {
-    limited: { profile: { failWith: 403 } },
-  });
-
-  await page.goto(`${baseUrl}/?tool=network`);
-  await page.locator("#network-page").waitFor({ state: "visible" });
-
-  await page.locator("#network-username").fill("ghost");
-  await page.getByRole("button", { name: "Load", exact: true }).click();
-  await page.locator("#network-status.error").waitFor();
-  assert.match(await page.locator("#network-status").innerText(), /account could not be found|user not found/i);
-  assert.equal(await page.locator("#network-results").isHidden(), true);
-
-  await page.locator("#network-username").fill("limited");
-  await page.getByRole("button", { name: "Load", exact: true }).click();
-  await page.waitForFunction(() => /rate limit/i.test(document.querySelector("#network-status").textContent));
-  const rateLimitMessage = await page.locator("#network-status").innerText();
-  assert.match(rateLimitMessage, /rate limit was reached/i);
-  assert.doesNotMatch(rateLimitMessage, /not found/i);
-
-  const requestsBefore = githubApi.calls.length;
-  await page.locator("#network-username").fill("not a username");
-  await page.getByRole("button", { name: "Load", exact: true }).click();
-  assert.match(await page.locator("#network-status").innerText(), /not a valid GitHub username/i);
-  assert.equal(githubApi.calls.length, requestsBefore);
-
-  await page.locator("#network-username").fill("<script>alert(1)</script>");
-  await page.getByRole("button", { name: "Load", exact: true }).click();
-  assert.match(await page.locator("#network-status").innerText(), /not a valid GitHub username/i);
-  assert.equal(await page.locator("#network-status script").count(), 0);
-  assert.equal(githubApi.calls.length, requestsBefore);
-
-  await page.locator("#network-username").fill("");
-  await page.getByRole("button", { name: "Load", exact: true }).click();
-  assert.match(await page.locator("#network-status").innerText(), /Enter a GitHub username/i);
-  assert.equal(githubApi.calls.length, requestsBefore);
-  } finally {
-    await browser.close();
-  }
-});
-
-test("a slow earlier search cannot overwrite a newer network result", { skip: !chromePath }, async () => {
-  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
-  try {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
   await mockNetworkRequests(page, {
-    slowpoke: {
-      profile: networkProfile(1, 0, "slowpoke"),
-      profileDelay: 600,
-      followers: [[account("stale-follower")]],
-      following: [[]],
-    },
-    speedy: {
-      profile: networkProfile(1, 0, "speedy"),
-      followers: [[account("fresh-follower")]],
-      following: [[]],
+    example: {
+      followers: [[account("ada-lovelace"), account("extra-follower")]],
+      following: [[account("Ada-Lovelace")]],
     },
   });
 
-  await page.goto(`${baseUrl}/?tool=network`);
-  await page.locator("#network-page").waitFor({ state: "visible" });
-  await page.evaluate(() => {
-    loadNetwork("slowpoke");
-    loadNetwork("speedy");
-  });
-
+  await page.goto(`${baseUrl}/?user=example&view=network`);
   await page.locator("#network-results").waitFor({ state: "visible" });
-  assert.match(await page.locator("#network-login").innerText(), /@speedy/);
-  await page.waitForTimeout(900);
 
-  assert.match(await page.locator("#network-login").innerText(), /@speedy/);
-  assert.match(await page.locator("#network-output").inputValue(), /fresh-follower/);
-  assert.doesNotMatch(await page.locator("#network-output").inputValue(), /stale-follower/);
-  assert.equal(await page.locator("#network-load-button").isDisabled(), false);
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "0");
+  assert.equal(await page.locator("#network-unreciprocated-section").isHidden(), false);
+  assert.match(
+    await page.locator("#network-unreciprocated-empty").innerText(),
+    /Everyone you follow also follows you/
+  );
+  assert.match(
+    await page.locator("#network-output").inputValue(),
+    /## Following who don't follow back\n\nNone\./
+  );
   } finally {
     await browser.close();
   }
 });
 
-test("network export leaves a completed repository audit untouched", { skip: !chromePath }, async () => {
+test("a network failure is retryable without refetching on every tab switch", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  const githubApi = await mockNetworkRequests(page, {
+    example: { followers: [{ failWith: 403 }], following: [[account("katherine-j")]] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-status.error").waitFor();
+
+  // A per-page failure is reported as an incomplete list, so the status names the
+  // outcome and the notice carries GitHub's own reason.
+  const status = await page.locator("#network-status").innerText();
+  const notice = await page.locator("#network-notice").innerText();
+  assert.match(status, /could not be completely retrieved/i);
+  assert.match(notice, /rate limit was reached/i);
+  assert.doesNotMatch(notice, /not found/i);
+  assert.doesNotMatch(status, /not found/i);
+  assert.equal(await page.locator("#network-retry-button").isVisible(), true);
+  assert.equal(await page.locator("#network-export").isHidden(), true);
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "Unavailable");
+
+  // A failed attempt must not silently re-request on every tab switch, because the
+  // usual cause is the rate limit and retrying would spend the remaining budget.
+  const callsAfterFailure = githubApi.relationshipCalls.length;
+  await page.getByRole("tab", { name: "Audit" }).click();
+  await page.getByRole("tab", { name: "Network" }).click();
+  assert.equal(githubApi.relationshipCalls.length, callsAfterFailure);
+
+  const requestIdBeforeRetry = await page.evaluate(() => networkState.requestId);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await page.waitForFunction(
+    (previous) => networkState.requestId > previous,
+    requestIdBeforeRetry
+  );
+  await page.locator("#network-status.error").waitFor();
+  assert.ok(githubApi.relationshipCalls.length > callsAfterFailure);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("five result tabs stay keyboard navigable and fit a mobile viewport", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: {
+      followers: [[account("ada-lovelace")]],
+      following: [[account("ada-lovelace"), account("katherine-j")]],
+    },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+
+  // Roving tabindex and arrow keys must still work with a fifth tab present.
+  await page.locator("#repositories-tab").click();
+  assert.equal(await page.locator("#repositories-tab").getAttribute("tabindex"), "0");
+  await page.locator("#repositories-tab").press("ArrowRight");
+  assert.equal(await page.locator("#network-tab").getAttribute("aria-selected"), "true");
+  assert.equal(await page.locator("#network-tab").getAttribute("tabindex"), "0");
+  assert.equal(await page.locator("#repositories-tab").getAttribute("tabindex"), "-1");
+  assert.equal(await page.locator("#network-panel").isVisible(), true);
+
+  await page.locator("#network-tab").press("ArrowRight");
+  assert.equal(await page.locator("#markdown-tab").getAttribute("aria-selected"), "true");
+  await page.locator("#markdown-tab").press("ArrowLeft");
+  assert.equal(await page.locator("#network-tab").getAttribute("aria-selected"), "true");
+  await page.locator("#network-tab").press("Home");
+  assert.equal(await page.locator("#overview-tab").getAttribute("aria-selected"), "true");
+  await page.locator("#overview-tab").press("End");
+  assert.equal(await page.locator("#markdown-tab").getAttribute("aria-selected"), "true");
+
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  const dimensions = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+    tabsScrollable: document.querySelector(".tabs").scrollWidth > document.querySelector(".tabs").clientWidth,
+  }));
+  assert.ok(
+    dimensions.content <= dimensions.viewport,
+    `page width ${dimensions.content}px exceeds ${dimensions.viewport}px viewport`
+  );
+  assert.equal(await page.locator("#network-copy-button").isVisible(), true);
+  assert.equal(await page.locator("#network-download-button").isVisible(), true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("opening Network leaves the repository audit and its exports untouched", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -824,13 +956,14 @@ test("network export leaves a completed repository audit untouched", { skip: !ch
 
   await mockGithubRequests(page);
   await mockNetworkRequests(page, {
-    example: { followers: [[account("ada-lovelace")]], following: [[]] },
+    example: { followers: [[account("ada-lovelace")]], following: [[account("katherine-j")]] },
   });
 
   await page.goto(`${baseUrl}/?user=example`);
   await page.locator("#result-section").waitFor({ state: "visible" });
   await page.getByRole("tab", { name: "Markdown export" }).click();
-  const auditBefore = await page.evaluate(() => ({
+
+  const readAuditState = () => page.evaluate(() => ({
     score: document.querySelector("#overall-score").textContent,
     repositories: appState.repositories.map((item) => item.name),
     audits: appState.audits.map((item) => ({ name: item.name, score: item.score })),
@@ -838,51 +971,280 @@ test("network export leaves a completed repository audit untouched", { skip: !ch
     mode: appState.mode,
     markdown: document.querySelector("#output").value,
   }));
+  const before = await readAuditState();
 
-  await page.getByRole("link", { name: "Followers / Following", exact: true }).click();
-  await page.locator("#network-page").waitFor({ state: "visible" });
-
-  // The audited username is offered as a convenience without requiring another audit.
-  assert.equal(await page.locator("#network-username").inputValue(), "example");
-  await page.getByRole("button", { name: "Load", exact: true }).click();
+  await page.getByRole("tab", { name: "Network" }).click();
   await page.locator("#network-results").waitFor({ state: "visible" });
   assert.match(await page.locator("#network-output").inputValue(), /ada-lovelace/);
 
-  await page.getByRole("button", { name: "Back to portfolio audit" }).click();
-  await page.locator("#result-section").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Markdown export" }).click();
+  await page.locator("#markdown-panel").waitFor({ state: "visible" });
+  const after = await readAuditState();
 
-  const auditAfter = await page.evaluate(() => ({
-    score: document.querySelector("#overall-score").textContent,
-    repositories: appState.repositories.map((item) => item.name),
-    audits: appState.audits.map((item) => ({ name: item.name, score: item.score })),
-    candidacy: appState.audits.map((item) => item.candidate?.label ?? null),
-    mode: appState.mode,
-    markdown: document.querySelector("#output").value,
-  }));
-
-  assert.deepEqual(auditAfter, auditBefore);
+  assert.deepEqual(after, before);
   assert.equal(await page.evaluate(() => "network" in appState), false);
-  assert.match(auditAfter.markdown, /portfolio-lens/);
-  assert.doesNotMatch(auditAfter.markdown, /ada-lovelace|GitHub Network/);
+  assert.match(after.markdown, /portfolio-lens/);
+  assert.doesNotMatch(after.markdown, /ada-lovelace|GitHub Network|follow back/i);
+
+  // The two Markdown artifacts stay separate documents in separate tabs.
+  assert.match(await page.locator("#network-output").inputValue(), /^# GitHub Network/);
   assert.deepEqual(browserErrors, []);
   } finally {
     await browser.close();
   }
 });
 
-test("network export has no horizontal overflow on a mobile viewport", { skip: !chromePath }, async () => {
+test("large network lists are disclosed 25 at a time", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
   await mockNetworkRequests(page, {
     example: {
-      profile: networkProfile(2, 1),
-      followers: [[account("ada-lovelace"), account("grace-hopper")]],
-      following: [[account("linus-t")]],
+      followers: [accountList("follower", 100)],
+      // 62 following accounts, none of which follow back, gives an uneven final page.
+      following: [accountList("following", 62)],
     },
   });
 
-  await page.goto(`${baseUrl}/?tool=network&network=example`);
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // Only the visible slice reaches the DOM; the rest is held in memory, not hidden.
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+  assert.equal(await page.locator("#network-followers-status").innerText(), "Showing 25 of 100");
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 25 of 62");
+  assert.equal(await page.locator("#network-unreciprocated-status").innerText(), "Showing 25 of 62");
+  assert.equal(await page.locator("#network-follower-list").innerText().then((t) => t.includes("follower-26")), false);
+
+  // The count cards keep reporting the complete totals.
+  assert.equal(await page.locator("#network-follower-count").innerText(), "100");
+  assert.equal(await page.locator("#network-following-count").innerText(), "62");
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "62");
+
+  assert.equal(await page.locator("#network-followers-collapse").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-more").isVisible(), true);
+  assert.equal(await page.locator("#network-followers-all").isVisible(), true);
+
+  // 25 -> 50 -> 75 -> 100, without duplicates.
+  await page.getByRole("button", { name: "Show 25 more Followers" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 50);
+  assert.equal(await page.locator("#network-followers-status").innerText(), "Showing 50 of 100");
+  assert.equal(await page.locator("#network-followers-collapse").isVisible(), true);
+
+  await page.getByRole("button", { name: "Show 25 more Followers" }).click();
+  await page.getByRole("button", { name: "Show 25 more Followers" }).click();
+  const followerLogins = await page.locator("#network-follower-list li").allInnerTexts();
+  assert.equal(followerLogins.length, 100);
+  assert.equal(new Set(followerLogins).size, 100);
+  assert.equal(followerLogins[0], "follower-1");
+  assert.equal(followerLogins[99], "follower-100");
+  assert.equal(await page.locator("#network-followers-status").innerText(), "Showing all 100");
+  assert.equal(await page.locator("#network-followers-more").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-all").isHidden(), true);
+
+  // Expanding Followers must not disturb the other sections.
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+
+  // An uneven final page never overshoots the real total.
+  await page.getByRole("button", { name: "Show 25 more Following users" }).click();
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 50 of 62");
+  await page.getByRole("button", { name: "Show 25 more Following users" }).click();
+  assert.equal(await page.locator("#network-following-list li").count(), 62);
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing all 62");
+
+  // Show all and Collapse work on the derived section too.
+  await page.getByRole("button", { name: "Show all users who don't follow back" }).click();
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 62);
+  assert.equal(await page.locator("#network-unreciprocated-status").innerText(), "Showing all 62");
+
+  await page.getByRole("button", { name: "Collapse users who don't follow back" }).click();
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-status").innerText(), "Showing 25 of 62");
+  assert.equal(await page.locator("#network-unreciprocated-collapse").isHidden(), true);
+  assert.deepEqual(
+    (await page.locator("#network-unreciprocated-list li").allInnerTexts()).slice(0, 2),
+    ["following-1", "following-2"]
+  );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("disclosure never changes the exported Markdown", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(() => {
+    window.__copiedNetwork = null;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text) => { window.__copiedNetwork = text; } },
+    });
+  });
+  const page = await context.newPage();
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [accountList("follower", 100)], following: [accountList("following", 100)] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  const collapsedMarkdown = await page.locator("#network-output").inputValue();
+
+  // The UI shows 25; the export must still describe all 100 on each side.
+  assert.match(collapsedMarkdown, /^\*\*Followers:\*\* 100 {2}$/m);
+  assert.match(collapsedMarkdown, /^\*\*Following:\*\* 100 {2}$/m);
+  assert.match(collapsedMarkdown, /^\*\*Following who don't follow back:\*\* 100$/m);
+  assert.match(collapsedMarkdown, /^26\. \[follower-26\]\(https:\/\/github\.com\/follower-26\)$/m);
+  assert.match(collapsedMarkdown, /^100\. \[follower-100\]\(https:\/\/github\.com\/follower-100\)$/m);
+  assert.match(collapsedMarkdown, /^100\. \[following-100\]\(https:\/\/github\.com\/following-100\)$/m);
+  assert.equal((collapsedMarkdown.match(/^\d+\. \[follower-/gm) || []).length, 100);
+  assert.equal((collapsedMarkdown.match(/^\d+\. \[following-/gm) || []).length, 200);
+
+  await page.getByRole("button", { name: "Copy Markdown" }).click();
+  assert.equal(await page.evaluate(() => window.__copiedNetwork), collapsedMarkdown);
+
+  // Expanding and collapsing is presentation only; the export is byte-identical.
+  await page.getByRole("button", { name: "Expand all network lists" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 100);
+  assert.equal(await page.locator("#network-output").inputValue(), collapsedMarkdown);
+
+  await page.getByRole("button", { name: "Collapse all network lists" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+  assert.equal(await page.locator("#network-output").inputValue(), collapsedMarkdown);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download .md" }).click();
+  const download = await downloadPromise;
+  assert.equal(download.suggestedFilename(), "example-followers-following.md");
+
+  const stream = await download.createReadStream();
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  assert.equal(Buffer.concat(chunks).toString("utf8"), collapsedMarkdown);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("short and empty network lists show no disclosure controls", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: {
+      followers: [accountList("follower", 12)],
+      // Every followed account also follows, so the derived list is empty.
+      following: [[account("follower-1"), account("follower-2")]],
+    },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.equal(await page.locator("#network-follower-list li").count(), 12);
+  assert.equal(await page.locator("#network-followers-status").innerText(), "12 users");
+  assert.doesNotMatch(await page.locator("#network-followers-status").innerText(), /Showing 25 of/);
+  assert.equal(await page.locator("#network-followers-controls").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-more").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-all").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-collapse").isHidden(), true);
+
+  assert.equal(await page.locator("#network-following-status").innerText(), "2 users");
+  assert.equal(await page.locator("#network-following-controls").isHidden(), true);
+
+  // Zero is known data: the empty state stays, with no controls attached to it.
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "0");
+  assert.match(
+    await page.locator("#network-unreciprocated-empty").innerText(),
+    /Everyone you follow also follows you/
+  );
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 0);
+  assert.equal(await page.locator("#network-unreciprocated-status").isHidden(), true);
+  assert.equal(await page.locator("#network-unreciprocated-controls").isHidden(), true);
+
+  // No section is long enough to need the shared controls.
+  assert.equal(await page.locator("#network-disclosure-controls").isHidden(), true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("disclosure survives tab switches and resets for a new profile", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockGithubRequests(page, [repository], { login: "second" });
+  const githubApi = await mockNetworkRequests(page, {
+    example: { followers: [accountList("follower", 80)], following: [accountList("following", 80)] },
+    second: { followers: [accountList("beta", 80)], following: [accountList("beta-following", 80)] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  await page.getByRole("button", { name: "Show 25 more Following users" }).click();
+  assert.equal(await page.locator("#network-following-list li").count(), 50);
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+
+  // Leaving and returning must not silently collapse what the reader expanded.
+  const callsBefore = githubApi.relationshipCalls.length;
+  await page.getByRole("tab", { name: "Audit" }).click();
+  await page.locator("#audit-panel").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.equal(githubApi.relationshipCalls.length, callsBefore);
+  assert.equal(await page.locator("#network-following-list li").count(), 50);
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 50 of 80");
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+
+  await page.getByRole("button", { name: "Show all Following users" }).click();
+  assert.equal(await page.locator("#network-following-list li").count(), 80);
+
+  // A different profile starts collapsed again rather than inheriting the state.
+  await page.evaluate(() => loadProfile("second"));
+  await page.locator("#profile-link").filter({ hasText: "@second" }).waitFor();
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.deepEqual(await page.evaluate(() => networkState.visibleCounts), {
+    followers: 25,
+    following: 25,
+    unreciprocated: 25,
+  });
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 25 of 80");
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.match(await page.locator("#network-follower-list").innerText(), /beta-1/);
+  assert.doesNotMatch(await page.locator("#network-follower-list").innerText(), /follower-/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("disclosure controls are keyboard operable and wrap on mobile", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [accountList("follower", 90)], following: [accountList("following", 90)] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
   await page.locator("#network-results").waitFor({ state: "visible" });
 
   const dimensions = await page.evaluate(() => ({
@@ -893,8 +1255,25 @@ test("network export has no horizontal overflow on a mobile viewport", { skip: !
     dimensions.content <= dimensions.viewport,
     `page width ${dimensions.content}px exceeds ${dimensions.viewport}px viewport`
   );
-  assert.equal(await page.locator("#network-copy-button").isVisible(), true);
-  assert.equal(await page.locator("#network-download-button").isVisible(), true);
+
+  // Every control is a real button reachable and operable from the keyboard.
+  const moreButton = page.locator("#network-followers-more");
+  assert.equal(await moreButton.evaluate((node) => node.tagName), "BUTTON");
+  await moreButton.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#network-follower-list li").count(), 50);
+  assert.equal(await page.evaluate(() => document.activeElement.id), "network-followers-more");
+
+  await page.locator("#network-followers-all").focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#network-follower-list li").count(), 90);
+
+  // Show all hides itself, so focus lands on the control that replaced it rather
+  // than falling back to the document body.
+  assert.equal(await page.evaluate(() => document.activeElement.id), "network-followers-collapse");
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.equal(await page.evaluate(() => document.activeElement.id), "network-followers-more");
   } finally {
     await browser.close();
   }
@@ -921,108 +1300,84 @@ function accountList(prefix, count, offset = 0) {
 }
 
 /**
- * builds a github profile payload carrying reported relationship counts
- * @param {number} followers reported follower count
- * @param {number} following reported following count
- * @param {string} login github login
- * @returns {Object} raw github profile payload
+ * mocks the public follower and following endpoints used by the Network tab
+ *
+ * Registered after mockGithubRequests so it is consulted first; anything that is
+ * not a followers or following request falls back to the audit mocks.
+ *
+ * @param {Object} page playwright page
+ * @param {Object} accounts map of login to relationship pages
+ * @returns {Promise<Object>} recorded relationship request urls
  */
-function networkProfile(followers, following, login = "example") {
-  return {
-    login,
-    name: "Example User",
-    avatar_url: "https://avatars.githubusercontent.com/u/1",
-    html_url: `https://github.com/${login}`,
-    followers,
-    following,
-  };
+async function mockNetworkRequests(page, accounts) {
+  const relationshipCalls = [];
+
+  await page.route("https://api.github.com/users/*/followers**", (route) =>
+    respondWithRelationship(route, accounts, relationshipCalls)
+  );
+  await page.route("https://api.github.com/users/*/following**", (route) =>
+    respondWithRelationship(route, accounts, relationshipCalls)
+  );
+
+  return { relationshipCalls };
 }
 
 /**
- * mocks the public github endpoints used by the network export view
- * @param {Object} page playwright page
- * @param {Object} accounts map of login to profile and relationship pages
+ * answers one paginated relationship request from prepared pages
+ * @param {Object} route playwright route
+ * @param {Object} accounts map of login to relationship pages
+ * @param {Array<string>} relationshipCalls recorded request urls
  * @returns {Promise<void>} no return value
  */
-async function mockNetworkRequests(page, accounts) {
-  const calls = [];
-  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: false } }));
-  await page.route("https://avatars.githubusercontent.com/**", (route) =>
-    route.fulfill({
-      contentType: "image/svg+xml",
-      body: "<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96'><rect width='96' height='96' fill='#58a6ff'/></svg>",
-    })
-  );
+async function respondWithRelationship(route, accounts, relationshipCalls) {
+  const requestUrl = new URL(route.request().url());
+  const [, , login, relationship] = requestUrl.pathname.split("/");
+  const entry = accounts[login];
 
-  await page.route("https://api.github.com/users/**", async (route) => {
-    const requestUrl = new URL(route.request().url());
-    const [, , login, relationship] = requestUrl.pathname.split("/");
-    const entry = accounts[login];
+  if (!entry) {
+    await route.fulfill({ status: 404, json: { message: "Not Found" } });
+    return;
+  }
 
-    if (relationship && relationship !== "followers" && relationship !== "following") {
-      await route.fallback();
-      return;
-    }
-    if (!entry) {
-      await route.fulfill({ status: 404, json: { message: "Not Found" } });
-      return;
-    }
+  relationshipCalls.push(requestUrl.toString());
+  if (entry.relationshipDelay) {
+    await new Promise((resolve) => setTimeout(resolve, entry.relationshipDelay));
+  }
 
-    calls.push(requestUrl.toString());
+  const pageNumber = Number(requestUrl.searchParams.get("page"));
+  const pageEntry = (entry[relationship] || [[]])[pageNumber - 1];
 
-    if (!relationship) {
-      if (!entry.profile) {
-        await route.fallback();
-        return;
-      }
-      if (entry.profile.failWith) {
-        await route.fulfill({
-          status: entry.profile.failWith,
-          headers: { "Content-Type": "application/json", "X-RateLimit-Reset": "1800000000" },
-          body: JSON.stringify({ message: "rate limited" }),
-        });
-        return;
-      }
-      if (entry.profileDelay) {
-        await new Promise((resolve) => setTimeout(resolve, entry.profileDelay));
-      }
-      await route.fulfill({ json: entry.profile });
-      return;
-    }
-
-    const pageNumber = Number(requestUrl.searchParams.get("page"));
-    const pages = entry[relationship] || [[]];
-    const pageEntry = pages[pageNumber - 1];
-
-    if (pageEntry === undefined) {
-      await route.fulfill({ json: [] });
-      return;
-    }
-    if (pageEntry.failWith) {
-      await route.fulfill({ status: pageEntry.failWith, json: { message: "boom" } });
-      return;
-    }
-    await route.fulfill({ json: pageEntry });
-  });
-
-  return { calls };
+  if (pageEntry === undefined) {
+    await route.fulfill({ json: [] });
+    return;
+  }
+  if (pageEntry.failWith) {
+    await route.fulfill({
+      status: pageEntry.failWith,
+      headers: { "Content-Type": "application/json", "X-RateLimit-Reset": "1800000000" },
+      body: JSON.stringify({ message: "boom" }),
+    });
+    return;
+  }
+  await route.fulfill({ json: pageEntry });
 }
 
 async function mockGithubRequests(page, repositories = [repository, secondRepository], options = {}) {
+  const login = options.login || "example";
   const avatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' fill='%2358a6ff'/%3E%3C/svg%3E";
   await page.route("**/api/auth/session", (route) =>
     route.fulfill({ json: { authenticated: false } })
   );
-  await page.route("https://api.github.com/users/example", async (route) => {
+  await page.route(`https://api.github.com/users/${login}`, async (route) => {
     if (options.profileDelay) {
       await new Promise((resolve) => setTimeout(resolve, options.profileDelay));
     }
-    await route.fulfill({ json: { login: "example", name: "Example User", avatar_url: avatar, html_url: "https://github.com/example" } });
+    await route.fulfill({ json: { login, name: "Example User", avatar_url: avatar, html_url: `https://github.com/${login}` } });
   });
-  await page.route("https://api.github.com/users/example/repos**", (route) =>
+  await page.route(`https://api.github.com/users/${login}/repos**`, (route) =>
     route.fulfill({ json: repositories })
   );
-  await page.route("**/api/pinned-repositories?username=example", (route) =>
+  await page.route(`**/api/pinned-repositories?username=${login}`, (route) =>
     route.fulfill({
       json: {
         repositories: options.pinnedRepositories || (repositories.length ? [repository.name] : []),
@@ -1030,7 +1385,7 @@ async function mockGithubRequests(page, repositories = [repository, secondReposi
       },
     })
   );
-  await page.route("**/api/report?user=example", (route) =>
+  await page.route(`**/api/report?user=${login}`, (route) =>
     route.fulfill({ json: { contributed_repositories: options.contributions || [] } })
   );
 }
