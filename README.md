@@ -177,36 +177,81 @@ Example contribution entry:
 
 ## Local setup
 
-The anonymous public experience has no client build step:
+GitProfileLens is a static front end plus a set of serverless functions in `api/`. The browser fetches basic repository data straight from GitHub's public REST API, but it asks its **own origin** for README and pinned-repository enrichment:
+
+```text
+browser → GET /api/pinned-repositories → GitHub GraphQL
+```
+
+That means the origin serving the page has to be able to execute `api/*.js`. A plain static file server cannot, so use the full local runtime for anything that touches GitHub metadata.
+
+### Full local development
+
+This is the canonical way to run GitProfileLens locally with the same metadata capabilities as production.
+
+**Prerequisites**
+
+- Node.js 24
+- The Vercel CLI: `npm i -g vercel`
+- A GitHub token for public metadata enrichment. A classic token with no scopes is enough.
+
+**Setup**
 
 ```bash
 git clone https://github.com/quangshuynh/gitprofilelens.git
 cd gitprofilelens
-python -m http.server 8000
+npm install
+cp .env.example .env.local
 ```
 
-Open `http://localhost:8000`. README and pinned-repository checks are marked unverified when the Vercel functions are unavailable.
+Fill in `.env.local`. Only `GITHUB_TOKEN` is required for the public audit; the GitHub App variables are needed only for the authenticated private-repository audit. See [Environment variables](#environment-variables) for what each one does and which feature needs it.
 
-### Full local setup
-
-Install the Vercel CLI, create `.env.local`, and run `vercel dev`:
-
-```text
-GITHUB_TOKEN=your_public_metadata_token
-GITHUB_APP_CLIENT_ID=your_github_app_client_id
-GITHUB_APP_CLIENT_SECRET=your_github_app_client_secret
-GITHUB_APP_CALLBACK_URL=http://localhost:3000/api/auth/callback
-GITHUB_APP_INSTALL_URL=https://github.com/apps/YOUR_APP_SLUG/installations/new
-SESSION_SECRET=at_least_32_random_characters
-```
+If the project is already linked to the Vercel project, you can pull the configured variables instead of writing them by hand:
 
 ```bash
-vercel dev
+vercel link
+vercel env pull .env.local
 ```
 
-Add `http://localhost:3000/api/auth/callback` as an additional callback URL in the GitHub App while testing locally. The value of `GITHUB_APP_CALLBACK_URL` must exactly match the callback used by that environment.
+Both commands require an interactive Vercel login the first time. `vercel env pull` writes real secrets into `.env.local`, which is ignored by Git.
 
-Never commit `.env.local`, client secrets, access tokens, refresh tokens, or session secrets. Local environment files and `.vercel` are ignored by Git.
+**Run**
+
+```bash
+npm run dev
+```
+
+Open `http://localhost:3000`. A successful public audit reports `Analyzed N repositories, including N profile pins.` If it instead reports that README and pinned data could not be verified, `GITHUB_TOKEN` is missing from the local environment.
+
+While testing sign-in locally, add `http://localhost:3000/api/auth/callback` as an additional callback URL on the GitHub App. `GITHUB_APP_CALLBACK_URL` must exactly match the callback used by that environment. This affects the private audit only; public README and pin enrichment never uses the signed-in browser session.
+
+### Static front-end serving
+
+Static serving supports front-end-only development. Use the full local runtime for GitHub metadata enrichment.
+
+```bash
+npm run dev:static
+```
+
+Open `http://localhost:8000`. Layout, styling, scoring, and the Markdown export all work, because those run in the browser against public REST data. Every `/api/*` request returns 404 from a static server, so the audit honestly reports:
+
+```text
+Analyzed N repositories. README and pinned data could not be verified.
+```
+
+README-dependent signals are then scored as unavailable rather than guessed, which clusters repository scores more tightly than production. That is expected in static mode and is not a scoring bug.
+
+### Local capabilities
+
+| Capability | Static (`npm run dev:static`) | Full local (`npm run dev`) | Vercel |
+| --- | --- | --- | --- |
+| Public repository REST | Yes | Yes | Yes |
+| README enrichment | No | Yes | Yes |
+| Pinned repositories | No | Yes | Yes |
+| External contributions | No | Yes | Yes |
+| Private GitHub App audit | No | Yes, with GitHub App variables and a local callback URL | Yes |
+
+Never commit `.env.local`, client secrets, access tokens, refresh tokens, or session secrets. `.env`, `.env.local`, `.env.*.local`, and `.vercel` are ignored by Git. `.env.example` holds variable names only and is intentionally committed.
 
 ## GitHub App configuration
 
@@ -241,18 +286,20 @@ After creating the app:
 4. Install the app and select either all repositories or only selected repositories.
 5. Do not generate or upload a private key. This feature uses user access tokens and does not authenticate as the app installation itself.
 
-## Vercel environment variables
+## Environment variables
 
-Configure these in the Vercel project settings for Production:
+The same variables are used in Production and in local development. In production, set them in the Vercel project settings; locally, set them in `.env.local`. `.env.example` lists the names.
 
-| Variable | Purpose |
-| --- | --- |
-| `GITHUB_TOKEN` | Existing server-only token for public pin and README enrichment |
-| `GITHUB_APP_CLIENT_ID` | GitHub App Client ID |
-| `GITHUB_APP_CLIENT_SECRET` | GitHub App client secret |
-| `GITHUB_APP_CALLBACK_URL` | `https://gitprofilelens.vercel.app/api/auth/callback` |
-| `GITHUB_APP_INSTALL_URL` | `https://github.com/apps/YOUR_APP_SLUG/installations/new` |
-| `SESSION_SECRET` | Random secret of at least 32 characters used to derive the session-encryption key |
+| Variable | Purpose | Needed for public audit |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | Server-only token for public pin and README enrichment | Yes |
+| `GITHUB_APP_CLIENT_ID` | GitHub App Client ID | No, sign-in only |
+| `GITHUB_APP_CLIENT_SECRET` | GitHub App client secret | No, sign-in only |
+| `GITHUB_APP_CALLBACK_URL` | Production: `https://gitprofilelens.vercel.app/api/auth/callback`. Local: `http://localhost:3000/api/auth/callback` | No, sign-in only |
+| `GITHUB_APP_INSTALL_URL` | `https://github.com/apps/YOUR_APP_SLUG/installations/new` | No, sign-in only |
+| `SESSION_SECRET` | Random secret of at least 32 characters used to derive the session-encryption key | No, sign-in only |
+
+Without `GITHUB_TOKEN`, `/api/pinned-repositories` returns 503 and the audit reports README and pinned data as unverified. That is the intended fallback, not an error to work around.
 
 Redeploy after changing environment variables. Preview deployments need their own exact callback URL registered with GitHub, so use the stable production domain for routine authentication testing.
 
@@ -296,7 +343,7 @@ npm run eval
 npm run eval:pins
 ```
 
-Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs.
+Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs. `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, and a static server neither executes nor discloses it.
 
 ## Deployment options
 
