@@ -45,3 +45,10 @@ jobs:
         # test is exactly when the corpus diff explains what moved.
         if: always()
         run: npm run eval
+
+      # Prints how corpus pinned recommendations moved against
+      # evaluation/pinned-baseline.json. Kept separate from the scoring report
+      # because a recommendation is a set decision, not a scoring outcome.
+      - name: Report pinned optimizer evaluation diff
+        if: always()
+        run: npm run eval:pins
