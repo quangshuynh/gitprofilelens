@@ -4,11 +4,22 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const pinnedRepositoriesHandler = require("../api/pinned-repositories.js");
+const packageJson = require("../package.json");
 
-// These tests guard the architectural assumption that broke local development:
-// the browser asks its own origin for enrichment, so the origin has to execute
-// api/*.js. A static file server does not, which is why README and pinned data
-// silently fall back to unverified there. Nothing here tests Vercel itself.
+// These tests guard the architectural assumptions that broke local development.
+//
+// First: the browser asks its own origin for enrichment, so the origin has to
+// execute api/*.js. A static file server does not, which is why README and
+// pinned data silently fall back to unverified there.
+//
+// Second: the command that starts that runtime must not be reachable from a
+// `dev` script. Vercel treats a package.json `dev` script as the project's
+// development command, so `"dev": "vercel dev"` makes `vercel dev` invoke
+// itself and the CLI refuses to start with DEV_RECURSIVE_INVOCATION.
+//
+// Nothing here tests Vercel itself, and a repository test cannot see the
+// Development Command stored in Vercel's dashboard. These cover only the
+// recursive configurations that live in this repository.
 
 const projectRoot = path.resolve(__dirname, "..");
 const clientSource = fs.readFileSync(path.join(projectRoot, "script.js"), "utf8");
@@ -168,5 +179,61 @@ test("an unconfigured runtime reports enrichment as unavailable rather than part
   } finally {
     if (originalToken !== undefined) process.env.GITHUB_TOKEN = originalToken;
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+/**
+ * follows `npm run` indirection to every script a script can reach
+ * @param {string} scriptName script to start from
+ * @param {Object} scripts package.json scripts map
+ * @param {Set<string>} seen scripts already walked
+ * @returns {Array<string>} command strings reachable from the starting script
+ */
+function resolveScriptChain(scriptName, scripts, seen = new Set()) {
+  if (seen.has(scriptName) || !(scriptName in scripts)) return [];
+  seen.add(scriptName);
+
+  const command = scripts[scriptName];
+  const nested = [...command.matchAll(/npm\s+run\s+([\w:-]+)/g)]
+    .flatMap((match) => resolveScriptChain(match[1], scripts, seen));
+
+  return [command, ...nested];
+}
+
+test("no script reachable from `dev` starts the Vercel runtime", () => {
+  const scripts = packageJson.scripts;
+
+  // Vercel runs a `dev` script as the project's development command, so the
+  // Vercel runtime must not be reachable from it, directly or through
+  // `npm run` indirection.
+  for (const command of resolveScriptChain("dev", scripts)) {
+    assert.doesNotMatch(
+      command,
+      /vercel\s+dev/,
+      `a script reachable from "dev" invokes the Vercel runtime: ${command}`
+    );
+  }
+});
+
+test("exactly one script starts the Vercel runtime, and it is not named dev", () => {
+  const scripts = packageJson.scripts;
+  const starters = Object.keys(scripts).filter((name) => /vercel\s+dev/.test(scripts[name]));
+
+  assert.deepEqual(starters, ["start"]);
+});
+
+test("a vercel.json development command does not re-enter the Vercel runtime", () => {
+  const configPath = path.join(projectRoot, "vercel.json");
+  if (!fs.existsSync(configPath)) return;
+
+  const devCommand = JSON.parse(fs.readFileSync(configPath, "utf8")).devCommand;
+  if (!devCommand) return;
+
+  assert.doesNotMatch(devCommand, /vercel\s+dev/);
+
+  for (const match of devCommand.matchAll(/npm\s+run\s+([\w:-]+)/g)) {
+    for (const command of resolveScriptChain(match[1], packageJson.scripts)) {
+      assert.doesNotMatch(command, /vercel\s+dev/);
+    }
   }
 });

@@ -218,10 +218,20 @@ Both commands require an interactive Vercel login the first time. `vercel env pu
 **Run**
 
 ```bash
-npm run dev
+npm start
 ```
 
+`npm start` runs `vercel dev`, which serves the static front end and the `api/*.js` functions from one origin and loads `.env.local`.
+
 Open `http://localhost:3000`. A successful public audit reports `Analyzed N repositories, including N profile pins.` If it instead reports that README and pinned data could not be verified, `GITHUB_TOKEN` is missing from the local environment.
+
+The start script is deliberately **not** named `dev`. Vercel treats a `dev` script in `package.json` as the project's Development Command, so `"dev": "vercel dev"` makes `vercel dev` invoke itself and the CLI refuses to start:
+
+```text
+Error: [DEV_RECURSIVE_INVOCATION] `vercel dev` must not recursively invoke itself
+```
+
+Keep the Vercel project's Development Command on its automatic default, and do not add a `dev` script that reaches `vercel dev` directly or through `npm run`. `tests/local-runtime.test.js` enforces the repository half of this; the dashboard setting is not visible to the tests.
 
 While testing sign-in locally, add `http://localhost:3000/api/auth/callback` as an additional callback URL on the GitHub App. `GITHUB_APP_CALLBACK_URL` must exactly match the callback used by that environment. This affects the private audit only; public README and pin enrichment never uses the signed-in browser session.
 
@@ -243,7 +253,7 @@ README-dependent signals are then scored as unavailable rather than guessed, whi
 
 ### Local capabilities
 
-| Capability | Static (`npm run dev:static`) | Full local (`npm run dev`) | Vercel |
+| Capability | Static (`npm run dev:static`) | Full local (`npm start`) | Vercel |
 | --- | --- | --- | --- |
 | Public repository REST | Yes | Yes | Yes |
 | README enrichment | No | Yes | Yes |
@@ -343,7 +353,7 @@ npm run eval
 npm run eval:pins
 ```
 
-Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs. `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, and a static server neither executes nor discloses it.
+Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs. `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, a static server neither executes nor discloses it, and no `dev` script or `vercel.json` development command re-enters `vercel dev`.
 
 ## Deployment options
 
