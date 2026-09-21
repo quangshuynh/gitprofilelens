@@ -180,22 +180,45 @@
           </dl>
           <p id="network-notice" class="network-notice" hidden></p>
 
-          <section class="section-block">
+          <div id="network-disclosure-controls" class="list-controls network-global-controls" hidden>
+            <button id="network-expand-all" class="secondary" type="button" aria-label="Expand all network lists">Expand all</button>
+            <button id="network-collapse-all" class="secondary" type="button" aria-label="Collapse all network lists">Collapse all</button>
+          </div>
+
+          <section class="section-block network-section">
             <h3 id="network-followers-heading">Followers</h3>
             <p id="network-followers-empty" class="empty-state" hidden></p>
             <ul id="network-follower-list" class="account-list" aria-labelledby="network-followers-heading"></ul>
+            <p id="network-followers-status" class="list-status" hidden></p>
+            <div id="network-followers-controls" class="list-controls" hidden>
+              <button id="network-followers-more" class="secondary" type="button" aria-label="Show 25 more Followers">Show 25 more</button>
+              <button id="network-followers-all" class="secondary" type="button" aria-label="Show all Followers">Show all</button>
+              <button id="network-followers-collapse" class="secondary" type="button" aria-label="Collapse Followers" hidden>Collapse</button>
+            </div>
           </section>
 
-          <section class="section-block">
+          <section class="section-block network-section">
             <h3 id="network-following-heading">Following</h3>
             <p id="network-following-empty" class="empty-state" hidden></p>
             <ul id="network-following-list" class="account-list" aria-labelledby="network-following-heading"></ul>
+            <p id="network-following-status" class="list-status" hidden></p>
+            <div id="network-following-controls" class="list-controls" hidden>
+              <button id="network-following-more" class="secondary" type="button" aria-label="Show 25 more Following users">Show 25 more</button>
+              <button id="network-following-all" class="secondary" type="button" aria-label="Show all Following users">Show all</button>
+              <button id="network-following-collapse" class="secondary" type="button" aria-label="Collapse Following users" hidden>Collapse</button>
+            </div>
           </section>
 
-          <section id="network-unreciprocated-section" class="section-block" hidden>
+          <section id="network-unreciprocated-section" hidden class="section-block network-section">
             <h3 id="network-unreciprocated-heading">Following who don't follow back</h3>
             <p id="network-unreciprocated-empty" class="empty-state" hidden></p>
             <ul id="network-unreciprocated-list" class="account-list" aria-labelledby="network-unreciprocated-heading"></ul>
+            <p id="network-unreciprocated-status" class="list-status" hidden></p>
+            <div id="network-unreciprocated-controls" class="list-controls" hidden>
+              <button id="network-unreciprocated-more" class="secondary" type="button" aria-label="Show 25 more users who don't follow back">Show 25 more</button>
+              <button id="network-unreciprocated-all" class="secondary" type="button" aria-label="Show all users who don't follow back">Show all</button>
+              <button id="network-unreciprocated-collapse" class="secondary" type="button" aria-label="Collapse users who don't follow back" hidden>Collapse</button>
+            </div>
           </section>
 
           <div id="network-export" class="section-block" hidden>

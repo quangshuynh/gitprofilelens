@@ -994,6 +994,291 @@ test("opening Network leaves the repository audit and its exports untouched", { 
   }
 });
 
+test("large network lists are disclosed 25 at a time", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: {
+      followers: [accountList("follower", 100)],
+      // 62 following accounts, none of which follow back, gives an uneven final page.
+      following: [accountList("following", 62)],
+    },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // Only the visible slice reaches the DOM; the rest is held in memory, not hidden.
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+  assert.equal(await page.locator("#network-followers-status").innerText(), "Showing 25 of 100");
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 25 of 62");
+  assert.equal(await page.locator("#network-unreciprocated-status").innerText(), "Showing 25 of 62");
+  assert.equal(await page.locator("#network-follower-list").innerText().then((t) => t.includes("follower-26")), false);
+
+  // The count cards keep reporting the complete totals.
+  assert.equal(await page.locator("#network-follower-count").innerText(), "100");
+  assert.equal(await page.locator("#network-following-count").innerText(), "62");
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "62");
+
+  assert.equal(await page.locator("#network-followers-collapse").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-more").isVisible(), true);
+  assert.equal(await page.locator("#network-followers-all").isVisible(), true);
+
+  // 25 -> 50 -> 75 -> 100, without duplicates.
+  await page.getByRole("button", { name: "Show 25 more Followers" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 50);
+  assert.equal(await page.locator("#network-followers-status").innerText(), "Showing 50 of 100");
+  assert.equal(await page.locator("#network-followers-collapse").isVisible(), true);
+
+  await page.getByRole("button", { name: "Show 25 more Followers" }).click();
+  await page.getByRole("button", { name: "Show 25 more Followers" }).click();
+  const followerLogins = await page.locator("#network-follower-list li").allInnerTexts();
+  assert.equal(followerLogins.length, 100);
+  assert.equal(new Set(followerLogins).size, 100);
+  assert.equal(followerLogins[0], "follower-1");
+  assert.equal(followerLogins[99], "follower-100");
+  assert.equal(await page.locator("#network-followers-status").innerText(), "Showing all 100");
+  assert.equal(await page.locator("#network-followers-more").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-all").isHidden(), true);
+
+  // Expanding Followers must not disturb the other sections.
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+
+  // An uneven final page never overshoots the real total.
+  await page.getByRole("button", { name: "Show 25 more Following users" }).click();
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 50 of 62");
+  await page.getByRole("button", { name: "Show 25 more Following users" }).click();
+  assert.equal(await page.locator("#network-following-list li").count(), 62);
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing all 62");
+
+  // Show all and Collapse work on the derived section too.
+  await page.getByRole("button", { name: "Show all users who don't follow back" }).click();
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 62);
+  assert.equal(await page.locator("#network-unreciprocated-status").innerText(), "Showing all 62");
+
+  await page.getByRole("button", { name: "Collapse users who don't follow back" }).click();
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-status").innerText(), "Showing 25 of 62");
+  assert.equal(await page.locator("#network-unreciprocated-collapse").isHidden(), true);
+  assert.deepEqual(
+    (await page.locator("#network-unreciprocated-list li").allInnerTexts()).slice(0, 2),
+    ["following-1", "following-2"]
+  );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("disclosure never changes the exported Markdown", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(() => {
+    window.__copiedNetwork = null;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text) => { window.__copiedNetwork = text; } },
+    });
+  });
+  const page = await context.newPage();
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [accountList("follower", 100)], following: [accountList("following", 100)] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  const collapsedMarkdown = await page.locator("#network-output").inputValue();
+
+  // The UI shows 25; the export must still describe all 100 on each side.
+  assert.match(collapsedMarkdown, /^\*\*Followers:\*\* 100 {2}$/m);
+  assert.match(collapsedMarkdown, /^\*\*Following:\*\* 100 {2}$/m);
+  assert.match(collapsedMarkdown, /^\*\*Following who don't follow back:\*\* 100$/m);
+  assert.match(collapsedMarkdown, /^26\. \[follower-26\]\(https:\/\/github\.com\/follower-26\)$/m);
+  assert.match(collapsedMarkdown, /^100\. \[follower-100\]\(https:\/\/github\.com\/follower-100\)$/m);
+  assert.match(collapsedMarkdown, /^100\. \[following-100\]\(https:\/\/github\.com\/following-100\)$/m);
+  assert.equal((collapsedMarkdown.match(/^\d+\. \[follower-/gm) || []).length, 100);
+  assert.equal((collapsedMarkdown.match(/^\d+\. \[following-/gm) || []).length, 200);
+
+  await page.getByRole("button", { name: "Copy Markdown" }).click();
+  assert.equal(await page.evaluate(() => window.__copiedNetwork), collapsedMarkdown);
+
+  // Expanding and collapsing is presentation only; the export is byte-identical.
+  await page.getByRole("button", { name: "Expand all network lists" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 100);
+  assert.equal(await page.locator("#network-output").inputValue(), collapsedMarkdown);
+
+  await page.getByRole("button", { name: "Collapse all network lists" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 25);
+  assert.equal(await page.locator("#network-output").inputValue(), collapsedMarkdown);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download .md" }).click();
+  const download = await downloadPromise;
+  assert.equal(download.suggestedFilename(), "example-followers-following.md");
+
+  const stream = await download.createReadStream();
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  assert.equal(Buffer.concat(chunks).toString("utf8"), collapsedMarkdown);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("short and empty network lists show no disclosure controls", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: {
+      followers: [accountList("follower", 12)],
+      // Every followed account also follows, so the derived list is empty.
+      following: [[account("follower-1"), account("follower-2")]],
+    },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.equal(await page.locator("#network-follower-list li").count(), 12);
+  assert.equal(await page.locator("#network-followers-status").innerText(), "12 users");
+  assert.doesNotMatch(await page.locator("#network-followers-status").innerText(), /Showing 25 of/);
+  assert.equal(await page.locator("#network-followers-controls").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-more").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-all").isHidden(), true);
+  assert.equal(await page.locator("#network-followers-collapse").isHidden(), true);
+
+  assert.equal(await page.locator("#network-following-status").innerText(), "2 users");
+  assert.equal(await page.locator("#network-following-controls").isHidden(), true);
+
+  // Zero is known data: the empty state stays, with no controls attached to it.
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "0");
+  assert.match(
+    await page.locator("#network-unreciprocated-empty").innerText(),
+    /Everyone you follow also follows you/
+  );
+  assert.equal(await page.locator("#network-unreciprocated-list li").count(), 0);
+  assert.equal(await page.locator("#network-unreciprocated-status").isHidden(), true);
+  assert.equal(await page.locator("#network-unreciprocated-controls").isHidden(), true);
+
+  // No section is long enough to need the shared controls.
+  assert.equal(await page.locator("#network-disclosure-controls").isHidden(), true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("disclosure survives tab switches and resets for a new profile", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockGithubRequests(page, [repository], { login: "second" });
+  const githubApi = await mockNetworkRequests(page, {
+    example: { followers: [accountList("follower", 80)], following: [accountList("following", 80)] },
+    second: { followers: [accountList("beta", 80)], following: [accountList("beta-following", 80)] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  await page.getByRole("button", { name: "Show 25 more Following users" }).click();
+  assert.equal(await page.locator("#network-following-list li").count(), 50);
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+
+  // Leaving and returning must not silently collapse what the reader expanded.
+  const callsBefore = githubApi.relationshipCalls.length;
+  await page.getByRole("tab", { name: "Audit" }).click();
+  await page.locator("#audit-panel").waitFor({ state: "visible" });
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.equal(githubApi.relationshipCalls.length, callsBefore);
+  assert.equal(await page.locator("#network-following-list li").count(), 50);
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 50 of 80");
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+
+  await page.getByRole("button", { name: "Show all Following users" }).click();
+  assert.equal(await page.locator("#network-following-list li").count(), 80);
+
+  // A different profile starts collapsed again rather than inheriting the state.
+  await page.evaluate(() => loadProfile("second"));
+  await page.locator("#profile-link").filter({ hasText: "@second" }).waitFor();
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.deepEqual(await page.evaluate(() => networkState.visibleCounts), {
+    followers: 25,
+    following: 25,
+    unreciprocated: 25,
+  });
+  assert.equal(await page.locator("#network-following-list li").count(), 25);
+  assert.equal(await page.locator("#network-following-status").innerText(), "Showing 25 of 80");
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.match(await page.locator("#network-follower-list").innerText(), /beta-1/);
+  assert.doesNotMatch(await page.locator("#network-follower-list").innerText(), /follower-/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("disclosure controls are keyboard operable and wrap on mobile", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [accountList("follower", 90)], following: [accountList("following", 90)] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  const dimensions = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+  }));
+  assert.ok(
+    dimensions.content <= dimensions.viewport,
+    `page width ${dimensions.content}px exceeds ${dimensions.viewport}px viewport`
+  );
+
+  // Every control is a real button reachable and operable from the keyboard.
+  const moreButton = page.locator("#network-followers-more");
+  assert.equal(await moreButton.evaluate((node) => node.tagName), "BUTTON");
+  await moreButton.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#network-follower-list li").count(), 50);
+  assert.equal(await page.evaluate(() => document.activeElement.id), "network-followers-more");
+
+  await page.locator("#network-followers-all").focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#network-follower-list li").count(), 90);
+
+  // Show all hides itself, so focus lands on the control that replaced it rather
+  // than falling back to the document body.
+  assert.equal(await page.evaluate(() => document.activeElement.id), "network-followers-collapse");
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.equal(await page.evaluate(() => document.activeElement.id), "network-followers-more");
+  } finally {
+    await browser.close();
+  }
+});
+
 /**
  * builds one raw github account entry
  * @param {string} login github login

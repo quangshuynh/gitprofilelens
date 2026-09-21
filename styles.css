@@ -211,12 +211,17 @@ textarea:focus { border-color: #58a6ff; }
 .network-counts dd { margin: 5px 0 0; color: #e6edf3; font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
 .network-notice { margin: 0 0 20px; padding: 12px 14px; border-left: 2px solid #58a6ff; background: #11161d; color: #b1bac4; font-size: .84rem; line-height: 1.55; }
 .network-notice.is-error { border-left-color: #ff7b72; color: #ffb3ad; }
-#network-panel h3 { margin-bottom: 12px; font-size: 1.05rem; }
+.network-section { margin-top: 30px; }
+#network-panel h3 { margin-bottom: 14px; font-size: 1.05rem; }
 .account-list { display: flex; flex-wrap: wrap; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .account-list li { min-width: 0; }
 .account-list a { display: block; max-width: 100%; overflow: hidden; padding: 5px 11px; border: 1px solid #30363d; border-radius: 99px; background: #0d1117; color: #c9d1d9; font-size: .82rem; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
 .account-list a:hover { border-color: #58a6ff; color: #58a6ff; }
-.network-notice[hidden], #network-results[hidden], #network-export[hidden], .account-list[hidden], #network-unreciprocated-section[hidden] { display: none; }
+.list-status { margin: 14px 0 0; color: #8b949e; font-size: .8rem; font-weight: 700; }
+.list-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.list-controls button { padding: 7px 13px; font-size: .82rem; font-weight: 700; }
+.network-global-controls { margin: 0 0 4px; }
+.network-notice[hidden], #network-results[hidden], #network-export[hidden], .account-list[hidden], #network-unreciprocated-section[hidden], .list-status[hidden], .list-controls[hidden] { display: none; }
 #network-export textarea { min-height: 380px; }
 
 .footer { display: flex; justify-content: space-between; gap: 20px; padding: 22px 4px 0; color: #6e7681; font-size: .75rem; }
@@ -241,6 +246,7 @@ textarea:focus { border-color: #58a6ff; }
   .result-auth, .signed-in-auth, .auth-actions { width: 100%; }
   .network-counts > div { flex-basis: 100%; padding: 12px 14px; }
   .account-list a { max-width: 100%; }
+  .list-controls button { flex: 1 1 auto; }
   .tabs { padding: 0 10px; }
   .tab-panel { padding: 22px 16px 28px; }
   .score-layout { grid-template-columns: 1fr; }

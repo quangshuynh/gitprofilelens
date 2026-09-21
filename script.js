@@ -57,13 +57,10 @@ const networkResults = document.querySelector("#network-results");
 const networkFollowerCount = document.querySelector("#network-follower-count");
 const networkFollowingCount = document.querySelector("#network-following-count");
 const networkUnreciprocatedCount = document.querySelector("#network-unreciprocated-count");
-const networkFollowerList = document.querySelector("#network-follower-list");
-const networkFollowingList = document.querySelector("#network-following-list");
-const networkUnreciprocatedList = document.querySelector("#network-unreciprocated-list");
-const networkFollowersEmpty = document.querySelector("#network-followers-empty");
-const networkFollowingEmpty = document.querySelector("#network-following-empty");
-const networkUnreciprocatedEmpty = document.querySelector("#network-unreciprocated-empty");
 const networkUnreciprocatedSection = document.querySelector("#network-unreciprocated-section");
+const networkDisclosureControls = document.querySelector("#network-disclosure-controls");
+const networkExpandAllButton = document.querySelector("#network-expand-all");
+const networkCollapseAllButton = document.querySelector("#network-collapse-all");
 const networkNotice = document.querySelector("#network-notice");
 const networkExport = document.querySelector("#network-export");
 const networkOutput = document.querySelector("#network-output");
@@ -83,9 +80,39 @@ const appState = {
 };
 
 /**
+ * how many accounts each network list shows before it is expanded
+ */
+const NETWORK_PAGE_SIZE = 25;
+
+/**
+ * the three network relationship lists, each disclosed independently
+ *
+ * accounts holds the complete list for the section; only a slice of it is ever
+ * rendered, so the initial Network view stays small no matter how large the
+ * network is. Markdown is always built from the complete network instead.
+ */
+const networkSections = ["followers", "following", "unreciprocated"].map((key) => ({
+  key,
+  list: document.querySelector(`#network-${key === "followers" ? "follower" : key}-list`),
+  emptyState: document.querySelector(`#network-${key}-empty`),
+  status: document.querySelector(`#network-${key}-status`),
+  controls: document.querySelector(`#network-${key}-controls`),
+  moreButton: document.querySelector(`#network-${key}-more`),
+  allButton: document.querySelector(`#network-${key}-all`),
+  collapseButton: document.querySelector(`#network-${key}-collapse`),
+  emptyMessage: {
+    followers: "No followers.",
+    following: "Not following anyone.",
+    unreciprocated: "Everyone you follow also follows you.",
+  }[key],
+  accounts: [],
+}));
+
+/**
  * network state for the currently audited profile, held apart from appState so that
  * opening the Network tab can never mutate audit results. status is idle, loading,
  * loaded, or failed, and username records which profile the state belongs to.
+ * visibleCounts is presentation only and never reaches the Markdown export.
  */
 const networkState = {
   requestId: 0,
@@ -94,7 +121,16 @@ const networkState = {
   network: null,
   notFollowingBack: null,
   markdown: "",
+  visibleCounts: createInitialVisibleCounts(),
 };
+
+/**
+ * builds the default visible-account count for every network section
+ * @returns {Object} section key to visible count
+ */
+function createInitialVisibleCounts() {
+  return { followers: NETWORK_PAGE_SIZE, following: NETWORK_PAGE_SIZE, unreciprocated: NETWORK_PAGE_SIZE };
+}
 
 form.addEventListener("submit", handleFormSubmit);
 shareButton.addEventListener("click", shareResult);
@@ -120,6 +156,23 @@ for (const tabButton of tabButtons) {
 networkCopyButton.addEventListener("click", copyNetworkMarkdown);
 networkDownloadButton.addEventListener("click", downloadNetworkMarkdown);
 networkRetryButton.addEventListener("click", reloadNetwork);
+networkExpandAllButton.addEventListener("click", () => setEveryNetworkSection("all"));
+networkCollapseAllButton.addEventListener("click", () => setEveryNetworkSection("collapse"));
+
+for (const section of networkSections) {
+  section.moreButton.addEventListener("click", () => {
+    networkState.visibleCounts[section.key] += NETWORK_PAGE_SIZE;
+    applyNetworkDisclosure(section);
+  });
+  section.allButton.addEventListener("click", () => {
+    networkState.visibleCounts[section.key] = section.accounts.length;
+    applyNetworkDisclosure(section);
+  });
+  section.collapseButton.addEventListener("click", () => {
+    networkState.visibleCounts[section.key] = NETWORK_PAGE_SIZE;
+    applyNetworkDisclosure(section);
+  });
+}
 
 randomizeDoodles();
 initializeFromUrl();
@@ -1823,8 +1876,8 @@ function renderNetwork(network) {
 
   networkFollowerCount.textContent = formatNetworkCount(network.followers);
   networkFollowingCount.textContent = formatNetworkCount(network.following);
-  renderAccountList(networkFollowerList, networkFollowersEmpty, network.followers.accounts, "No followers.");
-  renderAccountList(networkFollowingList, networkFollowingEmpty, network.following.accounts, "Not following anyone.");
+  setNetworkSectionAccounts("followers", network.followers.accounts);
+  setNetworkSectionAccounts("following", network.following.accounts);
   networkResults.hidden = false;
 
   const incompleteReason = GitProfileNetwork.describeIncompleteRetrieval(network);
@@ -1837,6 +1890,8 @@ function renderNetwork(network) {
     networkNotice.classList.add("is-error");
     networkNotice.hidden = false;
     networkSummary.textContent = "Retrieval incomplete";
+    setNetworkSectionAccounts("unreciprocated", []);
+    updateGlobalDisclosureControls();
     showNetworkError(`The network for @${network.user.login} could not be completely retrieved.`);
     return;
   }
@@ -1844,13 +1899,9 @@ function renderNetwork(network) {
   const notFollowingBack = GitProfileNetwork.deriveNotFollowingBack(network);
   networkState.notFollowingBack = notFollowingBack;
   networkUnreciprocatedCount.textContent = String(notFollowingBack.length);
-  renderAccountList(
-    networkUnreciprocatedList,
-    networkUnreciprocatedEmpty,
-    notFollowingBack,
-    "Everyone you follow also follows you."
-  );
+  setNetworkSectionAccounts("unreciprocated", notFollowingBack);
   networkUnreciprocatedSection.hidden = false;
+  updateGlobalDisclosureControls();
 
   networkState.markdown = GitProfileNetwork.buildMarkdown(network);
   networkOutput.value = networkState.markdown;
@@ -1872,20 +1923,108 @@ function renderNetwork(network) {
 }
 
 /**
- * renders one compact list of github accounts, or an empty-state message
- * @param {HTMLElement} list list element to fill
- * @param {HTMLElement} emptyState empty-state element for this list
- * @param {Array<Object>} accounts accounts in the order github returned them
- * @param {string} emptyMessage message shown when the list is empty
+ * gives one network section its complete account list and renders the first page
+ * @param {string} key section identifier
+ * @param {Array<Object>} accounts complete accounts in the order github returned them
  * @returns {void} no return value
  */
-function renderAccountList(list, emptyState, accounts, emptyMessage) {
-  list.replaceChildren();
-  emptyState.textContent = emptyMessage;
-  emptyState.hidden = accounts.length > 0;
-  list.hidden = accounts.length === 0;
+function setNetworkSectionAccounts(key, accounts) {
+  const section = networkSections.find((candidate) => candidate.key === key);
+  section.accounts = accounts;
+  applyNetworkDisclosure(section);
+}
 
-  for (const account of accounts) {
+/**
+ * renders the currently disclosed slice of one section and updates its controls
+ *
+ * Only the visible slice reaches the DOM, so a profile following several hundred
+ * accounts still renders a small list until the reader asks for more.
+ *
+ * @param {Object} section network section descriptor
+ * @returns {void} no return value
+ */
+function applyNetworkDisclosure(section) {
+  // Read this before any control is hidden: the browser blurs a button the moment
+  // it becomes hidden, so afterwards the reader's place is already lost.
+  const previouslyFocused = document.activeElement;
+  const total = section.accounts.length;
+  const requested = networkState.visibleCounts[section.key] || NETWORK_PAGE_SIZE;
+  const visibleCount = Math.min(Math.max(requested, NETWORK_PAGE_SIZE), total);
+  networkState.visibleCounts[section.key] = visibleCount;
+
+  renderAccountList(section, section.accounts.slice(0, visibleCount));
+
+  if (total === 0) {
+    section.status.hidden = true;
+    section.status.textContent = "";
+    section.controls.hidden = true;
+    return;
+  }
+
+  const expandable = total > NETWORK_PAGE_SIZE;
+  const fullyShown = visibleCount >= total;
+
+  section.status.hidden = false;
+  if (!expandable) {
+    section.status.textContent = `${total} ${total === 1 ? "user" : "users"}`;
+  } else if (fullyShown) {
+    section.status.textContent = `Showing all ${total}`;
+  } else {
+    section.status.textContent = `Showing ${visibleCount} of ${total}`;
+  }
+
+  section.controls.hidden = !expandable;
+  section.moreButton.hidden = fullyShown;
+  section.allButton.hidden = fullyShown;
+  section.collapseButton.hidden = visibleCount <= NETWORK_PAGE_SIZE;
+  keepDisclosureFocusInSection(section, previouslyFocused);
+}
+
+/**
+ * moves focus only when the control the reader just used has disappeared
+ * @param {Object} section network section descriptor
+ * @param {Element|null} previouslyFocused element focused before the controls updated
+ * @returns {void} no return value
+ */
+function keepDisclosureFocusInSection(section, previouslyFocused) {
+  const buttons = [section.moreButton, section.allButton, section.collapseButton];
+  if (!buttons.includes(previouslyFocused) || !previouslyFocused.hidden) return;
+
+  const replacement = buttons.find((button) => !button.hidden);
+  if (replacement) replacement.focus();
+}
+
+/**
+ * expands or collapses every network section at once
+ * @param {string} mode either all or collapse
+ * @returns {void} no return value
+ */
+function setEveryNetworkSection(mode) {
+  for (const section of networkSections) {
+    networkState.visibleCounts[section.key] =
+      mode === "all" ? section.accounts.length : NETWORK_PAGE_SIZE;
+    applyNetworkDisclosure(section);
+  }
+}
+
+/**
+ * shows the shared expand and collapse controls only when a list is long enough
+ * @returns {void} no return value
+ */
+function updateGlobalDisclosureControls() {
+  networkDisclosureControls.hidden = !networkSections.some(
+    (section) => section.accounts.length > NETWORK_PAGE_SIZE
+  );
+}
+
+/**
+ * renders one compact list of github accounts, or an empty-state message
+ * @param {Object} section network section descriptor
+ * @param {Array<Object>} accounts the accounts to render, already sliced
+ * @returns {void} no return value
+ */
+function renderAccountList(section, accounts) {
+  const items = accounts.map((account) => {
     const item = document.createElement("li");
     const link = document.createElement("a");
     link.href = account.profileUrl;
@@ -1893,8 +2032,13 @@ function renderAccountList(list, emptyState, accounts, emptyMessage) {
     link.rel = "noopener noreferrer";
     link.textContent = account.login;
     item.appendChild(link);
-    list.appendChild(item);
-  }
+    return item;
+  });
+
+  section.list.replaceChildren(...items);
+  section.emptyState.textContent = section.emptyMessage;
+  section.emptyState.hidden = accounts.length > 0;
+  section.list.hidden = accounts.length === 0;
 }
 
 /**
@@ -1929,9 +2073,18 @@ function clearNetworkPanel() {
   networkFollowerCount.textContent = "0";
   networkFollowingCount.textContent = "0";
   networkUnreciprocatedCount.textContent = "0";
-  networkFollowerList.replaceChildren();
-  networkFollowingList.replaceChildren();
-  networkUnreciprocatedList.replaceChildren();
+  networkDisclosureControls.hidden = true;
+
+  // Disclosure is per profile: a newly loaded list never inherits "Showing 75 of …".
+  networkState.visibleCounts = createInitialVisibleCounts();
+  for (const section of networkSections) {
+    section.accounts = [];
+    section.list.replaceChildren();
+    section.status.hidden = true;
+    section.status.textContent = "";
+    section.controls.hidden = true;
+    section.collapseButton.hidden = true;
+  }
 }
 
 /**
