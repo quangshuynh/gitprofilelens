@@ -112,6 +112,7 @@
         <button id="audit-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="audit-panel" tabindex="-1" data-tab="audit">Audit</button>
         <button id="repositories-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="repositories-panel" tabindex="-1" data-tab="repositories">Repositories</button>
         <button id="network-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="network-panel" tabindex="-1" data-tab="network">Network</button>
+        <button id="pinned-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="pinned-panel" tabindex="-1" data-tab="pinned">Pinned optimizer</button>
         <button id="markdown-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="markdown-panel" tabindex="-1" data-tab="markdown">Markdown export</button>
       </nav>
 
@@ -133,6 +134,7 @@
         <details class="methodology">
           <summary>How scoring works</summary>
           <p>Scores use deterministic checks for names, descriptions, root READMEs, topics, licenses, demo links, update recency, and portfolio focus. Unknown README data receives a neutral score and is labeled as unverified.</p>
+          <p>The Pinned optimizer tab answers a third question, separately again: which combination of repositories forms the strongest set to feature. It reads the finished audit and changes no score.</p>
           <p>Each repository also receives a portfolio candidacy label, which is judged separately from the score. The score measures how well a repository presents itself; candidacy measures whether it is a good repository to feature prominently. A polished fork can score well without being a strong candidate, because GitHub's fork flag cannot show how much of the work belongs to the profile owner, and an archived project can be presented well while still being a weaker choice to lead with. Evidence that could not be verified is treated as unknown rather than missing.</p>
         </details>
       </section>
@@ -234,6 +236,52 @@
         </div>
       </section>
 
+      <section id="pinned-panel" class="tab-panel" role="tabpanel" aria-labelledby="pinned-tab" tabindex="0" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Which repositories to feature</p><h2>Pinned repository optimizer</h2></div>
+          <p id="pinned-summary" class="summary-text"></p>
+        </div>
+        <p class="panel-help">GitHub profiles pin up to six repositories. GitProfileLens recommends a set from portfolio candidacy and observable repository metadata, and recommends fewer than six when fewer repositories meet the criteria. It cannot know your goals, so every suggestion is advisory.</p>
+
+        <section class="section-block">
+          <h3 id="pinned-recommended-heading">Recommended set</h3>
+          <p id="pinned-shortfall" class="panel-help" hidden></p>
+          <div id="pinned-recommended-list" class="pinned-list" aria-labelledby="pinned-recommended-heading"></div>
+        </section>
+
+        <section class="section-block">
+          <h3 id="pinned-current-heading">Current pinned set</h3>
+          <p id="pinned-current-note" class="panel-help"></p>
+          <ul id="pinned-current-list" class="pinned-current" aria-labelledby="pinned-current-heading"></ul>
+        </section>
+
+        <section class="section-block">
+          <h3 id="pinned-changes-heading">Suggested changes</h3>
+          <p id="pinned-changes-note" class="panel-help" hidden></p>
+          <div id="pinned-changes-list" class="pinned-changes" aria-labelledby="pinned-changes-heading"></div>
+        </section>
+
+        <section id="pinned-private-section" class="section-block" hidden>
+          <h3 id="pinned-private-heading">Strong private work</h3>
+          <p class="panel-help">These authorized private repositories read as strong portfolio work. A public GitHub profile cannot pin them, so they are listed apart from the recommended set. GitProfileLens does not suggest publishing them.</p>
+          <ul id="pinned-private-list" class="pinned-current" aria-labelledby="pinned-private-heading"></ul>
+        </section>
+
+        <section id="pinned-excluded-section" class="section-block" hidden>
+          <h3 id="pinned-excluded-heading">Not considered for the set</h3>
+          <div id="pinned-excluded-list" class="pinned-excluded" aria-labelledby="pinned-excluded-heading"></div>
+        </section>
+
+        <details class="methodology">
+          <summary>How recommendations are chosen</summary>
+          <p>The recommendation is a set decision, not another repository score. No repository score, category score, or candidacy label changes when it runs.</p>
+          <p>Repositories are first filtered for eligibility: a repository classified De-emphasize is not recommended, nor is one with an open high-priority presentation finding, nor one with no verified description or README content a visitor could read. Private repositories are recognized separately, because a public profile cannot feature them.</p>
+          <p>The remaining repositories are chosen one at a time using a fixed order of rules: portfolio candidacy first, so every Strong candidate is considered before any Worth polishing repository; then confirmed original work ahead of unreported fork status, which is ahead of a GitHub-identified fork; then active work ahead of archived work; then how much a repository repeats the primary language and topics of the repositories already chosen; then presentation score, maintenance evidence, verified metadata, and finally repository name, so the result never depends on the order GitHub returned repositories in.</p>
+          <p>Breadth is credit for verified distinctness. A repository with no reported language, or no topics, earns no breadth claim and takes no penalty for it. GitProfileLens has no reliable project or domain categories, so it does not invent any: the only set-level signals it uses are primary language and topic overlap.</p>
+          <p>Your current pins are used only for the comparison on this tab. They are never evidence that a repository deserves to be recommended.</p>
+        </details>
+      </section>
+
       <section id="markdown-panel" class="tab-panel" role="tabpanel" aria-labelledby="markdown-tab" tabindex="0" hidden>
         <div class="section-heading export-heading">
           <div><p class="eyebrow">Preview and export</p><h2>Markdown report</h2></div>
@@ -269,6 +317,7 @@
 
   <script src="share.js"></script>
   <script src="audit.js"></script>
+  <script src="pinned-optimizer.js"></script>
   <script src="network-export.js"></script>
   <script src="script.js"></script>
   <script src="markdown-format.js"></script>

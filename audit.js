@@ -1047,6 +1047,10 @@
   return {
     classifyPortfolioCandidate,
     createReport,
+    // Exposed so the pinned optimizer can name a repository's remaining gaps in
+    // the same words the candidacy explanation uses, rather than restating them
+    // and drifting from the classification they came from.
+    describeCandidateGaps,
     formatReadmeStatus,
     generateRecommendations,
     isValidUsername,
