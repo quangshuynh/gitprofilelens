@@ -30,6 +30,9 @@
       <p class="product-pillars" aria-label="GitProfileLens features">
         <span>Profile audit</span><span>Repository explorer</span><span>Markdown export</span>
       </p>
+      <nav class="tool-nav" aria-label="GitProfileLens tools">
+        <a id="home-network-link" href="?tool=network">Followers / Following export →</a>
+      </nav>
       <form id="github-form" class="search-form">
         <label for="username">GitHub username</label>
         <div class="input-row">
@@ -73,6 +76,9 @@
           <span class="result-logo-crop" aria-hidden="true"><img src="docs/images/logo.png" alt="" /></span>
           <span>GitProfileLens</span>
         </a>
+        <nav class="tool-nav" aria-label="GitProfileLens tools">
+          <a id="result-network-link" href="?tool=network">Followers / Following</a>
+        </nav>
         <section class="result-auth" aria-label="Private repository auditing">
           <div id="signed-out-auth">
             <a class="button-link github-button compact" href="/api/auth/github">
@@ -188,6 +194,65 @@
       </section>
       </section>
     </section>
+
+    <section id="network-page" class="result-page network-page" hidden>
+      <header class="result-page-header">
+        <a class="network-brand" href="/" aria-label="Start a new GitProfileLens audit">
+          <span class="result-logo-crop" aria-hidden="true"><img src="docs/images/logo.png" alt="" /></span>
+          <span>GitProfileLens</span>
+        </a>
+        <nav class="tool-nav" aria-label="GitProfileLens tools">
+          <button id="network-back-button" class="secondary" type="button">Back to portfolio audit</button>
+        </nav>
+      </header>
+
+      <section class="results">
+        <div class="network-intro">
+          <p class="eyebrow">Public network export</p>
+          <h2>Followers / Following</h2>
+          <p class="panel-help">Export the public GitHub follower and following lists for an account as Markdown. This is an export utility only - it does not score, rank, or audit anything, and no repository audit is required.</p>
+          <form id="network-form" class="search-form" novalidate>
+            <label for="network-username">GitHub username</label>
+            <div class="input-row">
+              <input id="network-username" name="network-username" type="text" placeholder="quangshuynh" autocomplete="off" spellcheck="false" />
+              <button id="network-load-button" type="submit">Load</button>
+            </div>
+          </form>
+          <p id="network-status" class="status" aria-live="polite"></p>
+        </div>
+
+        <div id="network-results" class="network-results" hidden>
+          <div class="profile-bar">
+            <div class="profile-identity">
+              <img id="network-avatar" class="avatar" alt="" hidden />
+              <div>
+                <p id="network-login" class="profile-name"></p>
+                <a id="network-profile-link" class="muted-link" target="_blank" rel="noopener noreferrer"></a>
+              </div>
+            </div>
+            <dl class="network-counts">
+              <div><dt>Followers</dt><dd id="network-follower-count">0</dd></div>
+              <div><dt>Following</dt><dd id="network-following-count">0</dd></div>
+            </dl>
+          </div>
+
+          <div class="network-panel">
+            <p id="network-notice" class="network-notice" hidden></p>
+            <div id="network-export" class="network-export" hidden>
+              <div class="section-heading export-heading">
+                <div><p class="eyebrow">Preview and export</p><h2>Markdown</h2></div>
+                <div class="actions">
+                  <button id="network-copy-button" class="secondary" type="button">Copy Markdown</button>
+                  <button id="network-download-button" class="secondary" type="button">Download .md</button>
+                </div>
+              </div>
+              <textarea id="network-output" readonly spellcheck="false" aria-label="Generated network Markdown"></textarea>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
     <footer class="footer">
       <strong>GitProfileLens</strong>
       <span>Independent developer tool. Not affiliated with or endorsed by GitHub.</span>
@@ -196,6 +261,7 @@
 
   <script src="share.js"></script>
   <script src="audit.js"></script>
+  <script src="network-export.js"></script>
   <script src="script.js"></script>
   <script src="markdown-format.js"></script>
 </body>

@@ -50,6 +50,25 @@ const auditTitle = document.querySelector("#audit-title");
 const ratingGuide = document.querySelector("#rating-guide");
 const tabButtons = document.querySelectorAll("[data-tab]");
 const tabPanels = document.querySelectorAll(".tab-panel");
+const networkPage = document.querySelector("#network-page");
+const networkForm = document.querySelector("#network-form");
+const networkUsernameInput = document.querySelector("#network-username");
+const networkLoadButton = document.querySelector("#network-load-button");
+const networkStatus = document.querySelector("#network-status");
+const networkResults = document.querySelector("#network-results");
+const networkAvatar = document.querySelector("#network-avatar");
+const networkLogin = document.querySelector("#network-login");
+const networkProfileLink = document.querySelector("#network-profile-link");
+const networkFollowerCount = document.querySelector("#network-follower-count");
+const networkFollowingCount = document.querySelector("#network-following-count");
+const networkNotice = document.querySelector("#network-notice");
+const networkExport = document.querySelector("#network-export");
+const networkOutput = document.querySelector("#network-output");
+const networkCopyButton = document.querySelector("#network-copy-button");
+const networkDownloadButton = document.querySelector("#network-download-button");
+const networkBackButton = document.querySelector("#network-back-button");
+const homeNetworkLink = document.querySelector("#home-network-link");
+const resultNetworkLink = document.querySelector("#result-network-link");
 
 const appState = {
   user: null,
@@ -62,6 +81,11 @@ const appState = {
   privateInstallation: false,
   privateExports: { public: [], private: [], combined: [], publicSupplemental: null },
 };
+
+/**
+ * network export state, held separately so it can never mutate audit results
+ */
+const networkState = { requestId: 0, network: null, markdown: "" };
 
 form.addEventListener("submit", handleFormSubmit);
 shareButton.addEventListener("click", shareResult);
@@ -83,6 +107,13 @@ for (const tabButton of tabButtons) {
   tabButton.addEventListener("click", handleTabClick);
   tabButton.addEventListener("keydown", handleTabKeydown);
 }
+
+networkForm.addEventListener("submit", handleNetworkSubmit);
+networkCopyButton.addEventListener("click", copyNetworkMarkdown);
+networkDownloadButton.addEventListener("click", downloadNetworkMarkdown);
+networkBackButton.addEventListener("click", leaveNetworkView);
+homeNetworkLink.addEventListener("click", handleNetworkLinkClick);
+resultNetworkLink.addEventListener("click", handleNetworkLinkClick);
 
 randomizeDoodles();
 initializeFromUrl();
@@ -177,6 +208,7 @@ async function loadProfile(username) {
 
 function showLoadingView(username) {
   hero.hidden = true;
+  networkPage.hidden = true;
   resultPage.hidden = true;
   resultSection.hidden = true;
   loadingUsername.textContent = `@${username}`;
@@ -186,6 +218,7 @@ function showLoadingView(username) {
 
 function showResultView() {
   hero.hidden = true;
+  networkPage.hidden = true;
   loadingScreen.hidden = true;
   resultPage.hidden = false;
   resultPage.insertBefore(statusEl, resultSection);
@@ -195,6 +228,7 @@ function showResultView() {
 
 function showHomeView() {
   loadingScreen.hidden = true;
+  networkPage.hidden = true;
   resultPage.hidden = true;
   resultSection.hidden = true;
   hero.hidden = false;
@@ -1434,9 +1468,20 @@ function updateShareUrl(username, tabName = null) {
  * @returns {void} no return value
  */
 function initializeFromUrl() {
+  const parameters = new URLSearchParams(window.location.search);
   const username = GitHubAudit.parseUsernameFromSearch(window.location.search);
-  const tabName = new URLSearchParams(window.location.search).get("view") || "overview";
+  const tabName = parameters.get("view") || "overview";
   activateTab(tabName, false);
+
+  if (parameters.get("tool") === "network") {
+    const networkUsername = (parameters.get("network") || username || "").trim();
+    showNetworkView();
+    if (networkUsername) {
+      networkUsernameInput.value = networkUsername;
+      loadNetwork(networkUsername);
+    }
+    return;
+  }
 
   if (username) {
     usernameInput.value = username;
@@ -1667,6 +1712,244 @@ function downloadMarkdown() {
   link.download = appState.mode === "private"
     ? `${appState.user?.login || "github-user"}-${scope}-repositories.md`
     : `${appState.user?.login || "github-user"}-repositories.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * opens the network export view from an in-page navigation link
+ * @param {MouseEvent} event navigation link click event
+ * @returns {void} no return value
+ */
+function handleNetworkLinkClick(event) {
+  event.preventDefault();
+  showNetworkView();
+  updateNetworkUrl(null);
+}
+
+/**
+ * shows the network export view without disturbing audit state
+ * @returns {void} no return value
+ */
+function showNetworkView() {
+  hero.hidden = true;
+  loadingScreen.hidden = true;
+  resultPage.hidden = true;
+  networkPage.hidden = false;
+
+  if (!networkUsernameInput.value && appState.user?.login) {
+    networkUsernameInput.value = appState.user.login;
+  }
+  window.scrollTo({ top: 0, behavior: "auto" });
+  networkUsernameInput.focus();
+}
+
+/**
+ * returns to the audit view the visitor came from
+ * @returns {void} no return value
+ */
+function leaveNetworkView() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("tool");
+  url.searchParams.delete("network");
+  history.replaceState(null, "", url);
+
+  if (appState.user) {
+    showResultView();
+    return;
+  }
+  showHomeView();
+}
+
+/**
+ * records the network view and its loaded username in the url
+ * @param {string|null} username loaded github username
+ * @returns {void} no return value
+ */
+function updateNetworkUrl(username) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("tool", "network");
+  if (username) {
+    url.searchParams.set("network", username);
+  } else {
+    url.searchParams.delete("network");
+  }
+  history.replaceState(null, "", url);
+}
+
+/**
+ * loads a public network when the network form is submitted
+ * @param {SubmitEvent} event browser form submission event
+ * @returns {Promise<void>} no return value
+ */
+async function handleNetworkSubmit(event) {
+  event.preventDefault();
+  await loadNetwork(networkUsernameInput.value);
+}
+
+/**
+ * retrieves and renders the complete public follower and following lists
+ * @param {string} username github username to export
+ * @returns {Promise<void>} no return value
+ */
+async function loadNetwork(username) {
+  const validation = GitProfileNetwork.validateUsername(username);
+  if (!validation.ok) {
+    resetNetworkResults();
+    showNetworkError(validation.message);
+    return;
+  }
+
+  const requestId = (networkState.requestId += 1);
+  resetNetworkResults();
+  setNetworkLoading(true);
+  networkStatus.classList.remove("error");
+  networkStatus.textContent = `Loading the public network for @${validation.username}…`;
+
+  try {
+    const network = await GitProfileNetwork.fetchNetwork(validation.username);
+    if (requestId !== networkState.requestId) return;
+    renderNetwork(network);
+    updateNetworkUrl(network.user.login);
+  } catch (error) {
+    if (requestId !== networkState.requestId) return;
+    resetNetworkResults();
+    showNetworkError(error.message);
+  } finally {
+    if (requestId === networkState.requestId) setNetworkLoading(false);
+  }
+}
+
+/**
+ * renders a retrieved network and enables export only when it is complete
+ * @param {Object} network retrieved network result
+ * @returns {void} no return value
+ */
+function renderNetwork(network) {
+  networkState.network = network;
+
+  networkLogin.textContent = network.user.name
+    ? `${network.user.name} (@${network.user.login})`
+    : `@${network.user.login}`;
+  networkProfileLink.textContent = `github.com/${network.user.login}`;
+  networkProfileLink.href = network.user.profileUrl;
+
+  if (network.user.avatarUrl) {
+    networkAvatar.src = network.user.avatarUrl;
+    networkAvatar.hidden = false;
+  }
+
+  networkFollowerCount.textContent = formatNetworkCount(network.followers);
+  networkFollowingCount.textContent = formatNetworkCount(network.following);
+  networkResults.hidden = false;
+
+  const incompleteReason = GitProfileNetwork.describeIncompleteRetrieval(network);
+  if (incompleteReason) {
+    networkNotice.textContent = incompleteReason;
+    networkNotice.classList.add("is-error");
+    networkNotice.hidden = false;
+    showNetworkError(`The network for @${network.user.login} could not be completely retrieved.`);
+    return;
+  }
+
+  networkState.markdown = GitProfileNetwork.buildMarkdown(network);
+  networkOutput.value = networkState.markdown;
+  networkExport.hidden = false;
+  networkCopyButton.disabled = false;
+  networkDownloadButton.disabled = false;
+
+  const countDifference = GitProfileNetwork.describeCountDifference(network);
+  if (countDifference) {
+    networkNotice.textContent = countDifference;
+    networkNotice.hidden = false;
+  }
+
+  networkStatus.textContent =
+    `Loaded ${network.followers.accounts.length} followers and ` +
+    `${network.following.accounts.length} following for @${network.user.login}.`;
+}
+
+/**
+ * formats a relationship count, labeling partial retrievals honestly
+ * @param {Object} relationship retrieved relationship list
+ * @returns {string} display count
+ */
+function formatNetworkCount(relationship) {
+  return relationship.complete
+    ? String(relationship.accounts.length)
+    : `${relationship.accounts.length} retrieved (incomplete)`;
+}
+
+/**
+ * clears every rendered network result and disables export controls
+ * @returns {void} no return value
+ */
+function resetNetworkResults() {
+  networkState.network = null;
+  networkState.markdown = "";
+  networkResults.hidden = true;
+  networkExport.hidden = true;
+  networkOutput.value = "";
+  networkNotice.hidden = true;
+  networkNotice.textContent = "";
+  networkNotice.classList.remove("is-error");
+  networkCopyButton.disabled = true;
+  networkDownloadButton.disabled = true;
+  networkAvatar.hidden = true;
+  networkAvatar.removeAttribute("src");
+  networkLogin.textContent = "";
+  networkProfileLink.textContent = "";
+  networkProfileLink.removeAttribute("href");
+}
+
+/**
+ * updates the network form loading state and blocks duplicate submissions
+ * @param {boolean} isLoading whether a network request is in flight
+ * @returns {void} no return value
+ */
+function setNetworkLoading(isLoading) {
+  networkLoadButton.disabled = isLoading;
+  networkUsernameInput.disabled = isLoading;
+  networkLoadButton.textContent = isLoading ? "Loading…" : "Load";
+}
+
+/**
+ * displays a network export error message
+ * @param {string} message error message to display
+ * @returns {void} no return value
+ */
+function showNetworkError(message) {
+  networkStatus.classList.add("error");
+  networkStatus.textContent = message;
+}
+
+/**
+ * copies the generated network markdown when the export is complete
+ * @returns {Promise<void>} no return value
+ */
+async function copyNetworkMarkdown() {
+  if (!networkState.markdown) return;
+  try {
+    await navigator.clipboard.writeText(networkState.markdown);
+    showTemporaryButtonText(networkCopyButton, "Copied");
+  } catch {
+    showNetworkError("Could not copy automatically. Select the Markdown and copy it manually.");
+  }
+}
+
+/**
+ * downloads the generated network markdown when the export is complete
+ * @returns {void} no return value
+ */
+function downloadNetworkMarkdown() {
+  if (!networkState.markdown || !networkState.network) return;
+  const blob = new Blob([networkState.markdown], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = GitProfileNetwork.buildFilename(networkState.network.user.login);
   document.body.appendChild(link);
   link.click();
   link.remove();
