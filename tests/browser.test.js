@@ -195,6 +195,16 @@ test("fork indicators appear on repository audit and explorer cards without labe
     assert.match(await forkAudit.locator(".fact-row").innerText(), /Fork: Yes/);
     assert.equal(await originalAudit.locator(".fork-badge").count(), 0);
 
+    // Candidacy is shown in public mode too, not only in the private audit, and a
+    // fork is never presented as a strong candidate on its inherited presentation.
+    assert.equal(await page.locator(".audit-card").count(), await page.locator(".candidate-panel").count());
+    assert.doesNotMatch(await forkAudit.locator(".candidate-badge").innerText(), /Strong candidate/i);
+    assert.match(await forkAudit.locator(".candidate-explanation").innerText(), /identifies this repository as a fork/i);
+    assert.equal(await originalAudit.locator(".candidate-panel").count(), 1);
+    assert.doesNotMatch(await originalAudit.locator(".candidate-explanation").innerText(), /fork/i);
+    // The score guide describes presentation only; candidacy is judged per card.
+    assert.match(await page.locator("#rating-guide").innerText(), /Portfolio candidacy is judged separately/i);
+
     await page.getByRole("tab", { name: "Repositories" }).click();
     const forkCard = page.locator(".repository-card", { has: page.getByRole("link", { name: fork.name }) });
     const originalCard = page.locator(".repository-card", { has: page.getByRole("link", { name: secondRepository.name }) });
@@ -466,8 +476,16 @@ test("private audit mode isolates authorized repositories from public outputs", 
     new Set(await page.locator(".privacy-badge").allInnerTexts()),
     new Set(["PRIVATE", "PUBLIC"])
   );
-  assert.equal(await page.locator(".candidate-label").count(), 2);
-  assert.match(await page.locator(".candidate-label").filter({ hasText: "Forked repository" }).innerText(), /not authorship/i);
+  assert.equal(await page.locator(".candidate-panel").count(), 2);
+  const forkCandidate = page.locator(".audit-card").filter({ hasText: "secret-project" }).locator(".candidate-panel");
+  // A fork never reaches Strong candidate, and the card says why rather than
+  // implying the signed-in user did none of the work.
+  assert.doesNotMatch(await forkCandidate.locator(".candidate-badge").innerText(), /Strong candidate/i);
+  assert.match(await forkCandidate.locator(".candidate-explanation").innerText(), /identifies this repository as a fork/i);
+  assert.match(await forkCandidate.locator(".candidate-explanation").innerText(), /cannot determine how much of the implementation/i);
+  // Its README came back unavailable, which must read as unknown, not as missing.
+  assert.equal(await forkCandidate.locator(".candidate-qualifier").innerText(), "Some metadata unavailable");
+  assert.doesNotMatch(await forkCandidate.locator(".candidate-explanation").innerText(), /no README|missing README/i);
   assert.equal(await page.locator(".fork-badge").count(), 1);
   assert.equal(await page.locator("#share-button").isHidden(), true);
   assert.equal(await page.locator("#score-card-button").isHidden(), true);

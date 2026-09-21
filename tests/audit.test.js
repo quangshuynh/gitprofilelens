@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  classifyPortfolioCandidate,
   generateRecommendations,
   parseUsernameFromSearch,
   scoreDescription,
@@ -13,6 +14,9 @@ const {
   transformRepository,
   scoreReadme,
 } = require("../audit.js");
+
+/** Frozen evaluation date, matching the scoring corpus harness. */
+const EVALUATION_DATE = new Date("2026-08-21T00:00:00Z");
 
 /**
  * creates representative github repository response data for tests
@@ -94,13 +98,14 @@ test("fork status does not change repository presentation scoring", () => {
     pinnedRepositories: [],
     readmes: { "transaction-validator": { present: true, size: 1800 } },
   };
-  const original = transformRepository(createRepository({ fork: false }), supplemental);
-  const fork = transformRepository(createRepository({ fork: true }), supplemental);
+  const original = scoreRepository(transformRepository(createRepository({ fork: false }), supplemental), EVALUATION_DATE);
+  const fork = scoreRepository(transformRepository(createRepository({ fork: true }), supplemental), EVALUATION_DATE);
 
-  assert.deepEqual(
-    scoreRepository(fork, new Date("2026-08-21T00:00:00Z")),
-    { ...scoreRepository(original, new Date("2026-08-21T00:00:00Z")), repository: fork }
-  );
+  // Candidacy reads fork status; scoring never has and still does not.
+  assert.equal(fork.score, original.score);
+  assert.deepEqual(fork.categoryScores, original.categoryScores);
+  assert.deepEqual(fork.findings, original.findings);
+  assert.notEqual(fork.candidate.label, original.candidate.label);
 });
 
 test("repository scoring identifies missing presentation fundamentals", () => {
@@ -346,4 +351,242 @@ test("empty profiles return a zero presentation score without throwing", () => {
       focus: 0,
     },
   });
+});
+
+/**
+ * builds a scored audit from a repository fixture and optional README metadata
+ * @param {Object} overrides repository properties to override
+ * @param {Object|null} readme README metadata, or null to leave it unverified
+ * @returns {Object} repository audit
+ */
+function auditRepository(overrides = {}, readme = { present: true, size: 1800, sections: { overview: true, installation: true, usage: true, examples: true, contributing: true }, hasCodeBlock: true, hasImage: true, headingCount: 7 }) {
+  const raw = createRepository(overrides);
+  const supplemental = readme === null
+    ? { pinnedRepositories: [], readmes: {} }
+    : { pinnedRepositories: [], readmes: { [raw.name]: readme } };
+  return scoreRepository(transformRepository(raw, supplemental), EVALUATION_DATE);
+}
+
+test("a strong original repository is classified as a strong candidate", () => {
+  const audit = auditRepository();
+
+  assert.equal(audit.candidate.label, "strong");
+  assert.equal(audit.candidate.title, "Strong candidate");
+  assert.equal(audit.candidate.qualifier, null);
+  assert.match(audit.candidate.explanation, /^Original repository with /);
+});
+
+test("an original repository with fixable gaps is worth polishing and the gaps are named", () => {
+  const audit = auditRepository({ topics: [], license: null });
+
+  assert.equal(audit.candidate.label, "polish");
+  assert.match(audit.candidate.explanation, /adding topics/i);
+  assert.match(audit.candidate.explanation, /adding a license/i);
+  assert.match(audit.candidate.explanation, /would improve portfolio presentation/i);
+});
+
+test("a weak original repository is de-emphasized for reasons drawn from its evidence", () => {
+  const audit = auditRepository(
+    { description: null, topics: [], license: null, homepage: null },
+    { present: false, size: null }
+  );
+
+  assert.equal(audit.candidate.label, "deemphasize");
+  assert.equal(audit.candidate.title, "De-emphasize");
+  assert.match(audit.candidate.explanation, /it has no README/i);
+  assert.match(audit.candidate.explanation, /it has no description/i);
+});
+
+test("candidacy is not a restatement of the score band", () => {
+  // A fork can outscore an original repository and still be the weaker candidate,
+  // which is the whole reason candidacy exists as a separate judgment.
+  const fork = auditRepository({ fork: true });
+  const original = auditRepository({ topics: [], license: null }, { present: true, size: 180 });
+
+  assert.ok(fork.score > original.score, `expected the fork to outscore the original, received ${fork.score} and ${original.score}`);
+  assert.equal(fork.candidate.label, "polish");
+  assert.equal(original.candidate.label, "polish");
+
+  // And two repositories sharing a label need not share a score band.
+  assert.ok(Math.abs(fork.score - original.score) > 10);
+});
+
+test("falsification: a polished fork never becomes a strong candidate on presentation alone", () => {
+  const audit = auditRepository({ fork: true });
+
+  assert.equal(audit.score, 100, "the fork is deliberately built to score at the top of the range");
+  assert.notEqual(audit.candidate.label, "strong");
+  assert.match(audit.candidate.explanation, /GitHub identifies this repository as a fork/);
+  assert.match(audit.candidate.explanation, /cannot determine how much of the implementation belongs to the profile owner/);
+  // It must not claim the owner contributed nothing, and must not call forks bad.
+  assert.doesNotMatch(audit.candidate.explanation, /did not write|no original work|forks are/i);
+});
+
+test("falsification: an archived, well-presented repository never becomes a strong candidate", () => {
+  const audit = auditRepository({ archived: true });
+
+  assert.ok(audit.score >= 90, `expected a high presentation score, received ${audit.score}`);
+  assert.notEqual(audit.candidate.label, "strong");
+  assert.match(audit.candidate.explanation, /archived/i);
+  assert.match(audit.candidate.explanation, /weaker choice for prominent portfolio placement/i);
+});
+
+test("falsification: a strong private original repository can be a strong candidate", () => {
+  const audit = auditRepository({ private: true, visibility: "private" });
+  const published = auditRepository();
+
+  assert.equal(audit.candidate.label, "strong");
+  assert.equal(audit.score, published.score, "privacy must not change the presentation score");
+  assert.match(audit.candidate.explanation, /if you intend to publish or showcase/i);
+  // Candidacy may describe publishing as the user's choice; it never instructs it.
+  assert.doesNotMatch(audit.candidate.explanation, /make (it|this) public|publish (it|this) now/i);
+});
+
+test("falsification: an unverified README is neutral and is never described as absent", () => {
+  const unverified = auditRepository({}, null);
+  const missing = auditRepository({}, { present: false, size: null });
+
+  assert.equal(unverified.candidate.evidence.readmeState, "unverified");
+  assert.notEqual(unverified.candidate.label, "deemphasize");
+  assert.equal(unverified.candidate.qualifier, "Some metadata unavailable");
+  assert.match(unverified.candidate.explanation, /could not verify README status/i);
+  assert.doesNotMatch(unverified.candidate.explanation, /no README|missing README|without a README|adding a README/i);
+
+  // Unknown must never be treated as the verified-absent case.
+  assert.ok(!unverified.candidate.weaknesses.includes("readme"));
+  assert.ok(missing.candidate.weaknesses.includes("readme"));
+});
+
+test("falsification: unavailable fork metadata is not read as confirmed original work", () => {
+  const unknown = auditRepository({ fork: undefined });
+
+  assert.equal(unknown.candidate.evidence.originality, "unknown");
+  assert.notEqual(unknown.candidate.label, "strong");
+  assert.equal(unknown.candidate.qualifier, "Some metadata unavailable");
+  assert.match(unknown.candidate.explanation, /GitHub did not report fork status/);
+  assert.doesNotMatch(unknown.candidate.explanation, /Original repository/);
+
+  // Unknown is not a weakness either, so it cannot push toward De-emphasize.
+  assert.ok(!unknown.candidate.weaknesses.includes("fork"));
+});
+
+test("an unusable update timestamp is recorded as unknown rather than as staleness", () => {
+  const audit = auditRepository({ pushed_at: "not-a-date", updated_at: "not-a-date" });
+
+  assert.equal(audit.candidate.evidence.maintenanceUnknown, true);
+  assert.equal(audit.candidate.evidence.abandoned, false);
+  assert.equal(audit.candidate.qualifier, "Some metadata unavailable");
+  assert.match(audit.candidate.explanation, /could not verify .*update history/i);
+  assert.doesNotMatch(audit.candidate.explanation, /has not been pushed to/i);
+});
+
+test("every explanation clause is backed by evidence that is actually true", () => {
+  const cases = [
+    auditRepository(),
+    auditRepository({ fork: true }),
+    auditRepository({ fork: undefined }),
+    auditRepository({ archived: true }),
+    auditRepository({ private: true }),
+    auditRepository({ topics: [] }),
+    auditRepository({ license: null }),
+    auditRepository({ homepage: null }),
+    auditRepository({ description: null }),
+    auditRepository({ description: "Web app" }),
+    auditRepository({ pushed_at: "2022-01-01T00:00:00Z", updated_at: "2022-01-01T00:00:00Z" }),
+    auditRepository({ pushed_at: "2019-01-01T00:00:00Z", updated_at: "2019-01-01T00:00:00Z" }),
+    auditRepository({}, null),
+    auditRepository({}, { present: false, size: null }),
+    auditRepository({}, { present: true, size: 180 }),
+  ];
+
+  // Each claim a sentence can make, paired with the evidence that must support it.
+  const claims = [
+    [/a thorough README/, (evidence) => evidence.readmeState === "comprehensive"],
+    [/a verified README/, (evidence) => evidence.readmeState === "present"],
+    [/adding a README/, (evidence) => evidence.readmeState === "missing"],
+    [/it has no README/, (evidence) => evidence.readmeState === "missing"],
+    [/expanding the short README/, (evidence) => evidence.readmeState === "short"],
+    [/could not verify/, (evidence) => evidence.unknowns.length > 0],
+    [/a linked demo/, (evidence) => evidence.homepage],
+    [/adding topics/, (evidence) => evidence.topics === 0],
+    [/adding a license/, (evidence) => !evidence.license],
+    [/it has no description/, (evidence) => evidence.description === 0],
+    [/is archived/, (evidence) => evidence.archived],
+    [/has not been pushed to in more than three years/, (evidence) => evidence.abandoned],
+    [/identifies this repository as a fork/, (evidence) => evidence.originality === "fork"],
+    [/did not report fork status/, (evidence) => evidence.originality === "unknown"],
+    [/^Original repository/, (evidence) => evidence.originality === "original"],
+    [/publish or showcase/, (evidence) => evidence.private],
+  ];
+
+  for (const audit of cases) {
+    const { explanation, evidence } = { ...audit.candidate, evidence: audit.candidate.evidence };
+    for (const [pattern, supported] of claims) {
+      if (!pattern.test(explanation)) continue;
+      assert.ok(
+        supported(evidence),
+        `${audit.repository.name} claimed ${pattern} without supporting evidence:\n  ${explanation}\n  ${JSON.stringify(evidence)}`
+      );
+    }
+  }
+});
+
+test("classification is deterministic and attaches without disturbing the score", () => {
+  const repository = transformRepository(createRepository(), {
+    pinnedRepositories: [],
+    readmes: { "transaction-validator": { present: true, size: 1800 } },
+  });
+  const audit = scoreRepository(repository, EVALUATION_DATE);
+
+  assert.deepEqual(scoreRepository(repository, EVALUATION_DATE), audit, "scoring must stay deterministic");
+  assert.deepEqual(
+    classifyPortfolioCandidate({ ...audit, candidate: undefined }),
+    audit.candidate,
+    "classification must depend only on the audit it is given"
+  );
+});
+
+test("the scored surface still comes only from the category scorers", () => {
+  // Requirement: adding candidacy changed no scoring. Rather than pinning magic
+  // numbers, this rebuilds the score from the category functions candidacy never
+  // touches, so a future edit that quietly folded candidacy into scoring fails.
+  const cases = [
+    [createRepository(), { present: true, size: 1800 }],
+    [createRepository({ fork: true }), { present: true, size: 1800 }],
+    [createRepository({ archived: true, topics: [], license: null }), { present: false, size: null }],
+    [createRepository({ description: null, name: "test" }), null],
+  ];
+
+  for (const [raw, readme] of cases) {
+    const supplemental = { pinnedRepositories: [], readmes: readme ? { [raw.name]: readme } : {} };
+    const repository = transformRepository(raw, supplemental);
+    const audit = scoreRepository(repository, EVALUATION_DATE);
+    const name = scoreName(repository.name);
+    const description = scoreDescription(repository.description, repository.archived);
+    const readmeScore = scoreReadme(repository.readme, repository.archived);
+    const discoverability = scoreDiscoverability(repository);
+    const maintenance = scoreMaintenance(repository, EVALUATION_DATE);
+
+    assert.deepEqual(audit.categoryScores, {
+      presentation: name.score,
+      descriptions: description.score,
+      readme: readmeScore.score,
+      discoverability: discoverability.score,
+      maintenance: maintenance.score,
+    }, `${raw.name} category scores drifted from the category scorers`);
+    assert.deepEqual(audit.findings, [
+      ...name.findings,
+      ...description.findings,
+      ...readmeScore.findings,
+      ...discoverability.findings,
+      ...maintenance.findings,
+    ], `${raw.name} findings drifted from the category scorers`);
+    assert.equal(audit.score, Math.max(0, Math.min(100, Math.round(
+      name.score * 0.15 +
+      description.score * 0.25 +
+      readmeScore.score * 0.25 +
+      discoverability.score * 0.2 +
+      maintenance.score * 0.15
+    ))), `${raw.name} overall score drifted from the documented weights`);
+  }
 });

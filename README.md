@@ -28,6 +28,7 @@ Enter any GitHub username without signing in. The public audit:
 - Calculates the public GitHub Profile Score and six explainable categories.
 - Audits names, descriptions, READMEs, topics, licenses, demos, and maintenance.
 - Ranks actionable portfolio recommendations.
+- Classifies each repository as a portfolio candidate, separately from its score.
 - Supports shareable `?user=USERNAME` links and downloadable score cards.
 - Explores public repository metadata and exports it to Markdown.
 - Provides the public JSON endpoint `GET /api/report?user=USERNAME`.
@@ -40,7 +41,7 @@ Sign in with GitHub and install the GitHub App on all or selected repositories. 
 - Focuses on repositories owned by the signed-in account.
 - Reuses the deterministic repository presentation checks.
 - Labels each repository as Private or Public.
-- Classifies projects as strong portfolio candidates, worth polishing, or needing presentation work.
+- Applies the same portfolio candidacy classification used by the public audit, so private work can be evaluated as a potential portfolio project.
 - Exports Markdown containing public repositories, authorized private repositories, or both.
 
 Private repositories never affect the public GitHub Profile Score. Private identifiers are not included in public URLs, score cards, public metadata endpoints, or `/api/report`. Private details enter Markdown only when the authenticated user explicitly selects a private or combined export.
@@ -59,7 +60,26 @@ The public profile score aggregates those repository results and adds portfolio 
 
 Fork status comes directly from GitHub's repository metadata: `fork: true` means GitHub identifies the repository as a fork. GitProfileLens does not infer fork status or estimate how much work the profile owner contributed. Forks remain auditable and are not given an automatic quality penalty; their presentation score describes repository metadata and README quality, not authorship of inherited content.
 
-[docs/scoring.md](docs/scoring.md) documents every rule and weight, what the score intentionally does not measure, known limitations, and how to change scoring safely.
+## Portfolio candidacy
+
+Alongside the score, every audited repository receives a deterministic candidacy label answering a different question: **is this a good repository to feature prominently?**
+
+| Label | Meaning |
+| --- | --- |
+| **Strong candidate** | Confirmed original work, verified and substantive README, meaningful description, discoverable, reasonably current, no major presentation findings |
+| **Worth polishing** | A real foundation with named, fixable gaps, or a repository whose candidacy cannot be asserted outright |
+| **De-emphasize** | Severe presentation gaps, unexplained abandonment, or several weaknesses together |
+
+The label is **not** a score band. A fork can score 100 and still be Worth polishing; an original repository scoring 63 can be Worth polishing too. Each label carries a one-line explanation derived from that repository's own evidence.
+
+- **Forks.** A GitHub-identified fork is never a Strong candidate on presentation alone. GitProfileLens cannot determine how much of the implementation belongs to the profile owner, so it says exactly that rather than claiming the owner did no work. Forks are not called bad and are not hidden.
+- **Archived repositories.** Not hidden and not automatically de-emphasized. A well-presented archive is classified honestly, with archival status named as the reason it is a weaker choice to lead with.
+- **Private repositories.** Judged by identical rules. Privacy never counts against a project, and a strong private original project can be a Strong candidate for future public presentation. GitProfileLens does not suggest exposing private details.
+- **Unavailable metadata.** Unknown is never treated as missing. An unverified README is never described as absent, and unavailable evidence cannot push a repository toward De-emphasize. It does prevent an outright Strong claim, which is shown as `Some metadata unavailable`.
+
+Candidacy is derived from the finished audit and never changes the score. Classification does not read source code, commit ownership, upstream divergence, or contribution share, and requires no additional GitHub permissions.
+
+[docs/scoring.md](docs/scoring.md) documents every rule and weight, the full candidacy rules, what the score intentionally does not measure, known limitations, and how to change scoring safely.
 
 ## Privacy and authentication
 
@@ -231,7 +251,7 @@ npm run check
 npm run test:browser
 ```
 
-Tests cover deterministic scoring, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, and browser-level isolation from public scoring, sharing, score cards, and URLs.
+Tests cover deterministic scoring, portfolio candidacy classification, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, and browser-level isolation from public scoring, sharing, score cards, and URLs.
 
 ## Deployment options
 

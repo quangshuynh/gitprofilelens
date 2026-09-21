@@ -34,6 +34,8 @@ raw GitHub REST repositories + supplemental metadata
   -> generateRecommendations(audits)                 audit.js:527
 ```
 
+`scoreRepository` also attaches a portfolio candidate classification to each audit. It is derived from the finished audit and never changes it. See [Portfolio candidacy](#portfolio-candidacy).
+
 `supplemental` carries README structure and the pinned repository list from the serverless metadata endpoint. It is `null` on deployments where that endpoint is unavailable, which is a distinct state from "the repository has no README". See [Unknown is not the same as absent](#unknown-is-not-the-same-as-absent).
 
 Every function is deterministic given its inputs and the injected `now`. `scoreRepository` defaults `now` to `new Date()`, so production maintenance scores drift with wall-clock time; the evaluation corpus pins the date instead.
@@ -217,6 +219,135 @@ Pinning is the single highest-leverage presentation control GitHub offers: it de
 
 ---
 
+## Portfolio candidacy
+
+The score and the candidate label answer different questions, and they are allowed to disagree.
+
+| | Repository score | Portfolio candidacy |
+| --- | --- | --- |
+| Question | How well does this repository present itself? | Is this a good repository to feature prominently? |
+| Output | 0–100 | `Strong candidate`, `Worth polishing`, `De-emphasize` |
+| Reads | name, description, README, topics, license, demo, recency | the finished audit, plus fork status, archive status, and which evidence was verifiable |
+| Computed by | `scoreRepository` (audit.js) | `classifyPortfolioCandidate` (audit.js) |
+
+`scoreRepository` attaches `candidate` to the audit it returns. Candidacy reads the finished audit and adds a field; it never feeds back into `score`, `categoryScores`, or `findings`. Introducing it moved no corpus score.
+
+### Why candidacy cannot be a score band
+
+A band would carry no information the score does not already carry. The corpus contains repositories where the two orderings invert:
+
+| Repository | Score | Candidacy |
+| ---------- | ----: | --------- |
+| `render-kit` (fork, complete upstream metadata) | 100 | Worth polishing |
+| `legacy-api-gateway` (archived, comprehensive README) | 98 | Worth polishing |
+| `tinyhttp` (fork, three years silent) | 88 | De-emphasize |
+| `My_First_Website` (original, short README, no topics) | 63 | Worth polishing |
+
+`tinyhttp` outscores `My_First_Website` by 25 points and is the weaker candidate. That is the behavior candidacy exists to express.
+
+### Signals
+
+Everything is derived from evidence the audit already holds. Nothing reads source code, commit ownership, upstream divergence, or contribution share.
+
+```text
+originality  = fork === false ? original : fork === true ? fork : unknown
+readmeState  = formatReadmeStatus(repository.readme)
+description  = categoryScores.descriptions
+maintenance  = categoryScores.maintenance
+plus archived, private, topics, license, homepage, and finding counts by severity
+```
+
+`pinned` is deliberately excluded. Pinning is the outcome of a candidacy decision rather than evidence for one, so reading it would make the label partly circular.
+
+### Strong candidate
+
+An affirmative claim about a specific repository, so every gate must be met by evidence that was actually verified:
+
+1. `originality === original` — confirmed `fork: false`
+2. Not archived
+3. README verified present and substantive (`present` or `comprehensive`)
+4. Description scoring at least 70
+5. At least one topic
+6. Maintenance at least 85, meaning pushed within roughly two years
+7. No `high` findings and at most one `medium` finding
+8. Score at least 75
+
+Gate 8 is a backstop, not a band. Gates 1 through 7 already imply a score in the low eighties, so the threshold never decides a case on its own.
+
+### De-emphasize
+
+No score term appears in this decision. A repository is de-emphasized because of what is known about it, not because of where its score lands.
+
+Weaknesses:
+
+| | Condition |
+| --- | --- |
+| W1 | README verified absent |
+| W2 | Description scoring below 70: missing, placeholder, or generic |
+| W3 | Neither topics nor a license |
+| W4 | Not archived and not pushed in more than three years |
+| W5 | Archived |
+| W6 | Confirmed fork |
+
+De-emphasize when any of: two or more `high` findings; `W1 && W2`; `W4`; two or more weaknesses.
+
+Everything else is **Worth polishing**, which is the honest default: a repository with a real foundation and named, fixable gaps.
+
+### Forks
+
+A confirmed fork can never be a Strong candidate, however well it presents. This is not a claim that forks are bad or that the owner wrote none of the code. GitHub's `fork` flag is the only authorship signal available, and it says only that a fork relationship exists. The explanation states exactly that limit:
+
+> GitHub identifies this repository as a fork, and GitProfileLens cannot determine how much of the implementation belongs to the profile owner.
+
+A fork with otherwise complete presentation is Worth polishing. A fork carrying a second weakness, such as three years of silence, is De-emphasize. The tool never asserts that a fork contains no original work, because it has no way to know.
+
+This matches the reasoning already recorded in [F6](#f6-pin-candidates-can-be-other-peoples-work-fixed), which excluded forks from pin candidacy for the same reason.
+
+### Archived repositories
+
+Archived repositories are not hidden and not automatically de-emphasized. Archiving is an explicit statement that work is finished, and the score already treats it as better than silence. Candidacy treats it the same way: archival is one weakness, so a well-presented archive lands at Worth polishing with the reason stated plainly.
+
+> It is archived, which makes it a weaker choice for prominent portfolio placement.
+
+An archive carrying a second weakness is De-emphasize. Note the asymmetry with W4: an unexplained three-year gap de-emphasizes on its own, while a deliberate archive does not.
+
+### Private repositories
+
+Private repositories run through exactly the same rules. Privacy is not an input and cannot raise or lower a label. A strong private original project is a Strong candidate, and the explanation frames publishing as the owner's choice rather than an instruction:
+
+> Privacy does not count against the work; this is a strong candidate if you intend to publish or showcase the project.
+
+Nothing in candidacy suggests exposing private repository details, and private classifications appear only in the authenticated view.
+
+### Unknown evidence
+
+Unavailable data is never a weakness and never a failure. It cannot push a repository toward De-emphasize, and no explanation describes unverifiable data as absent. An unverified README produces no README clause at all, so the tool never says a README is missing when it could not check.
+
+What it does do is block the affirmative Strong candidate claim, because a claim that specific cannot rest on evidence that was never verified. Such a repository lands at Worth polishing and carries an evidence qualifier:
+
+> Some metadata unavailable
+
+Three conditions set it: `readme.present === null`, `fork === null`, and an unusable update timestamp. The explanation names which one.
+
+There is no numeric confidence score. The qualifier is a binary statement about whether every input was verifiable, which is the only thing the available evidence supports.
+
+### Tension with portfolio focus
+
+`scorePortfolioFocus` awards a curation bonus for archived and forked repositories ([F2](#f2-forking-counts-as-curation)), while candidacy counts both as weaknesses. This is a real disagreement and it is intended:
+
+> Portfolio-focus scoring rewards profile curation — moving finished or borrowed work out of the active set. Candidate classification evaluates whether an individual repository is suitable for prominent portfolio presentation. A fork can raise profile focus and still not be a strong candidate.
+
+The two operate at different levels. Focus asks whether the account as a whole reads as curated; candidacy asks whether one repository deserves to lead. Neither formula was changed to resolve this, and F2 remains open on its own terms.
+
+### Changing candidacy safely
+
+* Candidacy must stay derivable from the existing audit. A rule needing a new GitHub permission, a clone, or commit inspection is out of scope.
+* Never let unknown evidence act as a weakness. That is the difference between "we could not check" and "it is not there", and the whole design depends on it.
+* Every explanation clause must be backed by a signal that is true for that repository. `tests/audit.test.js` enforces this with a claim-to-evidence table; add a row when adding a clause.
+* Candidacy is not recorded in `evaluation/baseline.json`, so `npm run eval` will not show a candidacy change. `tests/scoring/candidates.test.js` is the only corpus-wide guard. Update it deliberately.
+
+---
+
 ## How the categories interact
 
 * **A missing description costs twice.** It zeroes the repository's description score, and because profile categories are flat means, it pulls the profile's description average down by up to `100 / repositoryCount`.
@@ -226,6 +357,7 @@ Pinning is the single highest-leverage presentation control GitHub offers: it de
 * **Severity and breadth compete in ranking, and breadth can win.** See [F1](#f1-breadth-can-outrank-severity).
 * **Forks are judged, counted, and averaged like original work.** A fork inherits the upstream project's description, README, topics, and license, so a fork-heavy account inherits that project's presentation quality as if it were its own.
 * **Unverified README metadata still affects the profile README mean.** See [F12](#f12-unverified-readmes-impute-a-fixed-score).
+* **Profile focus and repository candidacy disagree about forks and archives, on purpose.** Focus rewards curating them out of the active set; candidacy counts them against featuring that repository first. See [Tension with portfolio focus](#tension-with-portfolio-focus).
 
 ---
 
@@ -270,6 +402,8 @@ Each finding names the corpus profile or test surface that exposed it.
 ### F2: Forking counts as curation
 
 `curationBonus = min(15, archivedOrForked * 2)` treats forks as curated-away work. `fork-dominated` scores focus 84, above `polished-professional` at 75.
+
+Portfolio candidacy reads the same two flags in the opposite direction, which is documented and deliberate rather than a contradiction. See [Tension with portfolio focus](#tension-with-portfolio-focus). The focus formula is unchanged.
 
 ### F3: Recommendation order depends on audit order
 
@@ -380,6 +514,7 @@ Renaming an action string changes the recommendation's identity because the eval
 | `harness.js`                                                                                    | `auditProfile` runs the real pipeline at a frozen `EVALUATION_DATE` of 2026-08-21           |
 | `expectations.js`                                                                               | Band and advice assertions that print the full ranked advice list on failure                |
 | `harness.test.js` (9), `personas.test.js` (32), `edge-cases.test.js` (9), `report.test.js` (15) | 65 scoring tests                                                                            |
+| `candidates.test.js` (10)                                                                       | Portfolio candidacy across the corpus, including the fork, archive, private, and unverified falsification cases |
 
 Fixtures are authored at the **raw REST payload** boundary, so `transformRepository` stays inside the tested surface.
 

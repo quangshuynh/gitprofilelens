@@ -373,6 +373,368 @@
   }
 
   /**
+   * Portfolio candidacy labels.
+   *
+   * Candidacy answers a different question from the repository score. The score
+   * measures how well a repository presents itself. Candidacy measures whether it
+   * is a good thing to put in front of a visitor first, which depends on evidence
+   * the score deliberately averages away: whether the work is original, whether it
+   * has been retired, and whether the metadata behind the score was verifiable.
+   */
+  const CANDIDATE_TITLES = {
+    strong: "Strong candidate",
+    polish: "Worth polishing",
+    deemphasize: "De-emphasize",
+  };
+
+  /** Shown alongside a label when some evidence could not be verified. */
+  const INCOMPLETE_EVIDENCE_NOTE = "Some metadata unavailable";
+
+  /**
+   * counts the findings of a repository audit at one severity
+   * @param {Array<Object>} findings repository findings
+   * @param {string} severity severity to count
+   * @returns {number} number of matching findings
+   */
+  function countFindingsBySeverity(findings, severity) {
+    return findings.filter((finding) => finding.severity === severity).length;
+  }
+
+  /**
+   * determines whether an audit could not establish a repository's update history
+   * @param {Array<Object>} findings repository findings
+   * @returns {boolean} true when the maintenance date was unusable
+   */
+  function hasUnknownMaintenance(findings) {
+    return findings.some((finding) => finding.category === "Project maintenance" && finding.severity === "info");
+  }
+
+  /**
+   * collects the candidacy evidence a repository audit already supports
+   *
+   * Every field is derived from data the audit already holds. Nothing here reads
+   * source code, commit ownership, upstream divergence, or contribution share, and
+   * pin state is deliberately excluded: pinning is the outcome of a candidacy
+   * decision rather than evidence for one.
+   *
+   * @param {Object} audit repository audit
+   * @returns {Object} candidacy evidence
+   */
+  function collectCandidateEvidence(audit) {
+    const repository = audit.repository;
+    const readmeState = formatReadmeStatus(repository.readme);
+    const originality = repository.fork === false
+      ? "original"
+      : repository.fork === true ? "fork" : "unknown";
+    const maintenanceUnknown = hasUnknownMaintenance(audit.findings);
+    const maintenance = audit.categoryScores.maintenance;
+    const unknowns = [];
+
+    if (originality === "unknown") unknowns.push("fork status");
+    if (readmeState === "unverified") unknowns.push("README status");
+    if (maintenanceUnknown) unknowns.push("update history");
+
+    return {
+      originality,
+      archived: repository.archived,
+      private: repository.private,
+      readmeState,
+      description: audit.categoryScores.descriptions,
+      maintenance,
+      maintenanceUnknown,
+      // Three years of unexplained silence, as distinct from an explicit archive.
+      abandoned: !repository.archived && !maintenanceUnknown && maintenance <= 35,
+      stale: !repository.archived && !maintenanceUnknown && maintenance === 65,
+      topics: repository.topics.length,
+      license: repository.license,
+      homepage: Boolean(repository.homepage),
+      highFindings: countFindingsBySeverity(audit.findings, "high"),
+      mediumFindings: countFindingsBySeverity(audit.findings, "medium"),
+      score: audit.score,
+      unknowns,
+    };
+  }
+
+  /**
+   * lists the independent weaknesses that count against prominent placement
+   *
+   * Unavailable evidence never appears here. An unverified README, an unreported
+   * fork status, and an unusable update timestamp are unknown, not weak, so they
+   * can never push a repository toward De-emphasize.
+   *
+   * @param {Object} evidence candidacy evidence
+   * @returns {Array<string>} weakness identifiers
+   */
+  function listCandidateWeaknesses(evidence) {
+    const weaknesses = [];
+    if (evidence.readmeState === "missing") weaknesses.push("readme");
+    if (evidence.description < 70) weaknesses.push("description");
+    if (evidence.topics === 0 && !evidence.license) weaknesses.push("discoverability");
+    if (evidence.abandoned) weaknesses.push("abandoned");
+    if (evidence.archived) weaknesses.push("archived");
+    if (evidence.originality === "fork") weaknesses.push("fork");
+    return weaknesses;
+  }
+
+  /**
+   * determines whether the evidence supports an affirmative Strong candidate claim
+   *
+   * Strong candidate is a positive assertion about a specific repository, so every
+   * gate must be satisfied by evidence that was actually verified. Absent evidence
+   * cannot satisfy a gate, which is why an unreported fork status fails the first
+   * one. The score appears only as a backstop: gates one through seven already
+   * imply a score in the low eighties, so the threshold never decides a case alone.
+   *
+   * @param {Object} evidence candidacy evidence
+   * @returns {boolean} true when every Strong candidate gate is satisfied
+   */
+  function isStrongCandidate(evidence) {
+    return evidence.originality === "original"
+      && !evidence.archived
+      && (evidence.readmeState === "present" || evidence.readmeState === "comprehensive")
+      && evidence.description >= 70
+      && evidence.topics >= 1
+      && evidence.maintenance >= 85
+      && evidence.highFindings === 0
+      && evidence.mediumFindings <= 1
+      && evidence.score >= 75;
+  }
+
+  /**
+   * determines whether the evidence argues against prominent placement
+   *
+   * No score term appears here. A repository is de-emphasized because of what is
+   * known about it, not because of where its presentation score lands.
+   *
+   * @param {Object} evidence candidacy evidence
+   * @param {Array<string>} weaknesses weakness identifiers
+   * @returns {boolean} true when the repository should be de-emphasized
+   */
+  function isDeemphasizedCandidate(evidence, weaknesses) {
+    if (evidence.highFindings >= 2) return true;
+    // Neither a README nor a usable description leaves a visitor nothing to read.
+    if (weaknesses.includes("readme") && weaknesses.includes("description")) return true;
+    // Archiving is an explicit statement that work is finished; silence is not.
+    if (weaknesses.includes("abandoned")) return true;
+    return weaknesses.length >= 2;
+  }
+
+  /**
+   * joins clauses into readable prose
+   * @param {Array<string>} clauses clauses to join
+   * @returns {string} joined clauses
+   */
+  function joinCandidateClauses(clauses) {
+    if (clauses.length <= 1) return clauses.join("");
+    if (clauses.length === 2) return `${clauses[0]} and ${clauses[1]}`;
+    return `${clauses.slice(0, -1).join(", ")}, and ${clauses[clauses.length - 1]}`;
+  }
+
+  /**
+   * capitalizes the first letter of a clause that begins a sentence
+   * @param {string} text sentence text
+   * @returns {string} capitalized text
+   */
+  function capitalizeClause(text) {
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  /**
+   * describes the presentation strengths the evidence actually supports
+   * @param {Object} evidence candidacy evidence
+   * @returns {Array<string>} strength clauses
+   */
+  function describeCandidateStrengths(evidence) {
+    const strengths = [];
+
+    if (evidence.readmeState === "comprehensive") strengths.push("a thorough README");
+    else if (evidence.readmeState === "present") strengths.push("a verified README");
+
+    if (evidence.description === 100) strengths.push("a clear description");
+    else if (evidence.description >= 70) strengths.push("a usable description");
+
+    if (evidence.topics > 0 && evidence.license) strengths.push("topics and a license for discoverability");
+    else if (evidence.topics > 0) strengths.push("topics for discoverability");
+    else if (evidence.license) strengths.push("a license");
+
+    if (evidence.homepage) strengths.push("a linked demo");
+
+    if (!evidence.archived && !evidence.maintenanceUnknown) {
+      if (evidence.maintenance >= 100) strengths.push("activity within the last year");
+      else if (evidence.maintenance >= 85) strengths.push("reasonably current activity");
+    }
+
+    return strengths;
+  }
+
+  /**
+   * describes the fixable presentation gaps the evidence actually supports
+   *
+   * An unverified README produces no gap clause, so an explanation never states
+   * that a README is absent when the tool could not check for one.
+   *
+   * @param {Object} evidence candidacy evidence
+   * @returns {Array<string>} gap clauses
+   */
+  function describeCandidateGaps(evidence) {
+    const gaps = [];
+
+    if (evidence.readmeState === "missing") gaps.push("adding a README");
+    else if (evidence.readmeState === "short") gaps.push("expanding the short README");
+    else if (evidence.readmeState === "needs_structure") gaps.push("giving the README clear overview, setup, and usage sections");
+
+    if (evidence.description === 0) gaps.push("adding a description");
+    else if (evidence.description < 70) gaps.push("making the description more specific");
+
+    if (evidence.topics === 0) gaps.push("adding topics");
+    if (!evidence.license) gaps.push("adding a license");
+    if (evidence.stale) gaps.push("a more recent update");
+
+    return gaps;
+  }
+
+  /**
+   * describes why the evidence argues against prominent placement
+   * @param {Object} evidence candidacy evidence
+   * @returns {Array<string>} reason clauses
+   */
+  function describeCandidateWeaknesses(evidence) {
+    const reasons = [];
+
+    if (evidence.archived) reasons.push("it is archived");
+    if (evidence.abandoned) reasons.push("it has not been pushed to in more than three years");
+    if (evidence.readmeState === "missing") reasons.push("it has no README");
+
+    if (evidence.description === 0) reasons.push("it has no description");
+    else if (evidence.description < 70) reasons.push("its description does not distinguish the project");
+
+    if (evidence.topics === 0 && !evidence.license) reasons.push("it has neither topics nor a license");
+
+    if (reasons.length === 0 && evidence.highFindings >= 2) {
+      reasons.push("several high-priority presentation findings remain open");
+    }
+
+    return reasons;
+  }
+
+  /**
+   * states what is and is not known about who authored the repository
+   *
+   * GitHub's own fork flag is the only authorship signal available. The tool does
+   * not inspect commits, so it never claims that a fork contains no original work,
+   * and it never treats an unreported fork status as confirmed original work.
+   *
+   * @param {Object} evidence candidacy evidence
+   * @returns {string|null} authorship sentence, or null for confirmed original work
+   */
+  function describeCandidateOriginality(evidence) {
+    if (evidence.originality === "fork") {
+      return "GitHub identifies this repository as a fork, and GitProfileLens cannot determine how much of the implementation belongs to the profile owner.";
+    }
+    if (evidence.originality === "unknown") {
+      return "GitHub did not report fork status, so GitProfileLens cannot record this as confirmed original work.";
+    }
+    return null;
+  }
+
+  /**
+   * opens an explanation with what is known about authorship and presentation
+   *
+   * When authorship is not settled, that sentence leads, because it is the fact
+   * that decides the classification. Confirmed original work opens with its own
+   * strengths instead of an assertion about what it is not.
+   *
+   * @param {Object} evidence candidacy evidence
+   * @param {Array<string>} strengths strength clauses
+   * @returns {Array<string>} opening sentences
+   */
+  function openCandidateExplanation(evidence, strengths) {
+    const originality = describeCandidateOriginality(evidence);
+    if (originality) {
+      return [
+        originality,
+        strengths.length === 0 ? "It has limited supporting metadata." : `It presents ${joinCandidateClauses(strengths)}.`,
+      ];
+    }
+    return [strengths.length === 0
+      ? "Original repository with limited supporting metadata."
+      : `Original repository with ${joinCandidateClauses(strengths)}.`];
+  }
+
+  /**
+   * names the evidence the audit could not verify
+   * @param {Object} evidence candidacy evidence
+   * @returns {Array<string>} qualifying sentences
+   */
+  function qualifyCandidateEvidence(evidence) {
+    if (evidence.unknowns.length === 0) return [];
+    return [`GitProfileLens could not verify ${joinCandidateClauses(evidence.unknowns)} for this repository.`];
+  }
+
+  /**
+   * writes the explanation for a classification from the evidence behind it
+   * @param {string} label candidate label
+   * @param {Object} evidence candidacy evidence
+   * @returns {string} explanation
+   */
+  function explainCandidate(label, evidence) {
+    const strengths = describeCandidateStrengths(evidence);
+    const sentences = openCandidateExplanation(evidence, strengths);
+
+    if (label === "deemphasize") {
+      const reasons = describeCandidateWeaknesses(evidence);
+      if (reasons.length > 0) {
+        sentences.push(`It is a weak choice for prominent portfolio placement because ${joinCandidateClauses(reasons)}.`);
+      }
+      return sentences.concat(qualifyCandidateEvidence(evidence)).join(" ");
+    }
+
+    if (label === "polish") {
+      if (evidence.archived) {
+        sentences.push("It is archived, which makes it a weaker choice for prominent portfolio placement.");
+      }
+      const gaps = describeCandidateGaps(evidence);
+      if (gaps.length > 0) {
+        sentences.push(`${capitalizeClause(joinCandidateClauses(gaps))} would improve portfolio presentation.`);
+      }
+      return sentences.concat(qualifyCandidateEvidence(evidence)).join(" ");
+    }
+
+    if (evidence.private) {
+      sentences.push("Privacy does not count against the work; this is a strong candidate if you intend to publish or showcase the project.");
+    }
+    return sentences.join(" ");
+  }
+
+  /**
+   * classifies a repository as a portfolio candidate, separately from its score
+   *
+   * The score answers "how well does this repository present itself". This answers
+   * "is this a good repository to feature prominently", which is a different
+   * question: a polished fork, a well-kept archive, and a rough but original
+   * project can each score in a way their candidacy does not follow.
+   *
+   * @param {Object} audit repository audit carrying repository, score, category scores, and findings
+   * @returns {Object} label, title, explanation, evidence qualifier, and the evidence used
+   */
+  function classifyPortfolioCandidate(audit) {
+    const evidence = collectCandidateEvidence(audit);
+    const weaknesses = listCandidateWeaknesses(evidence);
+    const label = isStrongCandidate(evidence)
+      ? "strong"
+      : isDeemphasizedCandidate(evidence, weaknesses) ? "deemphasize" : "polish";
+
+    return {
+      label,
+      title: CANDIDATE_TITLES[label],
+      explanation: explainCandidate(label, evidence),
+      qualifier: evidence.unknowns.length > 0 ? INCOMPLETE_EVIDENCE_NOTE : null,
+      weaknesses,
+      evidence,
+    };
+  }
+
+  /**
    * calculates a repository presentation and discoverability audit
    * @param {Object} repository normalized repository data
    * @param {Date} now current date used for maintenance scoring
@@ -399,7 +761,7 @@
       maintenance.score * 0.15
     );
 
-    return {
+    const audit = {
       repository,
       score,
       categoryScores: {
@@ -411,6 +773,11 @@
       },
       findings,
     };
+
+    // Candidacy reads the finished audit and adds a field. It never feeds back
+    // into score, categoryScores, or findings, which stay exactly as computed.
+    audit.candidate = classifyPortfolioCandidate(audit);
+    return audit;
   }
 
   /**
@@ -678,6 +1045,7 @@
   }
 
   return {
+    classifyPortfolioCandidate,
     createReport,
     formatReadmeStatus,
     generateRecommendations,

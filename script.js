@@ -552,9 +552,12 @@ function setResultMode(mode) {
   privateExportNote.hidden = !privateMode;
   auditEyebrow.textContent = privateMode ? "Authorized repositories only" : "Lowest scores first";
   auditTitle.textContent = privateMode ? "Private Repository Audit" : "Repository audit";
-  ratingGuide.textContent = privateMode
-    ? "90–100 strong portfolio candidate · 70–89 worth polishing · below 70 needs presentation work"
-    : "90–100 strong · 70–89 minor improvements · below 70 needs attention";
+  // The score band describes presentation only, in both modes. Portfolio candidacy
+  // is a separate judgment shown per repository, so this guide never restates it as
+  // a band; the private guide used to, which made the band read as a candidacy rule.
+  ratingGuide.textContent =
+    "Presentation score: 90–100 strong · 70–89 minor improvements · below 70 needs attention. " +
+    "Portfolio candidacy is judged separately on each repository.";
 }
 
 /**
@@ -856,7 +859,6 @@ function createAuditCard(audit) {
   const facts = document.createElement("div");
   const readmeChecklist = createReadmeChecklist(repository.readme, audit.categoryScores.readme);
   const findings = document.createElement("div");
-  const candidate = document.createElement("p");
   card.className = "audit-card";
   header.className = "audit-card-header";
   link.href = repository.url;
@@ -908,21 +910,55 @@ function createAuditCard(audit) {
     }
   }
 
-  card.append(header, description, facts);
-  if (appState.mode === "private") {
-    candidate.className = "candidate-label";
-    candidate.textContent = repository.fork === true
-      ? "Forked repository · score reflects repository presentation, not authorship"
-      : audit.score >= 90
-        ? "Strong portfolio candidate"
-        : audit.score >= 70
-          ? "Worth polishing before publishing"
-          : "Needs presentation work before publishing";
-    card.appendChild(candidate);
-  }
+  card.append(header, description, facts, createCandidatePanel(audit.candidate));
   if (readmeChecklist) card.appendChild(readmeChecklist);
   card.appendChild(findings);
   return card;
+}
+
+/** Badge modifier for each portfolio candidate label. */
+const CANDIDATE_CLASSES = {
+  strong: "is-strong",
+  polish: "is-polish",
+  deemphasize: "is-deemphasize",
+};
+
+/**
+ * creates the portfolio candidacy panel for a repository audit
+ *
+ * Candidacy is shown in both public and private mode, and is deliberately styled
+ * apart from the score pill, the factual metadata badges, and finding severity,
+ * because it answers a different question from any of them: whether this is a
+ * good repository to put in front of a visitor first.
+ *
+ * @param {Object} candidate portfolio candidate classification
+ * @returns {HTMLElement} candidacy panel
+ */
+function createCandidatePanel(candidate) {
+  const panel = document.createElement("section");
+  const header = document.createElement("div");
+  const label = document.createElement("span");
+  const eyebrow = document.createElement("span");
+  const explanation = document.createElement("p");
+  panel.className = "candidate-panel";
+  header.className = "candidate-header";
+  eyebrow.className = "candidate-eyebrow";
+  eyebrow.textContent = "Portfolio candidacy";
+  label.className = `candidate-badge ${CANDIDATE_CLASSES[candidate.label]}`;
+  label.textContent = candidate.title;
+  header.append(eyebrow, label);
+
+  if (candidate.qualifier) {
+    const qualifier = document.createElement("span");
+    qualifier.className = "candidate-qualifier";
+    qualifier.textContent = candidate.qualifier;
+    header.appendChild(qualifier);
+  }
+
+  explanation.className = "candidate-explanation";
+  explanation.textContent = candidate.explanation;
+  panel.append(header, explanation);
+  return panel;
 }
 
 /**
