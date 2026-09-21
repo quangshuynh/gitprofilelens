@@ -894,7 +894,7 @@ test("a network failure is retryable without refetching on every tab switch", { 
   }
 });
 
-test("five result tabs stay keyboard navigable and fit a mobile viewport", { skip: !chromePath }, async () => {
+test("six result tabs stay keyboard navigable and fit a mobile viewport", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -909,7 +909,12 @@ test("five result tabs stay keyboard navigable and fit a mobile viewport", { ski
   await page.goto(`${baseUrl}/?user=example`);
   await page.locator("#result-section").waitFor({ state: "visible" });
 
-  // Roving tabindex and arrow keys must still work with a fifth tab present.
+  // Roving tabindex and arrow keys must still work with a sixth tab present.
+  assert.deepEqual(
+    await page.locator(".tabs .tab").evaluateAll((tabs) => tabs.map((tab) => tab.dataset.tab)),
+    ["overview", "audit", "repositories", "network", "pinned", "markdown"]
+  );
+
   await page.locator("#repositories-tab").click();
   assert.equal(await page.locator("#repositories-tab").getAttribute("tabindex"), "0");
   await page.locator("#repositories-tab").press("ArrowRight");
@@ -919,10 +924,13 @@ test("five result tabs stay keyboard navigable and fit a mobile viewport", { ski
   assert.equal(await page.locator("#network-panel").isVisible(), true);
 
   await page.locator("#network-tab").press("ArrowRight");
+  assert.equal(await page.locator("#pinned-tab").getAttribute("aria-selected"), "true");
+  assert.equal(await page.locator("#pinned-panel").isVisible(), true);
+  await page.locator("#pinned-tab").press("ArrowRight");
   assert.equal(await page.locator("#markdown-tab").getAttribute("aria-selected"), "true");
   await page.locator("#markdown-tab").press("ArrowLeft");
-  assert.equal(await page.locator("#network-tab").getAttribute("aria-selected"), "true");
-  await page.locator("#network-tab").press("Home");
+  assert.equal(await page.locator("#pinned-tab").getAttribute("aria-selected"), "true");
+  await page.locator("#pinned-tab").press("Home");
   assert.equal(await page.locator("#overview-tab").getAttribute("aria-selected"), "true");
   await page.locator("#overview-tab").press("End");
   assert.equal(await page.locator("#markdown-tab").getAttribute("aria-selected"), "true");
@@ -1279,6 +1287,307 @@ test("disclosure controls are keyboard operable and wrap on mobile", { skip: !ch
   }
 });
 
+
+/**
+ * Repository fixtures for the pinned optimizer view.
+ *
+ * The set is built so that one profile exercises every advisory action at once:
+ * a pinned Strong candidate to keep, an unpinned Strong candidate to add, a
+ * pinned De-emphasize repository to replace, and an archived original and a fork
+ * that must both rank below confirmed active original work.
+ */
+const optimizerRepositories = [
+  repository,
+  {
+    ...repository,
+    name: "rust-engine",
+    full_name: "example/rust-engine",
+    html_url: "https://github.com/example/rust-engine",
+    description: "Deterministic layout engine with a documented plugin interface",
+    language: "Rust",
+    topics: ["rust", "layout-engine"],
+    homepage: null,
+  },
+  {
+    ...repository,
+    name: "retired-service",
+    full_name: "example/retired-service",
+    html_url: "https://github.com/example/retired-service",
+    description: "Retired ingestion service kept for reference and historical context",
+    language: "Python",
+    topics: ["python", "ingestion"],
+    homepage: null,
+    archived: true,
+  },
+  {
+    ...repository,
+    name: "upstream-tool",
+    full_name: "example/upstream-tool",
+    html_url: "https://github.com/example/upstream-tool",
+    description: "Command line tool for inspecting build graphs across large monorepos",
+    language: "Go",
+    topics: ["go", "build-tools"],
+    homepage: null,
+    fork: true,
+  },
+  {
+    ...repository,
+    name: "legacy-notes",
+    full_name: "example/legacy-notes",
+    html_url: "https://github.com/example/legacy-notes",
+    description: null,
+    language: "HTML",
+    topics: [],
+    license: null,
+    homepage: null,
+  },
+];
+
+test("pinned optimizer renders the recommended set, the current pins, and the difference", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  let repositoryRequests = 0;
+  page.on("request", (request) => {
+    if (/api\.github\.com|\/api\/pinned-repositories/.test(request.url())) repositoryRequests += 1;
+  });
+
+  await mockGithubRequests(page, optimizerRepositories, {
+    pinnedRepositories: ["portfolio-lens", "legacy-notes"],
+    readmes: { "legacy-notes": { present: false, size: null } },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  const requestsBeforeOptimizer = repositoryRequests;
+
+  // Scores captured before the tab is opened, so the optimizer can be shown not to
+  // move any of them.
+  const scoresBefore = await page.evaluate(() =>
+    Object.fromEntries(appState.audits.map((audit) => [audit.repository.name, audit.score])));
+
+  await page.getByRole("tab", { name: "Pinned optimizer" }).click();
+  await page.locator("#pinned-panel").waitFor({ state: "visible" });
+  assert.equal(new URL(page.url()).searchParams.get("view"), "pinned");
+
+  // Opening the optimizer costs no additional GitHub request.
+  assert.equal(repositoryRequests, requestsBeforeOptimizer);
+  assert.deepEqual(await page.evaluate(() =>
+    Object.fromEntries(appState.audits.map((audit) => [audit.repository.name, audit.score]))), scoresBefore);
+
+  assert.match(await page.locator("#pinned-summary").innerText(), /4 of up to 6 slots recommended, from 4 eligible repositories/);
+
+  const recommended = page.locator("#pinned-recommended-list .pinned-card");
+  assert.deepEqual(
+    await recommended.locator(".pinned-card-name").allInnerTexts(),
+    ["1\nportfolio-lens", "2\nrust-engine", "3\nretired-service", "4\nupstream-tool"]
+  );
+  assert.deepEqual(
+    await recommended.locator(".candidate-badge").allInnerTexts(),
+    ["Strong candidate", "Strong candidate", "Worth polishing", "Worth polishing"]
+  );
+  assert.match(await recommended.first().locator(".pinned-score").innerText(), /Presentation score: \d+/);
+
+  // Rationale is visible without expanding anything.
+  const rustReasons = await recommended.nth(1).locator(".pinned-reasons").innerText();
+  assert.match(rustReasons, /Classified Strong candidate/);
+  assert.match(rustReasons, /Adds Rust, which no other recommended repository represents/);
+
+  const archivedReasons = await recommended.nth(2).locator(".pinned-reasons").innerText();
+  assert.match(archivedReasons, /It is archived, so it is recommended below comparable active repositories/);
+
+  const forkReasons = await recommended.nth(3).locator(".pinned-reasons").innerText();
+  assert.match(forkReasons, /GitHub identifies this repository as a fork/);
+  assert.match(forkReasons, /cannot determine how much of the implementation belongs to the profile owner/);
+  assert.doesNotMatch(forkReasons, /did no work|no original work/i);
+
+  // Current pinned set, marked against the recommendation.
+  assert.match(await page.locator("#pinned-current-note").innerText(), /GitHub reports 2 pinned repositories/);
+  assert.deepEqual(
+    await page.locator("#pinned-current-list .pinned-current-item").allInnerTexts(),
+    ["✓\nportfolio-lens\nIn the recommended set", "✕\nlegacy-notes\nNot in the recommended set"]
+  );
+
+  // Suggested changes.
+  const changes = page.locator("#pinned-changes-list .pinned-change");
+  assert.deepEqual(await changes.locator(".pinned-action").allInnerTexts(),
+    ["Keep", "Consider replacing", "Consider adding", "Consider adding"]);
+  const replacement = changes.nth(1);
+  assert.equal(await replacement.locator("strong").innerText(), "legacy-notes");
+  const replacementText = await replacement.locator("p").innerText();
+  assert.match(replacementText, /Consider replacing legacy-notes with rust-engine/);
+  assert.match(replacementText, /rust-engine is classified Strong candidate and adds Rust/);
+  assert.match(replacementText, /while legacy-notes did not meet the recommendation criteria/);
+  assert.doesNotMatch(replacementText, /\bis better\b|\bbad\b|remove immediately/i);
+
+  // Repositories that were never considered, and why.
+  assert.equal(await page.locator("#pinned-excluded-section").isVisible(), true);
+  assert.match(await page.locator("#pinned-excluded-list").innerText(), /Classified De-emphasize/);
+  assert.match(await page.locator("#pinned-excluded-list").innerText(), /legacy-notes/);
+  assert.equal(await page.locator("#pinned-private-section").isHidden(), true);
+
+  // Methodology lists only the signals the optimizer actually uses.
+  const methodology = page.locator("#pinned-panel .methodology");
+  assert.equal(await methodology.locator("summary").innerText(), "How recommendations are chosen");
+  await methodology.locator("summary").click();
+  const methodologyText = await methodology.innerText();
+  assert.match(methodologyText, /portfolio candidacy first/);
+  assert.match(methodologyText, /confirmed original work ahead of unreported fork status/);
+  assert.match(methodologyText, /active work ahead of archived work/);
+  assert.match(methodologyText, /only set-level signals it uses are primary language and topic overlap/);
+  assert.match(methodologyText, /never evidence that a repository deserves to be recommended/);
+
+  // Navigation to the repository's own audit card.
+  await recommended.nth(1).getByRole("button", { name: "View repository audit" }).click();
+  assert.equal(await page.locator("#audit-panel").isVisible(), true);
+  assert.equal(await page.locator("#audit-tab").getAttribute("aria-selected"), "true");
+  const highlighted = page.locator(".audit-card.is-highlighted");
+  assert.equal(await highlighted.count(), 1);
+  assert.match(await highlighted.innerText(), /rust-engine/);
+
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("pinned optimizer recommends fewer than six and says why", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page, [repository, optimizerRepositories[4]], {
+    pinnedRepositories: ["portfolio-lens"],
+    readmes: { "legacy-notes": { present: false, size: null } },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=pinned`);
+  await page.locator("#pinned-panel").waitFor({ state: "visible" });
+
+  assert.equal(await page.locator("#pinned-recommended-list .pinned-card").count(), 1);
+  const shortfall = page.locator("#pinned-shortfall");
+  assert.equal(await shortfall.isVisible(), true);
+  assert.match(await shortfall.innerText(), /found one repository that currently meets the recommendation criteria/);
+  assert.match(await shortfall.innerText(), /does not recommend filling the remaining slots with weaker candidates/);
+
+  // Pins already match, so nothing is manufactured.
+  assert.equal(await page.locator("#pinned-changes-list .pinned-change").count(), 0);
+  assert.match(await page.locator("#pinned-changes-note").innerText(),
+    /already match the optimizer's recommended set/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("pinned optimizer reports unverified pin metadata as unknown", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mockGithubRequests(page);
+  await page.route("**/api/pinned-repositories?username=example", (route) =>
+    route.fulfill({ status: 503, json: { error: "The GitHub API token is not configured." } }));
+
+  await page.goto(`${baseUrl}/?user=example&view=pinned`);
+  await page.locator("#pinned-panel").waitFor({ state: "visible" });
+
+  assert.match(await page.locator("#pinned-current-note").innerText(),
+    /could not verify which repositories this profile pins/);
+  assert.equal(await page.locator("#pinned-current-list li").count(), 0);
+  assert.match(await page.locator("#pinned-changes-note").innerText(),
+    /Pinned repository data was unavailable, so there is nothing to compare/);
+
+  // The recommendation still stands, and every entry names what was unverified.
+  assert.ok(await page.locator("#pinned-recommended-list .pinned-card").count() > 0);
+  assert.match(await page.locator("#pinned-recommended-list").innerText(), /could not verify README status/);
+
+  const dimensions = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+  }));
+  assert.ok(dimensions.content <= dimensions.viewport,
+    `page width ${dimensions.content}px exceeds ${dimensions.viewport}px viewport`);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("authorized audit separates strong private work from the publicly pinnable set", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  const privateRepository = {
+    ...repository,
+    name: "internal-platform",
+    full_name: "example/internal-platform",
+    html_url: "https://github.com/example/internal-platform",
+    description: "Internal deployment platform with documented runbooks and topics",
+    language: "Go",
+    topics: ["go", "platform"],
+    homepage: null,
+    private: true,
+    visibility: "private",
+  };
+
+  await mockGithubRequests(page, [repository], { pinnedRepositories: ["portfolio-lens"] });
+  await page.route("**/api/auth/session", (route) => route.fulfill({
+    json: {
+      authenticated: true,
+      user: { login: "example", avatar_url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' fill='%2358a6ff'/%3E%3C/svg%3E" },
+    },
+  }));
+  await page.route("**/api/private-repositories", (route) => route.fulfill({
+    json: {
+      installation: true,
+      repositories: [privateRepository, repository],
+      public_repositories: [repository],
+      readmes: { "internal-platform": readme, "portfolio-lens": readme },
+      metadata: { complete: true },
+    },
+  }));
+
+  await page.goto(baseUrl);
+  await page.locator("#home-signed-in-auth").waitFor({ state: "visible" });
+  await page.locator("#home-private-audit-button").click();
+  await page.locator("#audit-title").filter({ hasText: "Private Repository Audit" }).waitFor();
+
+  await page.getByRole("tab", { name: "Pinned optimizer" }).click();
+  await page.locator("#pinned-panel").waitFor({ state: "visible" });
+
+  // The private repository is a Strong candidate, and is kept out of the set that
+  // a public profile could actually pin.
+  assert.equal(await page.evaluate(() =>
+    appState.audits.find((audit) => audit.repository.name === "internal-platform").candidate.label), "strong");
+  assert.deepEqual(
+    await page.locator("#pinned-recommended-list .pinned-card .pinned-card-name").allInnerTexts(),
+    ["1\nportfolio-lens"]
+  );
+
+  const privateSection = page.locator("#pinned-private-section");
+  assert.equal(await privateSection.isVisible(), true);
+  const privateText = await privateSection.innerText();
+  assert.match(privateText, /internal-platform/);
+  assert.match(privateText, /Strong candidate · not publicly pinnable/);
+  assert.match(privateText, /A public GitHub profile cannot pin them/);
+  assert.doesNotMatch(privateText, /make (it|them) public|publish (it|them)/i);
+
+  assert.match(await page.locator("#pinned-excluded-list").innerText(),
+    /Private, so it cannot be featured on a public GitHub profile/);
+
+  // Private repository names never reach the shared audit URL.
+  assert.doesNotMatch(page.url(), /internal-platform/);
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 /**
  * builds one raw github account entry
  * @param {string} login github login
@@ -1381,7 +1690,10 @@ async function mockGithubRequests(page, repositories = [repository, secondReposi
     route.fulfill({
       json: {
         repositories: options.pinnedRepositories || (repositories.length ? [repository.name] : []),
-        readmes: Object.fromEntries(repositories.map((item) => [item.name, readme])),
+        readmes: {
+          ...Object.fromEntries(repositories.map((item) => [item.name, readme])),
+          ...options.readmes,
+        },
       },
     })
   );

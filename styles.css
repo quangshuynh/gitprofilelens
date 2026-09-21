@@ -190,6 +190,38 @@ button.secondary { border-color: #30363d; background: #21262d; }
 .candidate-qualifier { padding: 3px 8px; border: 1px dashed #4d5560; border-radius: 99px; color: #8b949e; font-size: .68rem; font-weight: 700; }
 .candidate-explanation { margin: 0; color: #b1bac4; font-size: .84rem; line-height: 1.5; }
 .repository-card p:not(.repo-meta-line) { margin: 7px 0 0; color: #b1bac4; line-height: 1.45; }
+.audit-card.is-highlighted { border-color: #58a6ff; box-shadow: 0 0 0 1px rgba(88,166,255,.35); }
+
+#pinned-panel h3 { margin-bottom: 10px; font-size: 1.02rem; }
+#pinned-panel .section-block { margin-top: 30px; }
+.pinned-list, .pinned-changes, .pinned-excluded { display: grid; gap: 10px; }
+.pinned-card { padding: 15px 17px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+.pinned-card-header { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.pinned-card-name { display: flex; align-items: center; gap: 9px; margin: 0; font-size: .96rem; }
+.pinned-position { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 99px; background: #21262d; color: #8b949e; font-size: .72rem; font-weight: 800; }
+.pinned-score { color: #8b949e; font-size: .74rem; font-weight: 700; white-space: nowrap; }
+.pinned-reasons { margin: 10px 0 0; padding-left: 18px; color: #b1bac4; font-size: .82rem; line-height: 1.5; }
+.pinned-reasons li + li { margin-top: 4px; }
+.pinned-audit-link { margin-top: 12px; padding: 6px 11px; font-size: .76rem; }
+.pinned-current { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.pinned-current-item { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 9px 13px; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; font-size: .86rem; }
+.pinned-marker { font-weight: 800; }
+.pinned-marker.is-kept { color: #3fb950; }
+.pinned-marker.is-outgoing { color: #d29922; }
+.pinned-status { margin-left: auto; color: #8b949e; font-size: .76rem; }
+.pinned-change { padding: 14px 16px; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; }
+.pinned-change-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 8px; }
+/* Deliberately not uppercased: these are advisory suggestions, and "CONSIDER
+   REPLACING" reads as an instruction rather than a suggestion. */
+.pinned-action { padding: 3px 10px; border-radius: 99px; font-size: .72rem; font-weight: 800; white-space: nowrap; }
+.pinned-action.is-keep { background: rgba(63,185,80,.14); color: #56d364; }
+.pinned-action.is-polish { background: rgba(88,166,255,.14); color: #79c0ff; }
+.pinned-action.is-add { background: rgba(210,168,255,.13); color: #d2a8ff; }
+.pinned-action.is-replace { background: rgba(210,153,34,.16); color: #e3b341; }
+.pinned-change p { margin: 0; color: #b1bac4; font-size: .84rem; line-height: 1.5; }
+.pinned-excluded-group { padding: 12px 15px; border: 1px solid #30363d; border-radius: 9px; background: #0d1117; }
+.pinned-excluded-reason { margin: 0 0 5px; color: #c9d1d9; font-size: .84rem; line-height: 1.5; }
+#pinned-private-section[hidden], #pinned-excluded-section[hidden], #pinned-shortfall[hidden], #pinned-changes-note[hidden] { display: none; }
 
 .export-heading { align-items: center; }
 .actions { display: flex; gap: 8px; }
@@ -253,6 +285,10 @@ textarea:focus { border-color: #58a6ff; }
   .category-scores { grid-template-columns: 1fr; }
   .summary-text { text-align: left; }
   .audit-card { padding: 16px; }
+  .pinned-card, .pinned-change { padding: 14px; }
+  .pinned-score { width: 100%; }
+  .pinned-status { width: 100%; margin-left: 0; }
+  .pinned-audit-link { width: 100%; }
   .repo-score { align-self: flex-start; }
   .repository-card-heading { flex-direction: column; gap: 4px; }
   .actions { width: 100%; }

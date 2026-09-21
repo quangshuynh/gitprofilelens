@@ -29,6 +29,7 @@ Enter any GitHub username without signing in. The public audit:
 - Audits names, descriptions, READMEs, topics, licenses, demos, and maintenance.
 - Ranks actionable portfolio recommendations.
 - Classifies each repository as a portfolio candidate, separately from its score.
+- Recommends a pinned repository set, and shows how it differs from the current pins.
 - Supports shareable `?user=USERNAME` links and downloadable score cards.
 - Explores public repository metadata and exports it to Markdown.
 - Provides the public JSON endpoint `GET /api/report?user=USERNAME`.
@@ -42,6 +43,7 @@ Sign in with GitHub and install the GitHub App on all or selected repositories. 
 - Reuses the deterministic repository presentation checks.
 - Labels each repository as Private or Public.
 - Applies the same portfolio candidacy classification used by the public audit, so private work can be evaluated as a potential portfolio project.
+- Recognizes strong private work in the pinned optimizer while keeping it out of the set a public profile could pin.
 - Exports Markdown containing public repositories, authorized private repositories, or both.
 
 Private repositories never affect the public GitHub Profile Score. Private identifiers are not included in public URLs, score cards, public metadata endpoints, or `/api/report`. Private details enter Markdown only when the authenticated user explicitly selects a private or combined export.
@@ -100,6 +102,22 @@ The label is **not** a score band. A fork can score 100 and still be Worth polis
 - **Unavailable metadata.** Unknown is never treated as missing. An unverified README is never described as absent, and unavailable evidence cannot push a repository toward De-emphasize. It does prevent an outright Strong claim, which is shown as `Some metadata unavailable`.
 
 Candidacy is derived from the finished audit and never changes the score. Classification does not read source code, commit ownership, upstream divergence, or contribution share, and requires no additional GitHub permissions.
+
+## Pinned repository optimizer
+
+GitHub profiles pin up to six repositories. The **Pinned optimizer** tab answers a third question, separate from both the score and per-repository candidacy: **which combination of repositories forms the strongest portfolio set?**
+
+It shows the recommended set, what GitHub currently reports as pinned, and the difference between them as advisory actions — Keep, Polish first, Consider adding, Consider replacing. When the current pins already match the recommendation, it says so instead of manufacturing a change.
+
+- **Up to six, never padded.** A profile with three repositories meeting the criteria is told that, and is not offered three weak ones to fill the remaining slots.
+- **Eligibility comes before ranking.** A high score alone does not qualify a repository. De-emphasized repositories, repositories with an open high-priority finding, and repositories with no verified description or README content are excluded, with the reason shown.
+- **Rules, not a hidden score.** Selection is a fixed lexicographic order: candidacy, then confirmed original work over unreported fork status over a GitHub-identified fork, then active over archived, then how much a repository repeats the set so far, then presentation score, maintenance, verified metadata, and finally name. There is no internal utility number.
+- **Diversity is evidence, not a target.** Only primary language and topic overlap are compared. GitProfileLens has no reliable project or domain categories and does not invent any. A repository with no reported language or no topics earns no breadth claim and takes no penalty for it.
+- **Private work is separated, not judged.** A private repository can be strong portfolio work and still be something a public profile cannot pin. Both are stated, and publishing is never suggested.
+- **Every recommendation is explained** from that repository's own evidence, and a replacement explains the actual difference rather than asserting that one repository is better.
+- **No circularity.** Current pin state is used only for the comparison, never as evidence that a repository deserves to be recommended.
+
+Opening the tab issues no additional GitHub request: it runs over the audit already in memory and changes no score.
 
 [docs/scoring.md](docs/scoring.md) documents every rule and weight, the full candidacy rules, what the score intentionally does not measure, known limitations, and how to change scoring safely.
 
@@ -256,7 +274,9 @@ gitprofilelens/
 |   `-- report.js                    # public-only JSON report endpoint
 |-- tests/                            # unit, API, security, and browser tests
 |-- audit.js                          # deterministic scoring and normalization
+|-- pinned-optimizer.js               # deterministic pinned repository set selection
 |-- index.html                        # accessible application structure
+|-- evaluation/                       # corpus scoring and pinned recommendation reports
 |-- network-export.js                 # follower and following retrieval, derivation, and Markdown
 |-- share.js                          # pure sharing and score-card helpers
 |-- script.js                         # browser state, fetching, rendering, and isolation
@@ -272,9 +292,11 @@ The public supplemental endpoints may cache successful public responses briefly.
 npm test
 npm run check
 npm run test:browser
+npm run eval
+npm run eval:pins
 ```
 
-Tests cover deterministic scoring, portfolio candidacy classification, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs.
+Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs.
 
 ## Deployment options
 
@@ -294,6 +316,8 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - The private view currently focuses on repositories owned by the signed-in user, not organization administration.
 - Private report APIs, saved audits, and combined public/private scores are intentionally excluded. Private Markdown export is available only through the authenticated browser view.
 - README structure and size are presentation signals and cannot determine writing or implementation quality.
+- The pinned optimizer reasons about set diversity using only primary language and topic overlap. GitProfileLens has no reliable project or domain categories and does not infer any from README prose.
+- The pinned optimizer is a browser feature. The recommended set is not part of any Markdown export.
 - A public share URL re-fetches current public data; no audit snapshot is stored.
 - The Network tab sees only what GitHub's public API returns. Accounts GitHub does not expose publicly are not retrievable, and lists can change between the profile request and the last page.
 - The Network tab retrieves at most 10,000 accounts per list; a larger network is reported as incomplete rather than silently truncated. It is available for public audits only, not the private repository audit.

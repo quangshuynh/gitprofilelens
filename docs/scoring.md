@@ -36,6 +36,14 @@ raw GitHub REST repositories + supplemental metadata
 
 `scoreRepository` also attaches a portfolio candidate classification to each audit. It is derived from the finished audit and never changes it. See [Portfolio candidacy](#portfolio-candidacy).
 
+The interface adds a fifth step that is not part of scoring:
+
+```text
+  -> optimizePinnedSet(audits)                       pinned-optimizer.js
+```
+
+It reads finished audits and writes to none of them. See [Pinned repository optimization](#pinned-repository-optimization).
+
 `supplemental` carries README structure and the pinned repository list from the serverless metadata endpoint. It is `null` on deployments where that endpoint is unavailable, which is a distinct state from "the repository has no README". See [Unknown is not the same as absent](#unknown-is-not-the-same-as-absent).
 
 Every function is deterministic given its inputs and the injected `now`. `scoreRepository` defaults `now` to `new Date()`, so production maintenance scores drift with wall-clock time; the evaluation corpus pins the date instead.
@@ -217,6 +225,8 @@ Two rules, both requiring verified pin metadata:
 
 Pinning is the single highest-leverage presentation control GitHub offers: it decides what a visitor sees before they scroll. Six is GitHub's own limit.
 
+This advice is separate from, and unchanged by, the [pinned repository optimizer](#pinned-repository-optimization). Pin advice ranks individual repositories by score inside the recommendation list; the optimizer selects a whole set from candidacy and factual evidence. Where they disagree, they are answering different questions, and neither was rewritten to agree with the other.
+
 ---
 
 ## Portfolio candidacy
@@ -345,6 +355,152 @@ The two operate at different levels. Focus asks whether the account as a whole r
 * Never let unknown evidence act as a weakness. That is the difference between "we could not check" and "it is not there", and the whole design depends on it.
 * Every explanation clause must be backed by a signal that is true for that repository. `tests/audit.test.js` enforces this with a claim-to-evidence table; add a row when adding a clause.
 * Candidacy is not recorded in `evaluation/baseline.json`, so `npm run eval` will not show a candidacy change. `tests/scoring/candidates.test.js` is the only corpus-wide guard. Update it deliberately.
+
+---
+
+## Pinned repository optimization
+
+The optimizer answers a third question, distinct from the two above it.
+
+| | Repository score | Portfolio candidacy | Pinned optimizer |
+| --- | --- | --- | --- |
+| Question | How well does this repository present itself? | Is this a good repository to feature prominently? | Which combination of repositories forms the strongest set? |
+| Scope | One repository | One repository | The whole set |
+| Output | 0–100 | `Strong candidate`, `Worth polishing`, `De-emphasize` | Up to six repositories, with the reason each entered |
+| Computed by | `scoreRepository` (audit.js) | `classifyPortfolioCandidate` (audit.js) | `optimizePinnedSet` (pinned-optimizer.js) |
+
+**The optimizer is not another repository score.** It reads finished audits and writes to none of them. No repository score, category score, finding, or candidacy label moves when it runs, which is asserted for every constructed fixture and for every corpus profile.
+
+**GitProfileLens recommends a portfolio set from observable repository presentation and metadata. It does not measure engineering ability and does not determine how much code a profile owner authored within a fork.**
+
+### The pin limit
+
+GitHub's profile documentation states the limit directly: "Select up to six repositories and gists, combined." Six is therefore the invariant, and the product already encoded it in three places before this feature existed — `pinnedItems(first: 6)` in `api/github-metadata.js`, the `pinnedAudits.length < 6` gate in pin advice, and `MAXIMUM_PINNED_REPOSITORIES` in the corpus fixture builder. `pinned-optimizer.js` now carries the same constant with the documentation quoted beside it.
+
+The optimizer recommends **up to** six, never exactly six. A profile with three repositories that meet the criteria is told so and is not offered three weak ones to fill the remaining slots.
+
+### Eligibility
+
+Eligibility is decided before any ranking, from candidacy and fact. A numeric score never makes a repository eligible.
+
+| | Rule | Why |
+| --- | --- | --- |
+| E1 | Not classified `De-emphasize` | The label already states that this repository is a weak choice for prominent placement. No edge case in the corpus overrides it; the optimizer prefers recommending fewer. |
+| E2 | Something verified that a visitor can read: a description scoring at least 70, or a README verified `present` or `comprehensive` | A pin is an affirmative claim that a visitor should look here first, and that claim needs something they can actually read. |
+| E3 | No open `high` presentation finding on a `Worth polishing` repository | "Polish first" is only useful advice when the gap is minor. A high-severity gap is not. |
+| E4 | Public | A private repository cannot be featured on a public profile. See [Private repositories](#private-repositories-in-the-optimizer). |
+
+Rules are evaluated in that order, so each repository is reported under the reason that explains the most about it. Excluded repositories are listed in the interface with their reason, never silently dropped.
+
+Note what is **not** an eligibility rule: archive status, fork status, and presentation score. Archived and forked repositories are eligible and are handled by ranking instead.
+
+### Selection
+
+Selection is greedy and lexicographic. There is **no internal utility score**: no weighted sum, no tuned coefficients, nothing that produces a number a user could mistake for a second repository score. Each step re-measures every remaining candidate against the set built so far and applies one total order:
+
+1. **Candidacy tier.** Every `Strong candidate` is considered before any `Worth polishing` repository.
+2. **Originality.** Confirmed original, then unreported fork status, then GitHub-identified fork.
+3. **Archive status.** Active before archived.
+4. **Redundancy.** Fewer earned breadth credits last; see below.
+5. **Presentation score**, highest first.
+6. **Maintenance score**, highest first.
+7. **Verified metadata count**: topics, license, homepage, a comprehensive README, a description scoring 100.
+8. **Repository name**, ascending, compared without locale collation.
+
+Rule 8 makes the order total, so the recommendation never depends on the order GitHub returned repositories in. Reversing the audit array changes nothing, which is asserted across the whole corpus.
+
+Because redundancy sits at rule 4, breadth can never promote a lower candidacy tier, a fork over an original, or an archive over an active repository. It only chooses among repositories that rules 1 through 3 already consider equally suitable.
+
+### Redundancy and diversity
+
+Only signals GitHub reports directly are compared. **GitProfileLens has no reliable project or domain categories, so it does not invent any.** There is no "backend", "mobile", or "DevOps" inference from README prose, and adding one would need an explicit, testable categorization step that does not exist yet.
+
+Two signals are used:
+
+* **Primary language.** A repository earns a breadth credit when it declares a language no already-selected repository declares.
+* **Topics.** A repository earns a breadth credit when it declares topics and shares fewer than two of them with any already-selected repository. Two is deliberately conservative: GitHub topics are author-chosen keywords, not a taxonomy, and one shared topic such as `python` says very little.
+
+Breadth is a **credit earned by verified distinctness**, never by absent data. A repository with no reported language and one with no topics earn no credit, because neither can demonstrate that it widens the set — the same rule candidacy applies to unknown evidence. It is not a penalty either: an unknown signal ranks exactly with a repeated one, never below it.
+
+Homepage presence is recorded but is **not** a redundancy dimension. Two repositories both linking a demo is not a portfolio story overlap, so a homepage counts toward verified metadata at rule 7 and appears in an entry's reasons, and nothing more.
+
+Language diversity is supporting evidence, not the goal. Six repositories in one language are not automatically a worse set than six in six languages, and the tie-break order above is what stops breadth from displacing substantially better-supported work.
+
+### Forks
+
+A GitHub-identified fork is eligible and is ranked below confirmed original work. It is never penalized in its presentation score, and the optimizer never claims the owner did no work in it. Every fork that enters a set carries the same sentence candidacy uses:
+
+> GitHub identifies this repository as a fork, and GitProfileLens cannot determine how much of the implementation belongs to the profile owner.
+
+A fork therefore cannot displace a confirmed original of comparable standing on score alone, which is what rule 2 exists for. It can still fill a set when nothing else is eligible: `fork-dominated` has no eligible original repositories at all, and receives six forks, each stating that limit.
+
+Unreported fork status (`fork: null`) sits between the two. It is not recorded as confirmed original work and is not treated as a confirmed fork.
+
+### Archived repositories
+
+Archived repositories are eligible, are ranked below active ones, and keep their scores exactly as computed — archiving still raises maintenance to 85. An entry that made the set says so:
+
+> It is archived, so it is recommended below comparable active repositories.
+
+In `archive-heavy`, `legacy-api-gateway` scores above the active `bench-suite` and is recommended after it, which is the whole point of rule 3.
+
+### Private repositories in the optimizer
+
+Privacy is not a quality judgment and is not a candidacy input. A private repository can be a `Strong candidate`, and the optimizer keeps that judgment intact while separating two different statements:
+
+* **Recommended portfolio project** — the work reads well.
+* **Currently pinnable on a public GitHub profile** — a visitor can actually see it.
+
+Private repositories are excluded from the recommended set and reported in their own section as strong work a public profile cannot pin. Nothing suggests publishing them. This section can only appear in the authenticated audit, because a public audit never sees a private repository.
+
+### Missing evidence
+
+Unknown evidence stays neutral, exactly as in candidacy. An unverified README is not a missing README and never pushes a repository out of the set on its own. What it does do is prevent affirmative claims: an entry with unverifiable evidence carries the `Some metadata unavailable` qualifier and a reason naming what could not be verified.
+
+Pin state is a tri-state. When the supplemental metadata endpoint is unavailable, no repository reports a verified pin state, and the optimizer reports the current set as **unknown** rather than as empty. No comparison is offered, and the recommendation is unaffected. `unverified-metadata` covers this path.
+
+### Current versus recommended
+
+The useful output is the difference, not a list of six names. Four advisory actions are used, and none of them is phrased as an instruction or a verdict on the work:
+
+| Action | When |
+| --- | --- |
+| `Keep` | Pinned and in the recommended set, with no named gaps |
+| `Polish first` | Pinned and in the recommended set, with gaps the audit actually named |
+| `Consider adding` | Recommended, not pinned, with nothing to replace |
+| `Consider replacing` | Pinned, not recommended |
+
+A replacement states the difference rather than asserting that one repository is better:
+
+> Consider replacing legacy-notes with rust-engine. rust-engine is classified Strong candidate and adds Rust, which no other recommended repository represents, while legacy-notes did not meet the recommendation criteria.
+
+When a pinned repository has no comparable suggestion to take its place, that is said plainly instead of inventing one. When the current pins already match the recommendation, as in `oss-maintainer`, the interface says so and produces no changes. Pin **order** is never treated as a difference: GitHub pin order is the owner's own arrangement, so the two sets are compared as sets.
+
+### No circularity
+
+Current pin state is read in exactly one place, `readCurrentPins`, and used for exactly one purpose: the comparison. It is never evidence that a repository deserves to be recommended, which is what would otherwise make a recommendation self-reinforcing once acted on. Candidacy excludes pin state for the same reason and continues to.
+
+This is asserted behaviorally rather than by inspection: for every corpus profile, re-running the optimizer with every repository pinned, and again with none pinned, must produce the identical recommended set.
+
+### Relationship to portfolio focus (F2)
+
+The optimizer does **not** read `scorePortfolioFocus`, `scoreProfile`, or any profile-level score. [F2](#f2-forking-counts-as-curation) records that focus awards a curation bonus for archived and forked repositories while candidacy counts both as weaknesses. Feeding a profile-level score that rewards those two flags into a set selection built from repository-level candidacy that penalizes them would make the disagreement compound instead of resolve. F2 is unchanged and remains open on its own terms; the optimizer simply is not one of its consumers.
+
+### Limitations
+
+* **No project or domain categories.** Set-level reasoning is limited to language and topic overlap. A later interval could introduce explicit, deterministic project categorization; until then, the tool does not guess at one.
+* **Topics are author-chosen.** Topic overlap is a hint about how two repositories read, not a statement about what they do.
+* **Primary language is GitHub's own byte-count heuristic.** A polyglot repository reports one language, and the optimizer inherits that simplification.
+* **Nothing is known about goals.** The tool cannot know which work someone wants to be known for, which is why every output is advisory.
+* **Markdown export is untouched.** The optimizer is a UI feature in this interval. Exporting the recommended set is a possible later enhancement and was deliberately left out rather than bolted onto the existing repository export.
+
+### Changing the optimizer safely
+
+* Keep it lexicographic. If a weighted utility value ever becomes necessary, it must have documented components, a test per component, and must not be shown as a score.
+* Never let unknown evidence earn a breadth credit or act as a weakness.
+* Never read pin state outside the comparison.
+* Never read a profile-level score.
+* Run `npm run eval:pins` and inspect every changed line before recording a new baseline. Recommendations are not scoring outcomes, so `npm run eval` will not show them.
 
 ---
 
@@ -515,6 +671,7 @@ Renaming an action string changes the recommendation's identity because the eval
 | `expectations.js`                                                                               | Band and advice assertions that print the full ranked advice list on failure                |
 | `harness.test.js` (9), `personas.test.js` (32), `edge-cases.test.js` (9), `report.test.js` (15) | 65 scoring tests                                                                            |
 | `candidates.test.js` (10)                                                                       | Portfolio candidacy across the corpus, including the fork, archive, private, and unverified falsification cases |
+| `pinned-sets.test.js` (12)                                                                      | Pinned optimizer across the corpus: de-emphasize, private, fork, archive, shortfall, already-optimal, determinism, and the no-circularity property |
 
 Fixtures are authored at the **raw REST payload** boundary, so `transformRepository` stays inside the tested surface.
 
@@ -620,3 +777,17 @@ fork-dominated  overall 86 -> 86 (0)
 No score moved because pin advice is not scored. One profile changed because only one persona has fork pin candidates. The `+` line is not new advice. It is advice promoted into the top five by the removal above it.
 
 **Anything you cannot explain is the interesting result.** A profile moving when your change should not have touched it, or a profile not moving when it should have, is worth understanding before committing.
+
+### Evaluating pinned recommendations
+
+```bash
+npm run eval:pins
+```
+
+Diffs the corpus recommendations against `evaluation/pinned-baseline.json`, with `--full` and `--update` behaving as above.
+
+This is a **separate** report on purpose. `npm run eval` records scoring outcomes, and a pinned recommendation is not a scoring outcome: the optimizer reads finished audits and changes none of them. Keeping them apart means a selection change cannot read as a scoring regression, and cannot tempt anyone into recording a new scoring baseline to settle a recommendation question.
+
+For each profile it records the eligible count, the recommended names and their candidacy labels, the current pinned overlap, any forks, archived, or `Worth polishing` repositories selected, the diversity evidence each selection earned, the exclusion counts by reason, and the advisory changes. `De-emphasize` selections are recorded too, and the corpus asserts that the list is always empty.
+
+Before recording a new baseline, run `--full`, read every recommendation, and account for anything surprising: an optimizer bug, a candidacy limitation, a corpus limitation, or evidence the corpus does not carry. Do not snapshot a recommendation you cannot explain.

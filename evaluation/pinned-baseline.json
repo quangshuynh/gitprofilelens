@@ -1,0 +1,884 @@
+{
+  "evaluationDate": "2026-08-21T00:00:00.000Z",
+  "profileCount": 13,
+  "limit": 6,
+  "profiles": {
+    "oss-maintainer": {
+      "auditedCount": 9,
+      "eligibleCount": 9,
+      "recommendedCount": 6,
+      "recommended": [
+        "hexline-cli",
+        "hexline-examples",
+        "hexline-plugin-sdk",
+        "hexline-devtools",
+        "hexline-docs",
+        "hexline"
+      ],
+      "labels": "SSSSSS",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "hexline",
+        "hexline-cli",
+        "hexline-docs",
+        "hexline-plugin-sdk",
+        "hexline-devtools",
+        "hexline-examples"
+      ],
+      "currentPinnedOverlap": 6,
+      "alreadyOptimal": true,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "TypeScript"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "hexline-cli"
+        ],
+        "addsTopics": [
+          "hexline-cli",
+          "hexline-examples",
+          "hexline-plugin-sdk",
+          "hexline-devtools",
+          "hexline-docs",
+          "hexline"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 6
+      },
+      "excluded": {},
+      "changes": [
+        {
+          "action": "keep",
+          "repository": "hexline-cli",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "hexline-examples",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "hexline-plugin-sdk",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "hexline-devtools",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "hexline-docs",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "hexline",
+          "replacement": null
+        }
+      ],
+      "shortfall": false
+    },
+    "polished-professional": {
+      "auditedCount": 6,
+      "eligibleCount": 6,
+      "recommendedCount": 6,
+      "recommended": [
+        "ledger-sync",
+        "receipt-ocr",
+        "schema-drift",
+        "queue-lens",
+        "envelope",
+        "dotfiles"
+      ],
+      "labels": "SSSSSP",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "ledger-sync",
+        "schema-drift",
+        "queue-lens"
+      ],
+      "currentPinnedOverlap": 3,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [
+        "dotfiles"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "TypeScript",
+          "Python",
+          "Shell"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "ledger-sync",
+          "receipt-ocr",
+          "dotfiles"
+        ],
+        "addsTopics": [
+          "ledger-sync",
+          "receipt-ocr",
+          "schema-drift",
+          "queue-lens",
+          "envelope",
+          "dotfiles"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 3
+      },
+      "excluded": {},
+      "changes": [
+        {
+          "action": "keep",
+          "repository": "ledger-sync",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "schema-drift",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "queue-lens",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "receipt-ocr",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "envelope",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "dotfiles",
+          "replacement": null
+        }
+      ],
+      "shortfall": false
+    },
+    "fork-dominated": {
+      "auditedCount": 9,
+      "eligibleCount": 6,
+      "recommendedCount": 6,
+      "recommended": [
+        "docs-theme",
+        "render-kit",
+        "state-atoms",
+        "pgmigrate",
+        "yaml-lint",
+        "csv-stream"
+      ],
+      "labels": "PPPPPP",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "render-kit",
+        "state-atoms"
+      ],
+      "currentPinnedOverlap": 2,
+      "alreadyOptimal": false,
+      "forksSelected": [
+        "docs-theme",
+        "render-kit",
+        "state-atoms",
+        "pgmigrate",
+        "yaml-lint",
+        "csv-stream"
+      ],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [
+        "docs-theme",
+        "render-kit",
+        "state-atoms",
+        "pgmigrate",
+        "yaml-lint",
+        "csv-stream"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "CSS",
+          "JavaScript",
+          "TypeScript",
+          "Go",
+          "Python"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "docs-theme",
+          "render-kit",
+          "state-atoms",
+          "pgmigrate",
+          "yaml-lint"
+        ],
+        "addsTopics": [
+          "docs-theme",
+          "render-kit",
+          "state-atoms",
+          "pgmigrate",
+          "yaml-lint",
+          "csv-stream"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 3
+      },
+      "excluded": {
+        "deemphasize": 3
+      },
+      "changes": [
+        {
+          "action": "keep",
+          "repository": "render-kit",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "state-atoms",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "docs-theme",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "pgmigrate",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "yaml-lint",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "csv-stream",
+          "replacement": null
+        }
+      ],
+      "shortfall": false
+    },
+    "archive-heavy": {
+      "auditedCount": 10,
+      "eligibleCount": 7,
+      "recommendedCount": 6,
+      "recommended": [
+        "edge-cache",
+        "stream-router",
+        "config-lint",
+        "bench-suite",
+        "legacy-api-gateway",
+        "prototype-scheduler"
+      ],
+      "labels": "SSSSPP",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "stream-router",
+        "config-lint",
+        "edge-cache"
+      ],
+      "currentPinnedOverlap": 3,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [
+        "legacy-api-gateway",
+        "prototype-scheduler"
+      ],
+      "polishSelected": [
+        "legacy-api-gateway",
+        "prototype-scheduler"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "TypeScript",
+          "Go",
+          "Python"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "edge-cache",
+          "legacy-api-gateway",
+          "prototype-scheduler"
+        ],
+        "addsTopics": [
+          "edge-cache",
+          "stream-router",
+          "config-lint",
+          "bench-suite",
+          "legacy-api-gateway",
+          "prototype-scheduler"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 3
+      },
+      "excluded": {
+        "deemphasize": 3
+      },
+      "changes": [
+        {
+          "action": "keep",
+          "repository": "edge-cache",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "stream-router",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "config-lint",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "bench-suite",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "legacy-api-gateway",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "prototype-scheduler",
+          "replacement": null
+        }
+      ],
+      "shortfall": false
+    },
+    "prolific-account": {
+      "auditedCount": 112,
+      "eligibleCount": 65,
+      "recommendedCount": 6,
+      "recommended": [
+        "flowmeter",
+        "paperclip",
+        "chronograph",
+        "hookshot",
+        "dotpath",
+        "tabula"
+      ],
+      "labels": "SSSSSS",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "flowmeter",
+        "paperclip",
+        "tabula"
+      ],
+      "currentPinnedOverlap": 3,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "Python",
+          "Go",
+          "Rust"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "flowmeter",
+          "paperclip",
+          "chronograph"
+        ],
+        "addsTopics": [
+          "flowmeter",
+          "paperclip",
+          "chronograph",
+          "hookshot",
+          "dotpath",
+          "tabula"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 2
+      },
+      "excluded": {
+        "deemphasize": 47
+      },
+      "changes": [
+        {
+          "action": "keep",
+          "repository": "flowmeter",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "paperclip",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "tabula",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "chronograph",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "hookshot",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "dotpath",
+          "replacement": null
+        }
+      ],
+      "shortfall": false
+    },
+    "student-coursework": {
+      "auditedCount": 8,
+      "eligibleCount": 4,
+      "recommendedCount": 4,
+      "recommended": [
+        "personal-portfolio",
+        "data-structures-practice",
+        "algorithms-course-notes",
+        "ml-teaching-notebooks"
+      ],
+      "labels": "PPPP",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "personal-portfolio",
+        "weather-app"
+      ],
+      "currentPinnedOverlap": 1,
+      "alreadyOptimal": false,
+      "forksSelected": [
+        "ml-teaching-notebooks"
+      ],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [
+        "personal-portfolio",
+        "data-structures-practice",
+        "algorithms-course-notes",
+        "ml-teaching-notebooks"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "HTML",
+          "Java",
+          "Python"
+        ],
+        "unknownLanguage": 1,
+        "addsLanguage": [
+          "personal-portfolio",
+          "data-structures-practice",
+          "ml-teaching-notebooks"
+        ],
+        "addsTopics": [
+          "personal-portfolio",
+          "data-structures-practice",
+          "ml-teaching-notebooks"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 1
+      },
+      "excluded": {
+        "deemphasize": 4
+      },
+      "changes": [
+        {
+          "action": "polish",
+          "repository": "personal-portfolio",
+          "replacement": null
+        },
+        {
+          "action": "replace",
+          "repository": "weather-app",
+          "replacement": "data-structures-practice"
+        },
+        {
+          "action": "add",
+          "repository": "algorithms-course-notes",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "ml-teaching-notebooks",
+          "replacement": null
+        }
+      ],
+      "shortfall": true
+    },
+    "strong-work-weak-presentation": {
+      "auditedCount": 5,
+      "eligibleCount": 2,
+      "recommendedCount": 2,
+      "recommended": [
+        "tokenizer_rs",
+        "fastcache"
+      ],
+      "labels": "PP",
+      "currentPinsKnown": true,
+      "currentPinned": [],
+      "currentPinnedOverlap": 0,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [
+        "tokenizer_rs",
+        "fastcache"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "Rust",
+          "Go"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "tokenizer_rs",
+          "fastcache"
+        ],
+        "addsTopics": [
+          "tokenizer_rs"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 0
+      },
+      "excluded": {
+        "deemphasize": 2,
+        "unreadable": 1
+      },
+      "changes": [
+        {
+          "action": "add",
+          "repository": "tokenizer_rs",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "fastcache",
+          "replacement": null
+        }
+      ],
+      "shortfall": true
+    },
+    "flagship-dominated": {
+      "auditedCount": 8,
+      "eligibleCount": 1,
+      "recommendedCount": 1,
+      "recommended": [
+        "promptkit"
+      ],
+      "labels": "S",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "promptkit"
+      ],
+      "currentPinnedOverlap": 1,
+      "alreadyOptimal": true,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "Python"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "promptkit"
+        ],
+        "addsTopics": [
+          "promptkit"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 1
+      },
+      "excluded": {
+        "deemphasize": 7
+      },
+      "changes": [
+        {
+          "action": "keep",
+          "repository": "promptkit",
+          "replacement": null
+        }
+      ],
+      "shortfall": true
+    },
+    "beginner-account": {
+      "auditedCount": 3,
+      "eligibleCount": 1,
+      "recommendedCount": 1,
+      "recommended": [
+        "My_First_Website"
+      ],
+      "labels": "P",
+      "currentPinsKnown": true,
+      "currentPinned": [],
+      "currentPinnedOverlap": 0,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [
+        "My_First_Website"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "HTML"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "My_First_Website"
+        ],
+        "addsTopics": [],
+        "sharedTopicPairs": 0,
+        "withHomepage": 0
+      },
+      "excluded": {
+        "deemphasize": 2
+      },
+      "changes": [
+        {
+          "action": "add",
+          "repository": "My_First_Website",
+          "replacement": null
+        }
+      ],
+      "shortfall": true
+    },
+    "unusual-metadata": {
+      "auditedCount": 4,
+      "eligibleCount": 3,
+      "recommendedCount": 3,
+      "recommended": [
+        "tessellate",
+        "pattern-studio",
+        "tiling-algorithms-reference-implementations-and-notes"
+      ],
+      "labels": "SSP",
+      "currentPinsKnown": true,
+      "currentPinned": [
+        "tessellate",
+        "pattern-studio"
+      ],
+      "currentPinnedOverlap": 2,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [
+        "tiling-algorithms-reference-implementations-and-notes"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "Rust",
+          "TypeScript"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "tessellate",
+          "pattern-studio"
+        ],
+        "addsTopics": [
+          "tessellate",
+          "pattern-studio",
+          "tiling-algorithms-reference-implementations-and-notes"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 1
+      },
+      "excluded": {
+        "deemphasize": 1
+      },
+      "changes": [
+        {
+          "action": "keep",
+          "repository": "tessellate",
+          "replacement": null
+        },
+        {
+          "action": "keep",
+          "repository": "pattern-studio",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "tiling-algorithms-reference-implementations-and-notes",
+          "replacement": null
+        }
+      ],
+      "shortfall": true
+    },
+    "private-audit-scope": {
+      "auditedCount": 6,
+      "eligibleCount": 2,
+      "recommendedCount": 2,
+      "recommended": [
+        "openapi-tools",
+        "status-page"
+      ],
+      "labels": "SS",
+      "currentPinsKnown": true,
+      "currentPinned": [],
+      "currentPinnedOverlap": 0,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [],
+      "deemphasizeSelected": [],
+      "privateCandidates": [
+        "billing-core",
+        "billing-admin"
+      ],
+      "diversity": {
+        "languages": [
+          "TypeScript"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "openapi-tools"
+        ],
+        "addsTopics": [
+          "openapi-tools",
+          "status-page"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 2
+      },
+      "excluded": {
+        "deemphasize": 2,
+        "private": 2
+      },
+      "changes": [
+        {
+          "action": "add",
+          "repository": "openapi-tools",
+          "replacement": null
+        },
+        {
+          "action": "add",
+          "repository": "status-page",
+          "replacement": null
+        }
+      ],
+      "shortfall": true
+    },
+    "unverified-metadata": {
+      "auditedCount": 5,
+      "eligibleCount": 4,
+      "recommendedCount": 4,
+      "recommended": [
+        "chartplot",
+        "tidepool",
+        "knot",
+        "buoy-feed"
+      ],
+      "labels": "PPPP",
+      "currentPinsKnown": false,
+      "currentPinned": [],
+      "currentPinnedOverlap": 0,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [
+        "chartplot",
+        "tidepool",
+        "knot",
+        "buoy-feed"
+      ],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [
+          "TypeScript",
+          "Python"
+        ],
+        "unknownLanguage": 0,
+        "addsLanguage": [
+          "chartplot",
+          "tidepool"
+        ],
+        "addsTopics": [
+          "chartplot",
+          "tidepool",
+          "knot"
+        ],
+        "sharedTopicPairs": 0,
+        "withHomepage": 2
+      },
+      "excluded": {
+        "deemphasize": 1
+      },
+      "changes": [],
+      "shortfall": true
+    },
+    "empty-account": {
+      "auditedCount": 0,
+      "eligibleCount": 0,
+      "recommendedCount": 0,
+      "recommended": [],
+      "labels": "",
+      "currentPinsKnown": true,
+      "currentPinned": [],
+      "currentPinnedOverlap": 0,
+      "alreadyOptimal": false,
+      "forksSelected": [],
+      "unknownOriginalitySelected": [],
+      "archivedSelected": [],
+      "polishSelected": [],
+      "deemphasizeSelected": [],
+      "privateCandidates": [],
+      "diversity": {
+        "languages": [],
+        "unknownLanguage": 0,
+        "addsLanguage": [],
+        "addsTopics": [],
+        "sharedTopicPairs": 0,
+        "withHomepage": 0
+      },
+      "excluded": {},
+      "changes": [],
+      "shortfall": true
+    }
+  }
+}

@@ -66,6 +66,32 @@ const networkExport = document.querySelector("#network-export");
 const networkOutput = document.querySelector("#network-output");
 const networkCopyButton = document.querySelector("#network-copy-button");
 const networkDownloadButton = document.querySelector("#network-download-button");
+const pinnedSummary = document.querySelector("#pinned-summary");
+const pinnedShortfall = document.querySelector("#pinned-shortfall");
+const pinnedRecommendedList = document.querySelector("#pinned-recommended-list");
+const pinnedCurrentNote = document.querySelector("#pinned-current-note");
+const pinnedCurrentList = document.querySelector("#pinned-current-list");
+const pinnedChangesNote = document.querySelector("#pinned-changes-note");
+const pinnedChangesList = document.querySelector("#pinned-changes-list");
+const pinnedPrivateSection = document.querySelector("#pinned-private-section");
+const pinnedPrivateList = document.querySelector("#pinned-private-list");
+const pinnedExcludedSection = document.querySelector("#pinned-excluded-section");
+const pinnedExcludedList = document.querySelector("#pinned-excluded-list");
+
+/**
+ * Result tabs, in the order the tab strip presents them.
+ */
+const RESULT_TABS = ["overview", "audit", "repositories", "network", "pinned", "markdown"];
+
+/**
+ * Result tabs available in the authenticated private audit.
+ *
+ * Network is a public-profile view. The pinned optimizer stays available because
+ * an authorized audit is the only place a private repository can be recognized as
+ * strong portfolio work while being reported as something a public profile cannot
+ * pin.
+ */
+const PRIVATE_MODE_TABS = ["audit", "pinned", "markdown"];
 
 const appState = {
   user: null,
@@ -620,6 +646,7 @@ function renderResults() {
   renderAudits();
   renderRepositories();
   renderContributions();
+  renderPinnedOptimizer();
   refreshMarkdown();
 }
 
@@ -633,6 +660,7 @@ function renderPrivateResults() {
   profileLink.textContent = `@${appState.authUser.login}`;
   profileInsight.textContent = "Review authorized repositories and identify projects worth preparing for your public portfolio.";
   renderAudits();
+  renderPinnedOptimizer();
   refreshMarkdown();
   activateTab("audit", false);
 }
@@ -642,7 +670,7 @@ function setResultMode(mode) {
   shareButton.hidden = privateMode;
   scoreCardButton.hidden = privateMode;
   for (const button of tabButtons) {
-    button.hidden = privateMode && !["audit", "markdown"].includes(button.dataset.tab);
+    button.hidden = privateMode && !PRIVATE_MODE_TABS.includes(button.dataset.tab);
   }
   publicExportOptions.hidden = privateMode;
   if (privateMode) contributionsSection.hidden = true;
@@ -958,6 +986,9 @@ function createAuditCard(audit) {
   const readmeChecklist = createReadmeChecklist(repository.readme, audit.categoryScores.readme);
   const findings = document.createElement("div");
   card.className = "audit-card";
+  // The pinned optimizer links here by repository name instead of repeating a
+  // repository's findings inside its recommendation card.
+  card.dataset.auditRepository = repository.name;
   header.className = "audit-card-header";
   link.href = repository.url;
   link.target = "_blank";
@@ -1443,6 +1474,248 @@ function isPinnedRepository(repository) {
 }
 
 /**
+ * renders the pinned repository optimizer from the current audits
+ *
+ * The optimizer runs over audits already in memory, so opening this tab issues no
+ * GitHub request and cannot change any score already shown elsewhere.
+ *
+ * @returns {void} no return value
+ */
+function renderPinnedOptimizer() {
+  const result = GitProfilePinnedOptimizer.optimizePinnedSet(appState.audits);
+
+  pinnedSummary.textContent = result.recommended.length === 0
+    ? `0 of up to ${result.limit} slots recommended.`
+    : `${result.recommended.length} of up to ${result.limit} slots recommended, from ${result.eligibleCount} eligible ${result.eligibleCount === 1 ? "repository" : "repositories"}.`;
+
+  pinnedShortfall.hidden = result.shortfall === null;
+  pinnedShortfall.textContent = result.shortfall ?? "";
+
+  pinnedRecommendedList.replaceChildren();
+  if (result.recommended.length === 0) {
+    pinnedRecommendedList.appendChild(createEmptyState("No repository currently meets the recommendation criteria."));
+  } else {
+    for (const entry of result.recommended) {
+      pinnedRecommendedList.appendChild(createPinnedRecommendationCard(entry));
+    }
+  }
+
+  renderPinnedCurrentSet(result);
+  renderPinnedChanges(result);
+  renderPinnedPrivateWork(result);
+  renderPinnedExclusions(result);
+}
+
+/**
+ * renders what GitHub currently reports as pinned
+ * @param {Object} result optimizer result
+ * @returns {void} no return value
+ */
+function renderPinnedCurrentSet(result) {
+  const recommended = new Set(result.recommended.map((entry) => entry.name));
+  pinnedCurrentList.replaceChildren();
+
+  if (!result.currentPinsKnown) {
+    pinnedCurrentNote.textContent = "GitProfileLens could not verify which repositories this profile pins, so the two sets cannot be compared. The recommended set above is unaffected.";
+    return;
+  }
+
+  if (result.currentPinned.length === 0) {
+    pinnedCurrentNote.textContent = "This profile pins no repositories.";
+    return;
+  }
+
+  pinnedCurrentNote.textContent = `GitHub reports ${result.currentPinned.length} pinned ${result.currentPinned.length === 1 ? "repository" : "repositories"}, in profile order.`;
+  for (const name of result.currentPinned) {
+    const item = document.createElement("li");
+    const marker = document.createElement("span");
+    const label = document.createElement("span");
+    const inSet = recommended.has(name);
+    marker.className = `pinned-marker ${inSet ? "is-kept" : "is-outgoing"}`;
+    marker.textContent = inSet ? "✓" : "✕";
+    marker.setAttribute("aria-hidden", "true");
+    label.textContent = name;
+    item.className = "pinned-current-item";
+    item.append(marker, label, createPinnedStatus(inSet ? "In the recommended set" : "Not in the recommended set"));
+    pinnedCurrentList.appendChild(item);
+  }
+}
+
+/**
+ * renders the advisory difference between the current pins and the recommendation
+ * @param {Object} result optimizer result
+ * @returns {void} no return value
+ */
+function renderPinnedChanges(result) {
+  pinnedChangesList.replaceChildren();
+  pinnedChangesNote.hidden = false;
+
+  if (!result.currentPinsKnown) {
+    pinnedChangesNote.textContent = "Pinned repository data was unavailable, so there is nothing to compare.";
+    return;
+  }
+  if (result.alreadyOptimal) {
+    pinnedChangesNote.textContent = "Your current pinned repositories already match the optimizer's recommended set.";
+    return;
+  }
+  if (result.changes.length === 0) {
+    pinnedChangesNote.textContent = "There is nothing to compare yet.";
+    return;
+  }
+
+  pinnedChangesNote.hidden = true;
+  for (const change of result.changes) {
+    const card = document.createElement("article");
+    const heading = document.createElement("div");
+    const action = document.createElement("span");
+    const name = document.createElement("strong");
+    const explanation = document.createElement("p");
+    card.className = "pinned-change";
+    heading.className = "pinned-change-heading";
+    action.className = `pinned-action is-${change.action}`;
+    action.textContent = change.title;
+    name.textContent = change.repository;
+    heading.append(action, name);
+    explanation.textContent = change.explanation;
+    card.append(heading, explanation);
+    pinnedChangesList.appendChild(card);
+  }
+}
+
+/**
+ * renders authorized private repositories that read as strong portfolio work
+ * @param {Object} result optimizer result
+ * @returns {void} no return value
+ */
+function renderPinnedPrivateWork(result) {
+  pinnedPrivateSection.hidden = result.privateCandidates.length === 0;
+  pinnedPrivateList.replaceChildren();
+
+  for (const entry of result.privateCandidates) {
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    item.className = "pinned-current-item";
+    label.textContent = entry.name;
+    item.append(label, createPinnedStatus(`${entry.title} · not publicly pinnable`));
+    pinnedPrivateList.appendChild(item);
+  }
+}
+
+/**
+ * renders the repositories that were not considered for the recommended set
+ * @param {Object} result optimizer result
+ * @returns {void} no return value
+ */
+function renderPinnedExclusions(result) {
+  pinnedExcludedSection.hidden = result.excluded.length === 0;
+  pinnedExcludedList.replaceChildren();
+
+  for (const group of result.excluded) {
+    const card = document.createElement("article");
+    const explanation = document.createElement("p");
+    const repositories = document.createElement("p");
+    card.className = "pinned-excluded-group";
+    explanation.className = "pinned-excluded-reason";
+    explanation.textContent = group.explanation;
+    repositories.className = "affected-repositories";
+    repositories.textContent = formatRepositoryNames(group.repositories);
+    card.append(explanation, repositories);
+    pinnedExcludedList.appendChild(card);
+  }
+}
+
+/**
+ * creates one recommended repository entry
+ *
+ * The card carries the candidacy label, the presentation score, and the reasons
+ * the optimizer recorded when it chose this repository, then links to the
+ * repository's own audit card rather than repeating its findings here.
+ *
+ * @param {Object} entry recommended repository entry
+ * @returns {HTMLElement} recommendation card
+ */
+function createPinnedRecommendationCard(entry) {
+  const card = document.createElement("article");
+  const header = document.createElement("div");
+  const heading = document.createElement("h4");
+  const position = document.createElement("span");
+  const badge = document.createElement("span");
+  const score = document.createElement("span");
+  const reasons = document.createElement("ul");
+  card.className = "pinned-card";
+  header.className = "pinned-card-header";
+  position.className = "pinned-position";
+  position.textContent = entry.position;
+  heading.className = "pinned-card-name";
+  heading.append(position, document.createTextNode(entry.name));
+  badge.className = `candidate-badge ${CANDIDATE_CLASSES[entry.label]}`;
+  badge.textContent = entry.title;
+  score.className = "pinned-score";
+  score.textContent = `Presentation score: ${entry.score}`;
+  header.append(heading, badge, score);
+
+  if (entry.qualifier) {
+    const qualifier = document.createElement("span");
+    qualifier.className = "candidate-qualifier";
+    qualifier.textContent = entry.qualifier;
+    header.appendChild(qualifier);
+  }
+
+  reasons.className = "pinned-reasons";
+  for (const reason of entry.reasons) {
+    const item = document.createElement("li");
+    item.textContent = reason;
+    reasons.appendChild(item);
+  }
+
+  card.append(header, reasons, createAuditJumpLink(entry.name));
+  return card;
+}
+
+/**
+ * creates a link from a recommendation to the repository's own audit card
+ * @param {string} name repository name
+ * @returns {HTMLElement} audit navigation button
+ */
+function createAuditJumpLink(name) {
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "secondary pinned-audit-link";
+  link.dataset.auditTarget = name;
+  link.textContent = "View repository audit";
+  link.addEventListener("click", () => showRepositoryAudit(name));
+  return link;
+}
+
+/**
+ * opens the Audit tab and brings one repository's audit card into view
+ * @param {string} name repository name
+ * @returns {void} no return value
+ */
+function showRepositoryAudit(name) {
+  activateTab("audit", true);
+  for (const highlighted of auditList.querySelectorAll(".is-highlighted")) {
+    highlighted.classList.remove("is-highlighted");
+  }
+  const card = auditList.querySelector(`[data-audit-repository="${CSS.escape(name)}"]`);
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  card.classList.add("is-highlighted");
+}
+
+/**
+ * creates the trailing status text of a pinned list entry
+ * @param {string} text status text
+ * @returns {HTMLElement} status element
+ */
+function createPinnedStatus(text) {
+  const status = document.createElement("span");
+  status.className = "pinned-status";
+  status.textContent = text;
+  return status;
+}
+
+/**
  * handles switching between result tabs
  * @param {MouseEvent} event tab button click event
  * @returns {void} no return value
@@ -1485,8 +1758,8 @@ function handleTabKeydown(event) {
  * @returns {void} no return value
  */
 function activateTab(tabName, updateUrl) {
-  if (appState.mode === "private" && !["audit", "markdown"].includes(tabName)) tabName = "audit";
-  const validTab = ["overview", "audit", "repositories", "network", "markdown"].includes(tabName)
+  if (appState.mode === "private" && !PRIVATE_MODE_TABS.includes(tabName)) tabName = "audit";
+  const validTab = RESULT_TABS.includes(tabName)
     ? tabName
     : "overview";
 
