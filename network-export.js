@@ -216,7 +216,15 @@
             pagesLoaded: page - 1,
           };
         }
-        accounts.push({ login, profileUrl: buildProfileUrl(login) });
+        // The avatar is already in this page of the response. Keeping it is what
+        // lets the unfollow manager show a face per row without asking GitHub for
+        // one profile per account, which for a few hundred rows would be a few
+        // hundred requests spent on decoration.
+        accounts.push({
+          login,
+          profileUrl: buildProfileUrl(login),
+          avatarUrl: readAvatarUrl(account.avatar_url),
+        });
       }
 
       if (pageAccounts.length < PER_PAGE) {
@@ -339,6 +347,56 @@
     return network.following.accounts.filter(
       (account) => !followerLogins.has(account.login.toLowerCase())
     );
+  }
+
+  /**
+   * rebuilds a retrieved network with one followed account taken out of it
+   *
+   * Called only after GitHub has confirmed the unfollow, so this is not an
+   * optimistic edit: it is the retrieved network being brought into line with a
+   * change that has already happened, without spending four more requests to
+   * re-read a network that differs by exactly one account.
+   *
+   * Followers are left alone. Whether that account followed the reader is a fact
+   * about the account, and unfollowing someone does not change it. The reported
+   * following count moves with the list so the two cannot start disagreeing and
+   * produce a count note about a difference that this removal invented.
+   *
+   * The scan is a single pass and the caller derives non-follow-back from the
+   * result, so reconciling one removal stays linear in the list rather than
+   * quadratic in the number of removals.
+   *
+   * @param {Object} network retrieved network result
+   * @param {*} login account to remove from following
+   * @returns {Object} the rebuilt network and whether anything was removed
+   */
+  function withAccountRemoved(network, login) {
+    const target = String(login ?? "").trim().toLowerCase();
+    if (!network?.following || !Array.isArray(network.following.accounts) || !target) {
+      return { network, removed: false };
+    }
+
+    const accounts = network.following.accounts.filter(
+      (account) => String(account?.login ?? "").toLowerCase() !== target
+    );
+    if (accounts.length === network.following.accounts.length) {
+      return { network, removed: false };
+    }
+
+    const reported = network.user?.reportedFollowing;
+    return {
+      removed: true,
+      network: {
+        ...network,
+        user: {
+          ...network.user,
+          reportedFollowing: Number.isInteger(reported)
+            ? Math.max(0, reported - (network.following.accounts.length - accounts.length))
+            : reported,
+        },
+        following: { ...network.following, accounts },
+      },
+    };
   }
 
   /**
@@ -515,6 +573,7 @@
     fetchNetwork,
     formatRateLimitReset,
     validateUsername,
+    withAccountRemoved,
   };
   }
 );

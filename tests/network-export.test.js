@@ -549,7 +549,14 @@ test("the retrieved lists carry no follow timestamp GitHub never supplied", asyn
   const network = await fetchNetwork("example", { fetchImpl });
 
   for (const account of [...network.followers.accounts, ...network.following.accounts]) {
-    assert.deepEqual(Object.keys(account).sort(), ["login", "profileUrl"]);
+    // The avatar comes out of the same response page and costs no extra request.
+    // It is presentation, and the point of this test is what is absent: nothing
+    // here may look like a time, because GitHub supplies no follow time to put in
+    // one and an invented field would be read as chronology.
+    assert.deepEqual(Object.keys(account).sort(), ["avatarUrl", "login", "profileUrl"]);
+    for (const key of Object.keys(account)) {
+      assert.doesNotMatch(key, /at$|date|time|since|when/i, `${key} reads as a timestamp`);
+    }
   }
 });
 

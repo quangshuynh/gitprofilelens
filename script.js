@@ -69,6 +69,23 @@ const networkHistoryResetButton = document.querySelector("#network-history-reset
 const networkHistoryConfirmGroup = document.querySelector("#network-history-confirm-group");
 const networkHistoryConfirmButton = document.querySelector("#network-history-confirm");
 const networkHistoryCancelButton = document.querySelector("#network-history-cancel");
+const networkManage = document.querySelector("#network-manage");
+const networkManageButton = document.querySelector("#network-manage-unfollows");
+const networkManageNote = document.querySelector("#network-manage-note");
+const networkManager = document.querySelector("#network-manager");
+const networkManagerBack = document.querySelector("#network-manager-back");
+const networkManagerHeading = document.querySelector("#network-manager-heading");
+const networkManagerSummary = document.querySelector("#network-manager-summary");
+const networkManagerAnnouncement = document.querySelector("#network-manager-announcement");
+const networkManagerFilterGroup = document.querySelector("#network-manager-filter-group");
+const networkManagerFilter = document.querySelector("#network-manager-filter");
+const networkManagerEmpty = document.querySelector("#network-manager-empty");
+const networkManagerList = document.querySelector("#network-manager-list");
+const networkManagerStatus = document.querySelector("#network-manager-status");
+const networkManagerControls = document.querySelector("#network-manager-controls");
+const networkManagerMore = document.querySelector("#network-manager-more");
+const networkManagerAll = document.querySelector("#network-manager-all");
+const networkManagerCollapse = document.querySelector("#network-manager-collapse");
 const networkExport = document.querySelector("#network-export");
 const networkOutput = document.querySelector("#network-output");
 const networkCopyButton = document.querySelector("#network-copy-button");
@@ -108,6 +125,10 @@ const appState = {
   supplemental: null,
   mode: "public",
   authUser: null,
+  // Whether this session passed through the follow-management authorization. The
+  // server decides it and the server enforces it; this copy exists only so the
+  // interface can stop offering an action that would be refused.
+  canManageFollows: false,
   privateInstallation: false,
   privateExports: { public: [], private: [], combined: [], publicSupplemental: null },
 };
@@ -165,6 +186,56 @@ const networkState = {
   // Set once per completed retrieval, then read by rendering and by the export, so
   // the two can never disagree about the order or about what the order means.
   history: { followers: null, following: null, storage: null, droppedProfiles: 0 },
+  // The display order, held once so that reconciling a confirmed unfollow can drop
+  // one account from an already ordered list instead of re-deriving the order of
+  // everything else. Removing one element cannot change the relative order of the
+  // rest, so re-sorting per mutation would be work that produces the same answer.
+  ordered: { followers: [], following: [] },
+};
+
+/**
+ * the unfollow manager, which is the only place in GitProfileLens that mutates
+ *
+ * Why this is a separate state object rather than a fourth network section
+ * -----------------------------------------------------------------------
+ * The Network sections describe what GitHub returned. This describes what the
+ * reader has done about it, which outlives a re-render and has to survive the
+ * list underneath it changing. Keeping the two apart is also what makes clearing
+ * it on a profile switch a single assignment rather than a hunt for stale rows.
+ *
+ * `accounts` is a snapshot taken when the manager opened, in the Network order it
+ * inherited. It deliberately does not shrink as accounts are unfollowed: removing
+ * the row under the reader's cursor would move focus and shift every row below it
+ * while they are working through a list. The rows are marked instead, and the
+ * Network lists, counts and Markdown are what reconcile immediately.
+ *
+ * `outcomes` maps a normalized login to what happened to it, so a re-render after
+ * a filter or a disclosure change rebuilds the same marks. `pending` holds the one
+ * login with a request in flight; only that row is inert, and the rest of the
+ * manager stays usable.
+ */
+const managerState = {
+  open: false,
+  username: null,
+  accounts: [],
+  filtered: [],
+  filter: "",
+  visibleCount: NETWORK_PAGE_SIZE,
+  outcomes: new Map(),
+  confirming: null,
+  pending: null,
+  // Set when a confirmed unfollow has changed `networkState` but the Network
+  // sections behind the manager have not been repainted yet.
+  dirty: false,
+  renderedAccounts: null,
+  renderedCount: 0,
+  // Normalized login to rendered row, so repainting one row after a mutation is a
+  // lookup rather than a scan of everything on screen.
+  rows: new Map(),
+  // Normalized login to the account as GitHub spelled it. Rows are keyed by the
+  // folded login because that is the identity GitHub compares, but everything the
+  // reader sees, and the login sent to the server, uses GitHub's own spelling.
+  accountsByLogin: new Map(),
 };
 
 /**
@@ -234,6 +305,40 @@ networkCollapseAllButton.addEventListener("click", () => setEveryNetworkSection(
 networkHistoryResetButton.addEventListener("click", () => setHistoryResetConfirmation(true));
 networkHistoryCancelButton.addEventListener("click", () => setHistoryResetConfirmation(false));
 networkHistoryConfirmButton.addEventListener("click", resetNetworkHistory);
+networkManageButton.addEventListener("click", () => {
+  if (describeManageAvailability().needsPermission) startFollowManagementAuthorization();
+  else openUnfollowManager();
+});
+networkManagerBack.addEventListener("click", closeUnfollowManager);
+networkManagerMore.addEventListener("click", () => {
+  managerState.visibleCount += NETWORK_PAGE_SIZE;
+  renderUnfollowManager();
+});
+networkManagerAll.addEventListener("click", () => {
+  managerState.visibleCount = managerState.filtered.length;
+  renderUnfollowManager();
+});
+networkManagerCollapse.addEventListener("click", () => {
+  managerState.visibleCount = NETWORK_PAGE_SIZE;
+  renderUnfollowManager();
+});
+networkManagerFilter.addEventListener("input", () => {
+  managerState.filter = networkManagerFilter.value;
+  // Narrowing the list starts its disclosure over, so a filter applied after
+  // Show all does not silently render every match.
+  managerState.visibleCount = NETWORK_PAGE_SIZE;
+  renderUnfollowManager();
+});
+// One delegated listener for the whole list, so a manager holding several hundred
+// rows attaches three handlers rather than a thousand.
+networkManagerList.addEventListener("click", handleManagerListClick);
+networkManagerList.addEventListener("keydown", (event) => {
+  // Escape backs out of a confirmation the way it backs out of a dialog, without
+  // the row having to be a dialog.
+  if (event.key !== "Escape" || !managerState.confirming) return;
+  event.stopPropagation();
+  setManagerConfirmation(managerState.confirming, false);
+});
 
 for (const section of networkSections) {
   section.moreButton.addEventListener("click", () => {
@@ -383,15 +488,28 @@ async function initializeAuthSession() {
     const response = await fetch("/api/auth/session", { headers: { Accept: "application/json" } });
     const data = await response.json();
     appState.authUser = response.ok && data.authenticated ? data.user : null;
+    // A capability the server reports, never a credential. The server checks it
+    // again on every mutation, so this copy only decides what is offered.
+    appState.canManageFollows = Boolean(appState.authUser && data.can_manage_follows);
     renderAuthState();
     const url = new URL(window.location.href);
-    if (url.searchParams.get("auth") === "success" && appState.authUser) {
+    const outcome = url.searchParams.get("auth");
+    if (outcome === "success" && appState.authUser) {
       statusEl.textContent = `Signed in as @${appState.authUser.login}. Choose repositories to audit.`;
+      url.searchParams.delete("auth");
+      history.replaceState(null, "", url);
+    }
+    if (outcome === "manage-follows" && appState.authUser) {
+      statusEl.textContent = appState.canManageFollows
+        ? `GitProfileLens can now unfollow accounts you choose, as @${appState.authUser.login}. ` +
+          "It will never unfollow anyone automatically."
+        : "GitHub did not grant permission to manage who you follow.";
       url.searchParams.delete("auth");
       history.replaceState(null, "", url);
     }
   } catch {
     appState.authUser = null;
+    appState.canManageFollows = false;
     renderAuthState();
   }
 }
@@ -404,7 +522,15 @@ function renderAuthState() {
   homeSignedInAuth.hidden = !authenticated;
   authLogin.textContent = authenticated ? `@${appState.authUser.login}` : "";
   homeAuthLogin.textContent = authenticated ? `@${appState.authUser.login}` : "";
-  if (!authenticated) configureAccessLink.hidden = true;
+  if (!authenticated) {
+    configureAccessLink.hidden = true;
+    appState.canManageFollows = false;
+  }
+  // Whether unfollowing may be offered follows the authorization as it stands now,
+  // not the one that happened to hold when the Network tab was first loaded. A
+  // sign-out closes the manager rather than leaving its controls on screen.
+  if (!authenticated && managerState.open) closeUnfollowManager();
+  updateManageAvailability();
 }
 
 /**
@@ -2218,6 +2344,7 @@ function renderNetwork(network) {
   networkFollowingCount.textContent = formatNetworkCount(network.following);
   const followers = orderNetworkList("followers", network.followers);
   const following = orderNetworkList("following", network.following);
+  networkState.ordered = { followers, following };
   setNetworkSectionAccounts("followers", followers, networkState.history.followers);
   setNetworkSectionAccounts("following", following, networkState.history.following);
   networkResults.hidden = false;
@@ -2235,6 +2362,7 @@ function renderNetwork(network) {
     networkSummary.textContent = "Retrieval incomplete";
     setNetworkSectionAccounts("unreciprocated", [], null);
     updateGlobalDisclosureControls();
+    updateManageAvailability();
     showNetworkError(`The network for @${network.user.login} could not be completely retrieved.`);
     return;
   }
@@ -2250,6 +2378,7 @@ function renderNetwork(network) {
   setNetworkSectionAccounts("unreciprocated", notFollowingBack, networkState.history.following);
   networkUnreciprocatedSection.hidden = false;
   updateGlobalDisclosureControls();
+  updateManageAvailability();
 
   networkState.markdown = GitProfileNetwork.buildMarkdown(network, {
     followers,
@@ -2424,6 +2553,7 @@ function resetNetworkHistory() {
   const network = networkState.network;
   const followers = network.followers.accounts;
   const following = network.following.accounts;
+  networkState.ordered = { followers, following };
   setNetworkSectionAccounts("followers", followers, null);
   setNetworkSectionAccounts("following", following, null);
   networkOrderingNote.textContent = GitProfileNetworkHistory.describeOrdering(null);
@@ -2440,6 +2570,747 @@ function resetNetworkHistory() {
     });
     networkOutput.value = networkState.markdown;
   }
+}
+
+/**
+ * decides whether unfollow management may be offered, and says why when it may not
+ *
+ * Three independent conditions have to hold, and each is refused for its own
+ * reason rather than collapsed into one unavailable state:
+ *
+ *  - The difference has to be authoritative. Non-follow-back is Following minus
+ *    Followers, and a login missing from a partial followers list may simply be on
+ *    a page that never arrived. Offering to end relationships on the strength of a
+ *    guess is exactly the wrong place to be approximate.
+ *  - The audited profile has to be the signed-in account. GitProfileLens can show
+ *    anyone's public relationships, but a session belonging to one account cannot
+ *    manage another account's follows, and the interface should not imply it can.
+ *    Logins are compared the way GitHub compares them, case-folded.
+ *  - The session has to carry the follow-management permission, which is granted
+ *    by an authorization the reader passes through deliberately.
+ *
+ * @returns {Object} whether the action is actionable, a note, and whether to offer opt-in
+ */
+function describeManageAvailability() {
+  if (networkState.status !== "loaded" || !networkState.network) {
+    return { actionable: false, note: "" };
+  }
+  const network = networkState.network;
+  if (!network.followers.complete || !network.following.complete) {
+    return {
+      actionable: false,
+      note: "Managing unfollows needs both the Followers and Following lists in full. " +
+        "Until they are complete, an account missing from Followers may just be on a page " +
+        "that did not arrive, so GitProfileLens will not offer to act on the difference.",
+    };
+  }
+  if (!appState.authUser) {
+    return {
+      actionable: false,
+      note: `Sign in as @${network.user.login} to manage who this account follows.`,
+    };
+  }
+  if (appState.authUser.login.toLowerCase() !== network.user.login.toLowerCase()) {
+    return {
+      actionable: false,
+      note: `You are signed in as @${appState.authUser.login} and viewing @${network.user.login}. ` +
+        "You can only manage the follows of the account you are signed in as.",
+    };
+  }
+  if (!appState.canManageFollows) {
+    return {
+      actionable: false,
+      needsPermission: true,
+      note: "Managing follows requires permission to change who you follow. " +
+        "GitProfileLens never unfollows accounts automatically, and asks for this " +
+        "only so you can unfollow an account yourself from here.",
+    };
+  }
+  return { actionable: true, note: "" };
+}
+
+/**
+ * shows, hides, or explains the entry point into the unfollow manager
+ * @returns {void} no return value
+ */
+function updateManageAvailability() {
+  const availability = describeManageAvailability();
+  const visible = networkState.status === "loaded" && Boolean(networkState.network);
+  networkManage.hidden = !visible;
+  if (!visible) {
+    networkManageButton.hidden = true;
+    networkManageNote.textContent = "";
+    return;
+  }
+
+  if (availability.actionable) {
+    const count = networkState.notFollowingBack?.length ?? 0;
+    networkManageButton.hidden = false;
+    networkManageButton.textContent = "Manage unfollows";
+    networkManageButton.setAttribute(
+      "aria-label",
+      `Manage unfollows for ${count} ${count === 1 ? "account" : "accounts"} who don't follow back`
+    );
+    networkManageNote.textContent = count === 0
+      ? "Everyone you follow follows you back, so there is nothing to manage."
+      : "Review these accounts and unfollow them one at a time.";
+    return;
+  }
+
+  // The permission case is the one refusal the reader can resolve from here, so it
+  // keeps a control. Every other refusal is a statement of fact, not an offer.
+  networkManageButton.hidden = !availability.needsPermission;
+  if (availability.needsPermission) {
+    networkManageButton.textContent = "Allow managing follows";
+    networkManageButton.setAttribute("aria-label", "Allow GitProfileLens to manage who you follow");
+  }
+  networkManageNote.textContent = availability.note;
+}
+
+/**
+ * sends the reader to github to grant the follow-management permission
+ *
+ * A separate authorization from ordinary sign-in, so that reading a profile never
+ * quietly carries the ability to change one. GitHub grants a GitHub App's user
+ * permissions as one set, so this cannot narrow the token; what it does is make
+ * the moment explicit and record that the reader chose it.
+ *
+ * @returns {void} no return value
+ */
+function startFollowManagementAuthorization() {
+  window.location.href = "/api/auth/github?manage=follows";
+}
+
+/**
+ * opens the focused management view over the network lists
+ *
+ * The snapshot is taken here, once, from the Network order established by
+ * observation history. The manager invents no order of its own.
+ *
+ * @returns {void} no return value
+ */
+function openUnfollowManager() {
+  if (!describeManageAvailability().actionable) return;
+
+  managerState.open = true;
+  managerState.username = networkState.username;
+  managerState.accounts = networkState.notFollowingBack ?? [];
+  managerState.accountsByLogin = new Map(
+    managerState.accounts.map((account) => [account.login.toLowerCase(), account])
+  );
+  managerState.filter = "";
+  managerState.visibleCount = NETWORK_PAGE_SIZE;
+  managerState.confirming = null;
+  managerState.pending = null;
+  managerState.renderedAccounts = null;
+  managerState.renderedCount = 0;
+  networkManagerFilter.value = "";
+  networkManagerAnnouncement.textContent = "";
+  networkManagerAnnouncement.classList.remove("is-error");
+
+  networkResults.hidden = true;
+  networkExport.hidden = true;
+  networkManager.hidden = false;
+  renderUnfollowManager();
+  // The view changed under the reader, so the heading takes focus and names what
+  // they are now looking at rather than leaving them at the top of the document.
+  networkManagerHeading.focus();
+}
+
+/**
+ * returns to the network lists, re-rendering them only if a mutation changed them
+ *
+ * The Network sections are hidden while the manager is open, so a confirmed
+ * unfollow updates `networkState` immediately and defers the DOM work to here.
+ * That keeps one unfollow from rebuilding a fully expanded list of thousands of
+ * pills that nobody is looking at, once per account.
+ *
+ * @returns {void} no return value
+ */
+function closeUnfollowManager() {
+  if (!managerState.open) return;
+  managerState.open = false;
+  managerState.confirming = null;
+  networkManager.hidden = true;
+  // Restored only to what the network itself supports. A session that ended while
+  // the manager was open must not reveal results the Network tab would not have
+  // shown on its own.
+  const loaded = networkState.status === "loaded" && Boolean(networkState.network);
+  networkResults.hidden = !loaded;
+  networkExport.hidden = !loaded || Boolean(networkState.network?.complete) === false;
+
+  if (managerState.dirty) {
+    managerState.dirty = false;
+    renderReconciledNetwork();
+  }
+  updateManageAvailability();
+  if (!networkManageButton.hidden) networkManageButton.focus();
+}
+
+/**
+ * clears every trace of one profile's management state
+ *
+ * Called whenever the audited profile or the network underneath it changes, so a
+ * pending row, an error, or a confirmation from one profile can never be shown
+ * against another.
+ *
+ * @returns {void} no return value
+ */
+function resetUnfollowManager() {
+  managerState.open = false;
+  managerState.username = null;
+  managerState.accounts = [];
+  managerState.filtered = [];
+  managerState.filter = "";
+  managerState.visibleCount = NETWORK_PAGE_SIZE;
+  managerState.outcomes = new Map();
+  managerState.confirming = null;
+  managerState.pending = null;
+  managerState.dirty = false;
+  managerState.renderedAccounts = null;
+  managerState.renderedCount = 0;
+  managerState.rows = new Map();
+  managerState.accountsByLogin = new Map();
+  networkManager.hidden = true;
+  networkManagerList.replaceChildren();
+  networkManagerAnnouncement.textContent = "";
+  networkManagerAnnouncement.classList.remove("is-error");
+  networkManagerFilter.value = "";
+  networkManagerFilterGroup.hidden = true;
+  networkManage.hidden = true;
+  networkManageButton.hidden = true;
+  networkManageNote.textContent = "";
+}
+
+/**
+ * renders the manager's summary, its disclosed rows, and its controls
+ * @returns {void} no return value
+ */
+function renderUnfollowManager() {
+  const previouslyFocused = document.activeElement;
+  const total = managerState.accounts.length;
+  const filter = managerState.filter.trim().toLowerCase();
+  managerState.filtered = filter
+    ? managerState.accounts.filter((account) => account.login.toLowerCase().includes(filter))
+    : managerState.accounts;
+
+  const matching = managerState.filtered.length;
+  const visibleCount = Math.min(
+    Math.max(managerState.visibleCount, NETWORK_PAGE_SIZE),
+    matching
+  );
+  managerState.visibleCount = visibleCount;
+
+  networkManagerSummary.textContent =
+    `${total} ${total === 1 ? "account currently appears" : "accounts currently appear"} in ` +
+    `"Following who don't follow back" for @${managerState.username}.`;
+  // Worth offering only once there are more accounts than one screenful, and it
+  // never asks GitHub anything: it narrows the rows already retrieved.
+  networkManagerFilterGroup.hidden = total <= NETWORK_PAGE_SIZE;
+
+  renderManagerRows(visibleCount);
+
+  if (matching === 0) {
+    networkManagerEmpty.textContent = filter
+      ? `No loaded account matches "${managerState.filter.trim()}".`
+      : "Everyone you follow also follows you.";
+    networkManagerEmpty.hidden = false;
+    networkManagerStatus.hidden = true;
+    networkManagerControls.hidden = true;
+    return;
+  }
+
+  networkManagerEmpty.hidden = true;
+  const expandable = matching > NETWORK_PAGE_SIZE;
+  const fullyShown = visibleCount >= matching;
+  const scope = filter ? ` matching "${managerState.filter.trim()}"` : "";
+
+  networkManagerStatus.hidden = false;
+  if (!expandable) {
+    networkManagerStatus.textContent =
+      `${matching} ${matching === 1 ? "account" : "accounts"}${scope}`;
+  } else if (fullyShown) {
+    networkManagerStatus.textContent = `Showing all ${matching}${scope}`;
+  } else {
+    networkManagerStatus.textContent = `Showing ${visibleCount} of ${matching}${scope}`;
+  }
+
+  networkManagerControls.hidden = !expandable;
+  networkManagerMore.hidden = fullyShown;
+  networkManagerAll.hidden = fullyShown;
+  networkManagerCollapse.hidden = visibleCount <= NETWORK_PAGE_SIZE;
+  keepManagerDisclosureFocus(previouslyFocused);
+}
+
+/**
+ * moves focus only when the disclosure control the reader just used disappeared
+ * @param {Element|null} previouslyFocused element focused before the controls updated
+ * @returns {void} no return value
+ */
+function keepManagerDisclosureFocus(previouslyFocused) {
+  const buttons = [networkManagerMore, networkManagerAll, networkManagerCollapse];
+  if (!buttons.includes(previouslyFocused) || !previouslyFocused.hidden) return;
+  const replacement = buttons.find((button) => !button.hidden);
+  if (replacement) replacement.focus();
+}
+
+/**
+ * renders the disclosed slice of the manager, reusing the rows already rendered
+ *
+ * Show 25 more appends only what it adds and Collapse removes only what it hides,
+ * exactly as the Network lists do, so expanding a list of several hundred accounts
+ * does not rebuild the rows the reader has already acted on.
+ *
+ * @param {number} visibleCount how many rows should be rendered
+ * @returns {void} no return value
+ */
+function renderManagerRows(visibleCount) {
+  const accounts = managerState.filtered;
+  const reusable = managerState.renderedAccounts === accounts;
+  const rendered = reusable ? managerState.renderedCount : 0;
+
+  if (!reusable) {
+    networkManagerList.replaceChildren();
+    managerState.rows = new Map();
+  }
+
+  if (visibleCount > rendered) {
+    const fragment = document.createDocumentFragment();
+    for (let index = rendered; index < visibleCount; index += 1) {
+      const account = accounts[index];
+      const row = createManagerRow(account);
+      managerState.rows.set(account.login.toLowerCase(), row);
+      fragment.appendChild(row);
+    }
+    networkManagerList.appendChild(fragment);
+  } else if (visibleCount < rendered) {
+    for (let index = rendered; index > visibleCount; index -= 1) {
+      const removed = networkManagerList.lastElementChild;
+      managerState.rows.delete(removed.dataset.login);
+      removed.remove();
+    }
+  }
+
+  managerState.renderedAccounts = accounts;
+  managerState.renderedCount = visibleCount;
+  networkManagerList.hidden = visibleCount === 0;
+}
+
+/**
+ * builds one account row: enough to decide, and one control that decides it
+ *
+ * The row carries what GitHub already returned with the relationship list — the
+ * avatar, the login, and a link to the profile. It does not fetch a profile per
+ * account: for a few hundred rows that would be a few hundred requests spent on
+ * decoration, and the link is there for anyone who wants the real thing.
+ *
+ * @param {Object} account account to manage
+ * @returns {HTMLLIElement} the row
+ */
+function createManagerRow(account) {
+  const normalized = account.login.toLowerCase();
+  const row = document.createElement("li");
+  row.className = "manager-row";
+  row.dataset.login = normalized;
+
+  if (account.avatarUrl) {
+    const avatar = document.createElement("img");
+    avatar.className = "manager-avatar";
+    avatar.src = account.avatarUrl;
+    // Decorative: the login beside it already names the account.
+    avatar.alt = "";
+    avatar.width = 30;
+    avatar.height = 30;
+    avatar.loading = "lazy";
+    row.appendChild(avatar);
+  }
+
+  const identity = document.createElement("div");
+  identity.className = "manager-identity";
+  const link = document.createElement("a");
+  link.className = "manager-login";
+  link.href = account.profileUrl;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.setAttribute("aria-label", `View ${account.login} on GitHub`);
+  link.appendChild(document.createTextNode(account.login));
+  const view = document.createElement("span");
+  view.className = "manager-view";
+  view.textContent = "View on GitHub";
+  link.appendChild(view);
+  identity.appendChild(link);
+  row.appendChild(identity);
+
+  const actions = document.createElement("div");
+  actions.className = "manager-actions";
+
+  const unfollowButton = document.createElement("button");
+  unfollowButton.type = "button";
+  unfollowButton.className = "secondary manager-unfollow";
+  unfollowButton.dataset.action = "unfollow";
+  unfollowButton.textContent = "Unfollow";
+  unfollowButton.setAttribute("aria-label", `Unfollow ${account.login}`);
+
+  const confirm = document.createElement("span");
+  confirm.className = "manager-confirm";
+  confirm.hidden = true;
+  const confirmLabel = document.createElement("span");
+  confirmLabel.className = "manager-confirm-label";
+  confirmLabel.textContent = `Unfollow @${account.login}?`;
+  const confirmYes = document.createElement("button");
+  confirmYes.type = "button";
+  confirmYes.className = "secondary";
+  confirmYes.dataset.action = "confirm";
+  confirmYes.textContent = "Unfollow";
+  confirmYes.setAttribute("aria-label", `Confirm unfollowing ${account.login}`);
+  const confirmNo = document.createElement("button");
+  confirmNo.type = "button";
+  confirmNo.className = "secondary";
+  confirmNo.dataset.action = "cancel";
+  confirmNo.textContent = "Keep";
+  confirmNo.setAttribute("aria-label", `Keep following ${account.login}`);
+  confirm.append(confirmLabel, confirmYes, confirmNo);
+
+  actions.append(unfollowButton, confirm);
+  row.appendChild(actions);
+
+  const outcome = document.createElement("p");
+  outcome.className = "manager-outcome";
+  outcome.id = `manager-outcome-${normalized}`;
+  outcome.hidden = true;
+  row.appendChild(outcome);
+
+  applyManagerRowState(row, account);
+  return row;
+}
+
+/**
+ * paints one row to match what the manager knows about that account
+ *
+ * The primary button is never replaced, only relabelled, which is what keeps focus
+ * still through a confirmation, a request, and its result. A reader who unfollows
+ * an account is left exactly where they were rather than being thrown back to the
+ * top of a list of three hundred.
+ *
+ * State is never carried by colour alone: every row says in words what happened.
+ *
+ * @param {HTMLLIElement} row the row to paint
+ * @param {Object} account the account it describes
+ * @returns {void} no return value
+ */
+function applyManagerRowState(row, account) {
+  const normalized = account.login.toLowerCase();
+  const outcome = managerState.outcomes.get(normalized) ?? null;
+  const pending = managerState.pending === normalized;
+  const confirming = managerState.confirming === normalized;
+  const button = row.querySelector(".manager-unfollow");
+  const confirmGroup = row.querySelector(".manager-confirm");
+  const outcomeText = row.querySelector(".manager-outcome");
+
+  confirmGroup.hidden = !confirming;
+  button.hidden = confirming;
+  row.dataset.state = pending ? "pending" : outcome ? outcome.state : confirming ? "confirming" : "idle";
+  row.toggleAttribute("aria-busy", pending);
+
+  if (pending) {
+    button.textContent = "Unfollowing…";
+    button.setAttribute("aria-label", `Unfollowing ${account.login}`);
+    button.setAttribute("aria-disabled", "true");
+  } else if (outcome && outcome.state === "done") {
+    button.textContent = outcome.label;
+    button.setAttribute("aria-label", `${outcome.label}: ${account.login}`);
+    button.setAttribute("aria-disabled", "true");
+  } else {
+    button.textContent = "Unfollow";
+    button.setAttribute("aria-label", `Unfollow ${account.login}`);
+    button.removeAttribute("aria-disabled");
+  }
+
+  const message = outcome?.message ?? "";
+  outcomeText.textContent = message;
+  outcomeText.hidden = !message;
+  if (message) button.setAttribute("aria-describedby", outcomeText.id);
+  else button.removeAttribute("aria-describedby");
+}
+
+/**
+ * repaints exactly the row one account is on, leaving the rest of the list alone
+ * @param {string} login account whose row changed
+ * @returns {void} no return value
+ */
+function refreshManagerRow(login) {
+  const normalized = login.toLowerCase();
+  const row = managerState.rows.get(normalized);
+  const account = managerState.accountsByLogin.get(normalized);
+  if (row && account) applyManagerRowState(row, account);
+}
+
+/**
+ * says what just happened, once, where assistive technology will read it
+ * @param {string} message sentence to announce
+ * @param {boolean} isError whether the sentence reports a failure
+ * @returns {void} no return value
+ */
+function announceManager(message, isError = false) {
+  networkManagerAnnouncement.textContent = message;
+  networkManagerAnnouncement.classList.toggle("is-error", isError);
+}
+
+/**
+ * routes a click inside the manager list to the row it happened on
+ *
+ * An activation of a control already marked `aria-disabled` is ignored here rather
+ * than prevented by the `disabled` attribute, because a disabled button drops out
+ * of the tab order and takes the reader's place in the list with it.
+ *
+ * @param {MouseEvent} event click within the list
+ * @returns {void} no return value
+ */
+function handleManagerListClick(event) {
+  const control = event.target.closest("button[data-action]");
+  if (!control) return;
+  const row = control.closest(".manager-row");
+  if (!row) return;
+  // GitHub's own spelling, so a message never renames the account the reader is
+  // looking at and the server receives the login GitHub returned.
+  const login = managerState.accountsByLogin.get(row.dataset.login)?.login;
+  if (!login) return;
+
+  if (control.dataset.action === "cancel") {
+    setManagerConfirmation(login, false);
+    return;
+  }
+  if (control.getAttribute("aria-disabled") === "true") return;
+  if (control.dataset.action === "unfollow") {
+    setManagerConfirmation(login, true);
+    return;
+  }
+  if (control.dataset.action === "confirm") requestUnfollow(login);
+}
+
+/**
+ * opens, cancels, or acts on the deliberate confirmation for one row
+ *
+ * The two-stage confirmation is the pattern this application already uses to guard
+ * deleting observation history, so it is the one used here. It asks nothing to be
+ * typed, costs one extra keystroke, and leaves a reader working through a long
+ * list able to go Tab, Enter, Enter. A modal per account would be correct and
+ * unbearable at a hundred repetitions.
+ *
+ * @param {string} login account being confirmed
+ * @param {boolean} confirming whether the confirmation should be open
+ * @returns {void} no return value
+ */
+function setManagerConfirmation(login, confirming) {
+  const normalized = login.toLowerCase();
+  const previous = managerState.confirming;
+  managerState.confirming = confirming ? normalized : null;
+  // Only one confirmation is open at a time, so an older one is closed rather than
+  // left armed somewhere further up the list.
+  if (previous && previous !== managerState.confirming) refreshManagerRow(previous);
+  refreshManagerRow(normalized);
+
+  const row = managerState.rows.get(normalized);
+  if (!row) return;
+  if (confirming) row.querySelector('[data-action="confirm"]').focus();
+  else if (previous === normalized) row.querySelector(".manager-unfollow").focus();
+}
+
+/**
+ * asks GitProfileLens to unfollow one account, and believes only GitHub's answer
+ *
+ * Nothing about the relationship changes here until the server has reported that
+ * GitHub accepted the change. There is no optimistic removal to undo, which means
+ * a failure has nothing to roll back and cannot leave the interface claiming an
+ * unfollow that did not happen.
+ *
+ * @param {string} login account to unfollow
+ * @returns {Promise<void>} no return value
+ */
+async function requestUnfollow(login) {
+  const normalized = login.toLowerCase();
+  // One request at a time for the whole manager. A second activation of the same
+  // row from a double click or a held Enter key finds it already pending and does
+  // nothing, and a different row waits rather than turning deliberate review into
+  // a burst of writes against GitHub's content-creation limit.
+  if (managerState.pending) return;
+  if (managerState.outcomes.get(normalized)?.state === "done") return;
+
+  managerState.pending = normalized;
+  managerState.confirming = null;
+  refreshManagerRow(normalized);
+  announceManager(`Unfollowing @${login}…`);
+
+  let response;
+  let data = null;
+  try {
+    response = await fetch("/api/unfollow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ login }),
+    });
+    data = await response.json().catch(() => null);
+  } catch {
+    finishUnfollow(login, {
+      state: "failed",
+      message: "GitProfileLens could not be reached, so nothing was changed. " +
+        `You are still following @${login}.`,
+    });
+    return;
+  }
+
+  if (response.status === 401) {
+    // The session is gone, so every other row is unactionable too.
+    appState.authUser = null;
+    appState.canManageFollows = false;
+    renderAuthState();
+    finishUnfollow(login, {
+      state: "failed",
+      message: data?.error || "Your GitHub session expired. Please sign in again.",
+    });
+    return;
+  }
+  if (response.status === 403 && data?.reason === "permission_required") {
+    appState.canManageFollows = false;
+    finishUnfollow(login, {
+      state: "failed",
+      message: data.error + " Go back to Network to grant it.",
+    });
+    return;
+  }
+  if (!response.ok || !data?.state) {
+    finishUnfollow(login, {
+      state: "failed",
+      message: data?.error || `GitHub did not confirm the change. You are still following @${login}.`,
+    });
+    return;
+  }
+
+  // GitHub confirmed. `already_not_following` is just as authoritative: the
+  // relationship is over either way, and saying which is honest about the fact
+  // that the page had gone stale rather than pretending this click did it.
+  reconcileUnfollow(login);
+  finishUnfollow(login, {
+    state: "done",
+    label: data.state === "already_not_following" ? "Not following" : "Unfollowed",
+    message: data.message,
+  });
+}
+
+/**
+ * records one row's result, repaints it, and announces it
+ * @param {string} login account the result belongs to
+ * @param {Object} outcome resulting state, label, and message
+ * @returns {void} no return value
+ */
+function finishUnfollow(login, outcome) {
+  const normalized = login.toLowerCase();
+  managerState.outcomes.set(normalized, outcome);
+  managerState.pending = null;
+  refreshManagerRow(login);
+  announceManager(
+    outcome.state === "done"
+      ? `${outcome.message} ${countRemainingToManage()}`
+      : outcome.message,
+    outcome.state === "failed"
+  );
+}
+
+/**
+ * counts the accounts in the manager that have not yet been acted on
+ * @returns {string} a sentence naming what is left
+ */
+function countRemainingToManage() {
+  let remaining = 0;
+  for (const account of managerState.accounts) {
+    if (managerState.outcomes.get(account.login.toLowerCase())?.state !== "done") remaining += 1;
+  }
+  return `${remaining} ${remaining === 1 ? "account remains" : "accounts remain"} in this list.`;
+}
+
+/**
+ * brings every derived view of the network into line with a confirmed unfollow
+ *
+ * This runs only after GitHub has confirmed, and it reconciles rather than
+ * re-fetches: the retrieved network differs from the current one by exactly one
+ * account, and spending four more GitHub requests to rediscover that would be
+ * slower, would risk the unauthenticated rate limit, and would replace observation
+ * history's ordering for no gain.
+ *
+ * Every surface moves together — the counts, both lists, the Markdown, and the
+ * observation history — so no part of the page is left asserting a relationship
+ * that GitProfileLens knows first-hand has ended.
+ *
+ * @param {string} login account GitHub confirmed is no longer followed
+ * @returns {void} no return value
+ */
+function reconcileUnfollow(login) {
+  const removal = GitProfileNetwork.withAccountRemoved(networkState.network, login);
+  if (!removal.removed) return;
+  networkState.network = removal.network;
+
+  // History is told about the mutation rather than left to infer it from the next
+  // retrieval, because a confirmed unfollow is stronger evidence than an
+  // observation and the history would otherwise keep asserting the relationship.
+  if (networkState.history.following) {
+    const recorded = networkHistory.recordUnfollow({
+      login: networkState.username,
+      target: login,
+      confirmedAt: new Date(),
+    });
+    if (recorded.list) networkState.history.following = recorded.list;
+  }
+
+  // One account leaves an order that already holds for everything else, so the
+  // display order is filtered rather than derived again. Each of these passes is
+  // linear in the list, which keeps a reader working through a hundred accounts
+  // linear overall rather than quadratic.
+  const target = login.toLowerCase();
+  const following = networkState.ordered.following.filter(
+    (account) => account.login.toLowerCase() !== target
+  );
+  networkState.ordered = { followers: networkState.ordered.followers, following };
+  const notFollowingBack = GitProfileNetwork.deriveNotFollowingBack({
+    ...removal.network,
+    following: { ...removal.network.following, accounts: following },
+  });
+  networkState.notFollowingBack = notFollowingBack;
+  networkState.markdown = GitProfileNetwork.buildMarkdown(removal.network, {
+    followers: networkState.ordered.followers,
+    following,
+    notFollowingBack,
+    orderingNote: networkOrderingNote.textContent,
+  });
+  networkOutput.value = networkState.markdown;
+  // The Network lists are hidden behind the manager, so their DOM is rebuilt when
+  // the reader goes back rather than once per unfollow.
+  managerState.dirty = true;
+}
+
+/**
+ * repaints the network lists and counts from the reconciled state
+ * @returns {void} no return value
+ */
+function renderReconciledNetwork() {
+  const network = networkState.network;
+  if (!network) return;
+
+  networkFollowerCount.textContent = formatNetworkCount(network.followers);
+  networkFollowingCount.textContent = formatNetworkCount(network.following);
+  setNetworkSectionAccounts("following", networkState.ordered.following, networkState.history.following);
+  const notFollowingBack = networkState.notFollowingBack ?? [];
+  networkUnreciprocatedCount.textContent = String(notFollowingBack.length);
+  setNetworkSectionAccounts("unreciprocated", notFollowingBack, networkState.history.following);
+  updateGlobalDisclosureControls();
+
+  networkStatus.textContent =
+    `Loaded ${network.followers.accounts.length} followers and ` +
+    `${network.following.accounts.length} following for @${network.user.login}. ` +
+    `${notFollowingBack.length} of those followed accounts do not follow back.`;
+
+  const countDifference = GitProfileNetwork.describeCountDifference(network);
+  networkNotice.textContent = countDifference || "";
+  networkNotice.hidden = !countDifference;
 }
 
 /**
@@ -2655,10 +3526,15 @@ function clearNetworkPanel() {
   networkHistoryConfirmGroup.hidden = true;
   networkHistoryResetButton.hidden = false;
   networkOrderingNote.textContent = GitProfileNetworkHistory.describeOrdering(null);
+  // Management state belongs to the network that is being cleared. Switching
+  // profiles, retrying, or reloading must never leave one profile's pending row,
+  // error, or confirmation showing against another's accounts.
+  resetUnfollowManager();
 
   // Disclosure is per profile: a newly loaded list never inherits "Showing 75 of …".
   networkState.visibleCounts = createInitialVisibleCounts();
   networkState.history = { followers: null, following: null, storage: null, droppedProfiles: 0 };
+  networkState.ordered = { followers: [], following: [] };
   for (const section of networkSections) {
     section.accounts = [];
     section.historyList = null;
