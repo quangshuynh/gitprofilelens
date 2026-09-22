@@ -23,6 +23,7 @@
 const { CORPUS } = require("../tests/scoring/fixtures/index.js");
 const { EVALUATION_DATE, auditProfile } = require("../tests/scoring/harness.js");
 const {
+  COMPARABLE_SCORE_BAND,
   SELECTION_STAGES,
   SHARED_TOPIC_THRESHOLD,
   optimizePinnedSet,
@@ -34,11 +35,15 @@ const STAGE_NAMES = SELECTION_STAGES.map((stage) => stage.name);
 /**
  * builds one candidate selection policy as an ordered list of named stages
  *
- * Every policy is assembled from the production stages rather than reimplemented,
- * so a diagnostic can never measure a rule the optimizer does not actually have.
- * The band policies replace the breadth stage with one that abstains unless the
- * two candidates' presentation scores are close enough to read as comparable
- * evidence; outside the band the score stage decides on its own.
+ * Every stage other than breadth is taken straight from the production order, so a
+ * diagnostic cannot measure rules the optimizer does not have. Breadth is rebuilt
+ * from the raw redundancy measurement because the production breadth stage already
+ * carries a band; wrapping it would compose two bands and measure nothing real.
+ *
+ * A banded policy abstains unless the two candidates' presentation scores are close
+ * enough to read as comparable evidence; outside the band the score stage decides
+ * on its own. The run asserts that the production band reproduces the policy of the
+ * same width, which is what keeps this honest.
  *
  * @param {string} kind policy identifier
  * @param {number} band presentation-score band, used by the banded policies
@@ -49,14 +54,26 @@ function policyStages(kind, band = 0) {
   const head = [byName.candidacy, byName.originality, byName.archive];
   const tail = [byName.maintenance, byName.metadata, byName.name];
 
+  // Built from the raw redundancy measurement rather than from the production
+  // breadth stage, which already carries a band of its own. Delegating to it would
+  // compose the two bands and measure a rule nothing implements.
+  const rawBreadth = (entryA, entryB) => entryA.redundancy.total - entryB.redundancy.total;
+
   if (kind === "current") return SELECTION_STAGES;
-  if (kind === "score-first") return [...head, byName.score, byName.breadth, ...tail];
+  if (kind === "unbounded") {
+    // What breadth did before the comparable band: rank by redundancy whatever the
+    // presentation gap. Kept so the change stays measurable.
+    return [...head, { name: "breadth", compare: rawBreadth }, byName.score, ...tail];
+  }
+  if (kind === "score-first") {
+    return [...head, byName.score, { name: "breadth", compare: rawBreadth }, ...tail];
+  }
 
   const banded = {
     name: "breadth",
     compare: (entryA, entryB) =>
       Math.abs(entryB.candidate.score - entryA.candidate.score) <= band
-        ? byName.breadth.compare(entryA, entryB)
+        ? rawBreadth(entryA, entryB)
         : 0,
   };
   return [...head, banded, byName.score, ...tail];
@@ -64,7 +81,12 @@ function policyStages(kind, band = 0) {
 
 /** The policies compared, in report order. */
 const POLICIES = [
-  { id: "current", label: "Current policy (breadth before score)", stages: policyStages("current") },
+  {
+    id: "current",
+    label: `Current policy (breadth within ${COMPARABLE_SCORE_BAND} points)`,
+    stages: policyStages("current"),
+  },
+  { id: "unbounded", label: "Breadth before score, unbounded", stages: policyStages("unbounded") },
   { id: "score-first", label: "Score before breadth", stages: policyStages("score-first") },
   { id: "band-2", label: "Breadth within 2 points", stages: policyStages("band", 2) },
   { id: "band-5", label: "Breadth within 5 points", stages: policyStages("band", 5) },
@@ -513,6 +535,16 @@ function main() {
     JSON.stringify(bandZero[id].recommended.map((entry) => entry.name)) ===
     JSON.stringify(scoreFirst[id].recommended.map((entry) => entry.name)));
   console.log(`\nConsistency check: band 0 matches score-before-breadth: ${identical}`);
+
+  // The production band must be exactly one of the compared policies, or this
+  // comparison is describing a rule the optimizer does not have.
+  const productionBand = byPolicy[`band-${COMPARABLE_SCORE_BAND}`];
+  const matchesProduction = Object.keys(current).every((id) =>
+    JSON.stringify(current[id].recommended.map((entry) => entry.name)) ===
+    JSON.stringify(productionBand[id].recommended.map((entry) => entry.name)));
+  console.log(
+    `Consistency check: production matches band ${COMPARABLE_SCORE_BAND}: ${matchesProduction}`
+  );
 
   if (wantTrace) {
     console.log("\n== Per-slot decision traces (current policy) ==");
