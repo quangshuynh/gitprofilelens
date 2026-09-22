@@ -397,6 +397,120 @@ async function measureScenario(scenario, chromePath) {
   }
 }
 
+/** Manager sizes swept synthetically, from one page to the retrieval cap. */
+const MANAGER_SIZES = [25, 250, 1000, 10000];
+
+/**
+ * measures the unfollow manager at sizes the retrieval itself cannot easily reach
+ *
+ * Driven synthetically rather than through GitHub so that the thing being
+ * measured is the manager and nothing else. Retrieving ten thousand accounts for
+ * real would spend the measurement on a hundred paginated responses and on an
+ * observation history large enough that the storage quota, not the rendering,
+ * would decide the numbers.
+ *
+ * What matters here is that every figure stays flat as the list grows. A manager
+ * that renders a bounded page costs the same to open whether it holds twenty-five
+ * accounts or ten thousand, and reconciling one confirmed unfollow is one pass
+ * over the list rather than one pass per account already removed.
+ *
+ * @param {string} chromePath chrome executable
+ * @returns {Promise<Array<Object>>} one measurement per size
+ */
+async function measureSyntheticManager(chromePath) {
+  const server = http.createServer(serveProjectFile);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await instrumentElementCreation(page);
+    await mockScenario(page, SCENARIOS[0]);
+    // The manager is offered only to a session that owns the audited profile and
+    // carries the follow-management permission, so the measurement signs in.
+    await page.route("**/api/auth/session", (route) => route.fulfill({
+      json: {
+        authenticated: true,
+        user: { login: "example", avatar_url: AVATAR },
+        can_manage_follows: true,
+      },
+    }));
+    await page.goto(`${baseUrl}/?user=example&view=network`);
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    await page.locator("#network-manage-unfollows").click();
+    await page.locator("#network-manager").waitFor({ state: "visible" });
+
+    const measurements = [];
+    for (const size of MANAGER_SIZES) {
+      await takeCreated(page);
+      const timings = await page.evaluate((count) => {
+        const accounts = Array.from({ length: count }, (unused, index) => ({
+          login: `synthetic-${index}`,
+          profileUrl: `https://github.com/synthetic-${index}`,
+          avatarUrl: null,
+        }));
+        /**
+         * re-renders the manager over a fresh list and times it
+         * @param {Function} work change to apply before rendering
+         * @returns {number} milliseconds the render took
+         */
+        const render = (work) => {
+          work();
+          const startedAt = performance.now();
+          renderUnfollowManager();
+          return performance.now() - startedAt;
+        };
+
+        const open = render(() => {
+          managerState.accounts = accounts;
+          managerState.accountsByLogin = new Map(
+            accounts.map((entry) => [entry.login.toLowerCase(), entry])
+          );
+          managerState.outcomes = new Map();
+          managerState.filter = "";
+          managerState.visibleCount = 25;
+          managerState.renderedAccounts = null;
+          managerState.renderedCount = 0;
+          managerState.rows = new Map();
+        });
+        const openRows = document.querySelectorAll(".manager-row").length;
+
+        const more = render(() => { managerState.visibleCount += 25; });
+        const all = render(() => { managerState.visibleCount = accounts.length; });
+        const allRows = document.querySelectorAll(".manager-row").length;
+        const allNodes = document.querySelectorAll("*").length;
+
+        const collapse = render(() => { managerState.visibleCount = 25; });
+        const filter = render(() => { managerState.filter = "synthetic-1"; });
+        const filterRows = document.querySelectorAll(".manager-row").length;
+        render(() => { managerState.filter = ""; });
+
+        // One confirmed unfollow's reconciliation, measured on a network of this
+        // size: remove the account, then re-derive the difference from it.
+        const network = {
+          user: { login: "example", reportedFollowers: 0, reportedFollowing: count },
+          followers: { accounts: [], complete: true, error: null },
+          following: { accounts, complete: true, error: null },
+          complete: true,
+        };
+        const reconcileStartedAt = performance.now();
+        const removal = GitProfileNetwork.withAccountRemoved(network, accounts[0].login);
+        GitProfileNetwork.deriveNotFollowingBack(removal.network);
+        const reconcile = performance.now() - reconcileStartedAt;
+
+        return { open, openRows, more, all, allRows, allNodes, collapse, filter, filterRows, reconcile };
+      }, size);
+
+      measurements.push({ size, ...timings, created: await takeCreated(page) });
+    }
+    return measurements;
+  } finally {
+    await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 /**
  * prints a label and value pair aligned into a column
  * @param {string} name row label
@@ -465,6 +579,26 @@ function report(result) {
 }
 
 /**
+ * prints the synthetic manager sweep
+ * @param {Array<Object>} measurements one entry per manager size
+ * @returns {void} no return value
+ */
+function reportSyntheticManager(measurements) {
+  console.log("\n== Unfollow manager, synthetic ==\n");
+  console.log("  accounts   rows open  nodes all  open ms  +25 ms  all ms  filter ms  reconcile ms");
+  for (const entry of measurements) {
+    console.log(
+      `  ${String(entry.size).padEnd(11)}${String(entry.openRows).padEnd(11)}` +
+      `${String(entry.allNodes).padEnd(11)}${entry.open.toFixed(1).padEnd(9)}` +
+      `${entry.more.toFixed(1).padEnd(8)}${entry.all.toFixed(1).padEnd(8)}` +
+      `${entry.filter.toFixed(1).padEnd(11)}${entry.reconcile.toFixed(1)}`
+    );
+  }
+  console.log("\n  Opening the manager renders one page at every size. Rows rendered while");
+  console.log("  expanded are the cost of Show all, which the reader asks for explicitly.");
+}
+
+/**
  * runs every requested scenario and prints its measurements
  * @returns {Promise<void>} no return value
  */
@@ -492,6 +626,8 @@ async function main() {
   for (const scenario of scenarios) {
     report(await measureScenario(scenario, chromePath));
   }
+
+  if (!only) reportSyntheticManager(await measureSyntheticManager(chromePath));
 }
 
 main().catch((error) => {
