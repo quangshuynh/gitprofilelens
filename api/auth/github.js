@@ -6,6 +6,16 @@ const {
   setPrivateResponseHeaders,
 } = require("./session-crypto.js");
 
+/**
+ * marks an authorization the reader started in order to manage who they follow
+ *
+ * GitHub grants a GitHub App's user permissions as one set, so this suffix cannot
+ * narrow what the token can do. What it records is intent: the reader arrived here
+ * from the follow-management explanation rather than from ordinary sign-in, and
+ * only a session carrying that intent is allowed to spend the write permission.
+ */
+const MANAGE_FOLLOWS_MARKER = "~follows";
+
 function githubAuthHandler(request, response) {
   setPrivateResponseHeaders(response);
   if (request.method !== "GET") {
@@ -21,7 +31,11 @@ function githubAuthHandler(request, response) {
     return;
   }
 
-  const state = createOAuthState();
+  // The marker travels inside the state, which is echoed back by GitHub and
+  // verified against the HttpOnly cookie before it is read. Nothing the browser
+  // can set on its own reaches the session.
+  const managingFollows = String(request.query?.manage || "") === "follows";
+  const state = createOAuthState() + (managingFollows ? MANAGE_FOLLOWS_MARKER : "");
   const authorizationUrl = new URL("https://github.com/login/oauth/authorize");
   authorizationUrl.searchParams.set("client_id", clientId);
   authorizationUrl.searchParams.set("redirect_uri", callbackUrl);
@@ -34,3 +48,4 @@ function githubAuthHandler(request, response) {
 }
 
 module.exports = githubAuthHandler;
+module.exports.MANAGE_FOLLOWS_MARKER = MANAGE_FOLLOWS_MARKER;

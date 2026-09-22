@@ -9,6 +9,7 @@ const {
   stateMatches,
   setPrivateResponseHeaders,
 } = require("./session-crypto.js");
+const { MANAGE_FOLLOWS_MARKER } = require("./github.js");
 
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
 const USER_URL = "https://api.github.com/user";
@@ -38,6 +39,10 @@ async function githubCallbackHandler(request, response) {
     return;
   }
 
+  // Read from the cookie, which is HttpOnly and was just proven equal to what
+  // GitHub echoed back, rather than from the query the browser could have edited.
+  const managingFollows = String(cookies[STATE_COOKIE]).endsWith(MANAGE_FOLLOWS_MARKER);
+
   try {
     const token = await exchangeCode({ code, clientId, clientSecret, callbackUrl });
     const user = await fetchAuthenticatedUser(token.access_token);
@@ -50,6 +55,9 @@ async function githubCallbackHandler(request, response) {
         ? now + token.refresh_token_expires_in * 1000
         : null,
       user: { login: user.login, avatar_url: user.avatar_url },
+      // Never inferred and never defaulted on: an ordinary sign-in leaves this
+      // false, so the unfollow endpoint refuses that session outright.
+      manageFollows: managingFollows,
       expiresAt: now + SESSION_DURATION_SECONDS * 1000,
     };
     response.setHeader("Set-Cookie", [
@@ -57,7 +65,7 @@ async function githubCallbackHandler(request, response) {
       createCookie(SESSION_COOKIE, seal(session), SESSION_DURATION_SECONDS),
     ]);
     response.statusCode = 302;
-    response.setHeader("Location", "/?auth=success");
+    response.setHeader("Location", managingFollows ? "/?auth=manage-follows" : "/?auth=success");
     response.end();
   } catch {
     response.status(502).json({ error: "GitHub sign-in failed. Please try again." });
