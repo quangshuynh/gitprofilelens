@@ -21,7 +21,11 @@
 
 const { CORPUS } = require("../tests/scoring/fixtures/index.js");
 const { EVALUATION_DATE, auditProfile } = require("../tests/scoring/harness.js");
-const { SELECTION_STAGES, optimizePinnedSet } = require("../pinned-optimizer.js");
+const {
+  CANDIDACY_SCORE_BAND,
+  SELECTION_STAGES,
+  optimizePinnedSet,
+} = require("../pinned-optimizer.js");
 
 /**
  * The Strong candidate gates, named and reproduced from the production classifier.
@@ -148,7 +152,11 @@ function policyStages(kind, band = 0) {
 
 /** The policies compared, in report order. */
 const POLICIES = [
-  { id: "current", label: "Current policy (candidacy unbounded, ahead of every other rule)", stages: policyStages("current") },
+  {
+    id: "current",
+    label: `Current policy (candidacy within ${CANDIDACY_SCORE_BAND} points)`,
+    stages: policyStages("current"),
+  },
   { id: "unbounded", label: "Candidacy before score, unbounded", stages: policyStages("unbounded") },
   { id: "score-first", label: "Score before candidacy", stages: policyStages("score-first") },
   { id: "band-2", label: "Candidacy within 2 points", stages: policyStages("band", 2) },
@@ -492,6 +500,161 @@ function isoDaysBefore(days) {
 }
 
 /**
+ * searches the reachable repository space for the true Strong floor and Worth ceiling
+ *
+ * An earlier version of this report answered this question with a single
+ * hand-built pair and reported its two scores as though they were bounds. They
+ * were not; they were one generator's output. A bound has to come from a search,
+ * so this enumerates the cross product of every scoring input that can vary and
+ * reports the extremes the classifier actually admits.
+ *
+ * The distinction that matters is which gate a Worth polishing repository failed.
+ * Failing a gate the presentation score also reads costs it score, so those
+ * inversions are capped by the scorer. Failing fork or archive status costs it no
+ * score at all, so those are capped only by the range of the scale.
+ *
+ * @returns {Object} the extremes the search found
+ */
+function measureReachableBounds() {
+  const auditModule = require("../audit.js");
+  const { buildRepository } = require("../tests/scoring/fixtures/builders.js");
+
+  const names = ["layout-engine", "My_Project", "project", "tutorial-notes"];
+  const descriptions = [
+    "A deterministic layout engine with a documented plugin interface",
+    "deterministic layout engine",
+    "A tool",
+    null,
+    "(wip) A deterministic layout engine with a documented plugin interface",
+    "a deterministic layout engine with a documented plugin interface here",
+  ];
+  const readmes = [];
+  for (const core of [0, 1, 2, 3]) {
+    for (const examples of [false, true]) {
+      for (const image of [false, true]) {
+        for (const contributing of [false, true]) {
+          readmes.push({
+            present: true,
+            size: 2400,
+            sections: {
+              overview: core >= 1,
+              installation: core >= 2,
+              usage: core >= 3,
+              examples,
+              contributing,
+            },
+            hasCodeBlock: true,
+            hasImage: image,
+            headingCount: 6,
+          });
+        }
+      }
+    }
+  }
+  readmes.push({ present: true, size: 320 }, { present: false, size: null }, { present: null, size: null });
+
+  /**
+   * scores one point in the search space
+   * @param {Object} shape repository inputs
+   * @returns {Object} repository audit
+   */
+  function scoreShape(shape) {
+    const raw = buildRepository("example", {
+      name: shape.name,
+      note: "Reachable-bound search; one point in the input cross product.",
+      description: shape.description,
+      language: shape.language,
+      topics: shape.topics,
+      license: shape.license,
+      homepage: shape.homepage,
+      pushedAt: isoDaysBefore(shape.age),
+      fork: shape.fork,
+      archived: shape.archived,
+    });
+    return auditModule.scoreRepository(
+      auditModule.transformRepository(
+        shape.forkUnknown ? { ...raw, fork: undefined } : raw,
+        { pinnedRepositories: [], readmes: { [shape.name]: shape.readme } }
+      ),
+      EVALUATION_DATE
+    );
+  }
+
+  /**
+   * enumerates the cross product under one originality and archive setting
+   * @param {Object} fixed fork, archived and forkUnknown settings held constant
+   * @returns {Array<Object>} every audited shape
+   */
+  function enumerate(fixed) {
+    const found = [];
+    for (const name of names) {
+      for (const description of descriptions) {
+        for (const readme of readmes) {
+          for (const topics of [[], ["a"], ["a", "b", "c"]]) {
+            for (const license of [null, "MIT"]) {
+              for (const homepage of [null, "https://example.com"]) {
+                for (const language of ["Rust", "JavaScript", null]) {
+                  for (const age of [30, 400, 800, 1200]) {
+                    const shape = {
+                      name, description, readme, topics, license, homepage, language, age,
+                      fork: false, archived: false, forkUnknown: false, ...fixed,
+                    };
+                    found.push({ shape, audit: scoreShape(shape) });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  /**
+   * reports the highest-scoring Worth polishing shape in one population
+   * @param {Array<Object>} population audited shapes
+   * @returns {Object|null} the highest Worth shape, or null when there is none
+   */
+  function highestWorth(population) {
+    const worth = population.filter((entry) => entry.audit.candidate.label === "polish");
+    return worth.length === 0
+      ? null
+      : worth.reduce((best, entry) => (entry.audit.score > best.audit.score ? entry : best));
+  }
+
+  const active = enumerate({});
+  const strong = active.filter((entry) => entry.audit.candidate.label === "strong");
+  const lowestStrong = strong.reduce((best, entry) =>
+    (entry.audit.score < best.audit.score ? entry : best));
+  const sharedCeiling = highestWorth(active);
+
+  const exclusive = {
+    forkUnknown: highestWorth(enumerate({ forkUnknown: true })),
+    archived: highestWorth(enumerate({ archived: true })),
+    fork: highestWorth(enumerate({ fork: true })),
+  };
+
+  return {
+    searched: active.length,
+    strongFloor: lowestStrong.audit.score,
+    sharedCeiling: sharedCeiling.audit.score,
+    sharedCeilingFails: STRONG_GATES
+      .filter((gate) => !gate.test(sharedCeiling.audit.candidate.evidence))
+      .map((gate) => gate.name),
+    sharedInversion: sharedCeiling.audit.score - lowestStrong.audit.score,
+    exclusive: Object.fromEntries(Object.entries(exclusive).map(([key, entry]) => [
+      key,
+      entry === null
+        ? null
+        : { score: entry.audit.score, inversion: entry.audit.score - lowestStrong.audit.score },
+    ])),
+    strongBelowCeiling: strong.filter((entry) => entry.audit.score < sharedCeiling.audit.score).length,
+    strongCount: strong.length,
+  };
+}
+
+/**
  * summarizes the character of the sets one policy produced
  * @param {Object} results per-profile optimizer results
  * @returns {Object} aggregate set metrics
@@ -717,11 +880,25 @@ function main() {
 
   // The production policy must be exactly one of the policies compared, or this
   // whole comparison is describing a rule the optimizer does not have.
-  const unbounded = byPolicy.unbounded;
-  const matches = Object.keys(current).every((id) =>
+  const production = byPolicy[`band-${CANDIDACY_SCORE_BAND}`];
+  const matches = production !== undefined && Object.keys(current).every((id) =>
     JSON.stringify(current[id].recommended.map((entry) => entry.name)) ===
-    JSON.stringify(unbounded[id].recommended.map((entry) => entry.name)));
-  console.log(`Consistency check: production matches the unbounded policy: ${matches}`);
+    JSON.stringify(production[id].recommended.map((entry) => entry.name)));
+  console.log(`Consistency check: production matches band ${CANDIDACY_SCORE_BAND}: ${matches}`);
+
+  console.log("\n== Reachable bounds, found by search rather than by example ==");
+  const bounds = measureReachableBounds();
+  row("shapes searched per population", bounds.searched);
+  row("lowest score a Strong can reach", bounds.strongFloor);
+  row("highest a Worth can reach while", `${bounds.sharedCeiling}  (fails ${bounds.sharedCeilingFails.join(",")})`);
+  row("  failing only score-visible gates", "");
+  row("  => maximum inversion so caused", bounds.sharedInversion);
+  for (const [key, entry] of Object.entries(bounds.exclusive)) {
+    row(`highest Worth with ${key}`, entry === null
+      ? "none classified Worth"
+      : `${entry.score}  => inversion ${entry.inversion}`);
+  }
+  row("Strong shapes below that ceiling", `${bounds.strongBelowCeiling} of ${bounds.strongCount}`);
 
   console.log("\n== Falsification: constructed cases the corpus does not contain ==");
   for (const outcome of runFalsificationCases()) {
@@ -913,6 +1090,7 @@ module.exports = {
   findScoreConflicts,
   measureCandidacyDecisions,
   measureCliffs,
+  measureReachableBounds,
   policyStages,
   runFalsificationCases,
   runPolicy,

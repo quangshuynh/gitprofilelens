@@ -398,7 +398,7 @@ Note what is **not** an eligibility rule: archive status, fork status, and prese
 
 Selection is greedy and lexicographic. There is **no internal utility score**: no weighted sum, no tuned coefficients, nothing that produces a number a user could mistake for a second repository score. Each step re-measures every remaining candidate against the set built so far and applies one total order:
 
-1. **Candidacy tier.** Every `Strong candidate` is considered before any `Worth polishing` repository.
+1. **Candidacy tier**, applied only between repositories whose presentation scores are within five points of each other. A `Strong candidate` precedes a `Worth polishing` repository among comparable presentations; outside that band rule 1 abstains and the score decides. See below.
 2. **Originality.** Confirmed original, then unreported fork status, then GitHub-identified fork.
 3. **Archive status.** Active before archived.
 4. **Redundancy**, applied only between repositories whose presentation scores are within five points of each other. Fewer earned breadth credits last; see below.
@@ -409,23 +409,50 @@ Selection is greedy and lexicographic. There is **no internal utility score**: n
 
 Rule 8 makes the order total, so the recommendation never depends on the order GitHub returned repositories in. Reversing the audit array changes nothing, which is asserted across the whole corpus.
 
-Because redundancy sits at rule 4, breadth can never promote a lower candidacy tier, a fork over an original, or an archive over an active repository. Because it applies only within the comparable-score band, it can no longer promote a markedly weaker presentation over a markedly stronger one either. It chooses among repositories the earlier rules already consider equally suitable, which the band makes true rather than merely stated.
+Because redundancy sits at rule 4, breadth can never promote a fork over an original, or an archive over an active repository, and among comparable presentations it cannot promote a lower candidacy tier either. Because it applies only within the comparable-score band, it can no longer promote a markedly weaker presentation over a markedly stronger one. It chooses among repositories the earlier rules already consider equally suitable, which the band makes true rather than merely stated.
 
-#### Why rule 1 is not bounded the way rule 4 is
+#### The candidacy score band
 
-Rule 1 is a hard partition: every `Strong candidate` precedes every `Worth polishing` repository, whatever their presentation scores. Rule 4 carries a five-point band for exactly the shape of problem rule 1 appears to have, so rule 1 was measured against the same question. `npm run eval:candidacy` reproduces everything below.
+Rule 1 used to be an unqualified hard partition: every `Strong candidate` preceded every `Worth polishing` repository, whatever their presentation scores. Rule 4 already carried a five-point band for the shape of problem that creates, so rule 1 was measured against the same question and now carries one too. `npm run eval:candidacy` reproduces every figure below.
 
-**The partition changes nothing that is observable.** Across the 13-profile, 185-repository evaluation corpus, moving candidacy *below* presentation score — and bounding it with bands of 2, 5 and 10 points — produces **byte-identical recommended sets for every profile**. On a live 33-repository profile with 12 `Strong` candidates, every one of those policies again produces the identical set. Two regression tests assert this, so it is a pinned property rather than a remembered result.
+**Two of the nine `Strong` gates read evidence the presentation score does not read at all**: fork status and archive status. A repository can fail either while scoring 100, because neither costs it a single point. Those two are *not* what the band is about — rules 2 and 3 apply them directly, immediately after rule 1, so they keep deciding whether or not rule 1 abstains.
 
-**It is bounded by construction, which is the part that distinguishes it from breadth.** Seven of the nine `Strong` gates read evidence the presentation score already reads: README state, description score, topics, maintenance score, high findings, medium findings, and the score itself. A repository that fails one of them has already been charged for it in its score. It cannot fail a gate and still run away with the score, so a `Worth polishing` repository can only outscore a `Strong` one by a narrow margin.
+**The other seven gates read evidence the score already reads**: README state, description score, topics, maintenance score, high findings, medium findings, and the score itself. A repository that fails one of them has already been charged for it once, in its score. Ranking candidacy ahead of score without a band charged it a second time, and the second charge had no ceiling worth relying on.
 
-Measured: the lowest score a `Strong` repository can reach while clearing every gate is **87**; the highest a `Worth polishing` repository can reach while failing one is **90**. The widest inversion presentation evidence can produce is therefore **3 points**. On the corpus the widest actual inversion is 5 points, and the largest displacement candidacy causes is 2 points in a single slot.
+##### How large the override actually was
 
-This is the opposite of the breadth situation. Breadth was unbounded precisely because primary language is *orthogonal* to presentation score: a repository could win on language while scoring arbitrarily lower. Candidacy is *correlated* with presentation score, and that correlation is the ceiling. The duplicate evidence that looks like double counting is what keeps the second count small.
+This was first answered with a single hand-built pair — a `Strong` scoring 87 against a `Worth polishing` scoring 90 — and the 3-point gap between them was reported as the widest inversion the classifier could produce. **That was wrong.** It was one generator's output, not a bound, and it was contradicted by the live profile it was supposed to explain, which carries `Worth polishing` repositories at 93, 93 and 94.
 
-**The two gates the score does not read already have their own rules.** Fork status and archive status are the only `Strong` gates the presentation score ignores, and a repository can fail either while scoring 100. But rules 2 and 3 are originality and archive status, applied immediately after candidacy, so those cases rank identically whether candidacy orders them or not. For its two exclusive gates, rule 1's ordering contribution is fully redundant with rules 2 and 3; for its seven shared gates, it is bounded by the score it duplicates.
+A bound has to come from a search. `measureReachableBounds` enumerates the cross product of every scoring input that can vary — 120,960 shapes per population — and reports what the classifier actually admits:
 
-**Every gate is still a cliff, and that is recorded rather than fixed.** One unit either side of each threshold flips the label:
+| Quantity | Value |
+| --- | --- |
+| Lowest score a `Strong candidate` can reach | **79** |
+| Highest a `Worth polishing` repository can reach while failing only score-visible gates | **95** (failing the README gate) |
+| Maximum inversion from score-visible gates | **16 points** |
+| Highest `Worth polishing` with unreported fork status | 100 (21-point inversion) |
+| Highest `Worth polishing` archived | 98 (19-point inversion) |
+| `Strong` shapes scoring below that 95 ceiling | **5,764 of 6,912** |
+
+So the unbanded rule allowed a repository presenting at 79 to precede one presenting at 95, because the latter's README carried one core section fewer than the gate wants — and that is not a rare corner, it is most of the `Strong` space. The duplicate-evidence coupling does cap the override, but it caps it at 16 points on a 0–100 scale, which is not a cap worth relying on. This is the same defect rule 4 was given a band for, with the aggravating detail that the evidence was already counted once.
+
+##### Why five points
+
+* Every corpus `Strong`/`Worth` inversion is **5 points or less**, and all three of them are caused by archive status, which rule 3 settles regardless of the band.
+* On a live 33-repository profile the largest inversion is **3 points**.
+* Five is the band rule 4 already uses, so the optimizer has one notion of "comparable presentation" rather than two.
+
+Within the band, candidacy still decides, which is the case its evidence was meant for: two repositories presenting comparably, one of which has a named deficiency. Outside it, the presentation gap is wide enough that the score speaks for itself.
+
+##### What changed, and what did not
+
+**No recommendation moved.** Across all 13 corpus profiles and on the live 33-repository profile, the banded rule, the unbanded rule, removing candidacy from the ordering entirely, and bands of 2, 5 and 10 all produce **identical recommended sets**. In particular the live recommended set contains none of the three `Worth polishing` repositories whose classification prompted the question. The band bounds a structural override; it is not a way to move a set, and it was not adopted to make any repository win.
+
+Candidacy's role in **eligibility** is untouched. `De-emphasize` is still excluded, `Worth polishing` with an open high-priority finding is still excluded, and the evidence floor is unchanged. The band affects ordering only.
+
+##### Every gate is still a cliff
+
+One unit either side of each threshold flips the label:
 
 | Gate | Boundary crossed | Presentation score cost | Label |
 | --- | --- | --- | --- |
@@ -435,11 +462,9 @@ This is the opposite of the breadth situation. Breadth was unbounded precisely b
 | `readme` | two core README sections versus one | 4 | flips |
 | `mediumAtMostOne` | one medium finding versus two | 5 | flips |
 
-The maintenance row is the sharpest: a single day either side of 730 flips the label for three points of score. The score always moves in the same direction as the label, which is the coupling described above, and every one of these cliffs is therefore capped by it.
+The maintenance row is the sharpest: a single day either side of 730 flips the label for three points of score. The cliffs are recorded rather than smoothed, because smoothing them would mean inventing intermediate evidence the audit does not have. What the band does is cap what falling off one can cost in the recommended set.
 
-**Outcome: rule 1 is unchanged.** A band would add a constant, a comparison and a paragraph of explanation to a rule whose reach is already bounded by its inputs and which changes no recommendation on any profile measured. `evaluation/candidacy-diagnose.js` and `tests/scoring/candidacy-policy.test.js` keep the finding checkable: if the partition ever starts moving a recommendation, or the inversion ceiling ever widens, the tests fail and the question reopens with the case in hand.
-
-Keeping the partition also keeps the recommended list legible against the labels printed on the same cards. A set that listed `Worth polishing` above `Strong candidate` would read as a contradiction of its own badges for no measured gain.
+`tests/scoring/candidacy-policy.test.js` asserts all of this through the diagnostic's own functions, including the searched bounds, so a re-implementation cannot quietly disagree with the report a reviewer reads.
 
 ### Redundancy and diversity
 
@@ -678,9 +703,9 @@ A likely alternative is to exclude unverifiable repositories from the profile RE
 
 The evaluation corpus contains 29 `Strong` candidates across 13 profiles, and only 2 profiles reach 6 `Strong` candidates at all. Real accounts can sit far outside that: a 33-repository profile measured during the breadth calibration had 12 `Strong` candidates and 32 eligible repositories.
 
-That regime is exactly where set selection does the most work. With fewer than 6 `Strong` candidates, candidacy decides most slots on its own — 81.9% of pairwise comparisons across the corpus are settled at rule 1, before any later rule is consulted. With a deep pool, candidacy stops discriminating and rules 4 through 8 decide everything.
+That regime is exactly where set selection does the most work. Before rule 1 was given a score band, candidacy settled **81.9%** of pairwise comparisons across the corpus, before any later rule was consulted. With the band, that figure is **2.3%** and presentation score settles **90.4%**, while archive status — which the band deliberately leaves to rule 3 — picks up the 7 comparisons it should have been settling all along. The recommended sets are identical either way; what changed is which rule can be pointed at for each decision. With a deep `Strong` pool, candidacy stops discriminating regardless and rules 4 through 8 decide everything.
 
-The practical consequence is that a corpus-only measurement can report a selection rule as nearly inert when it is in fact decisive for larger accounts. The comparable-score band was measured against a live profile for this reason, and the corpus could not distinguish any band from 2 to 9.
+The practical consequence is that a corpus-only measurement can report a selection rule as nearly inert when it is in fact decisive for larger accounts. Both bands were measured against a live profile for this reason. The corpus could not distinguish any breadth band from 2 to 9, and it could not distinguish any candidacy band at all — which is why the candidacy band's width rests on a search of the reachable input space rather than on corpus output.
 
 Adding a fixture with a deep, single-language `Strong` pool would close the gap. It is not added here because doing so during a calibration interval would change the baseline for two reasons at once.
 
@@ -886,8 +911,9 @@ It reports:
 * every pair where a `Worth polishing` repository outscores a `Strong` one, and the gate behind each;
 * how often the partition settles a slot, how much score displacement it causes, and on how many profiles;
 * threshold sensitivity: the label and score one reachable step either side of each gate;
-* the policy comparison — current, candidacy-below-score, and candidacy bands of 2, 5 and 10 points;
-* ten constructed falsification cases the corpus does not contain, including the widest score inversion the classifier can produce.
+* the policy comparison — current, candidacy-below-score, unbanded, and candidacy bands of 2, 5 and 10 points;
+* the reachable bounds, found by searching 120,960 repository shapes per population rather than by exhibiting one pair: the lowest score a `Strong candidate` can reach, the highest a `Worth polishing` repository can reach while failing only score-visible gates, and the inversion between them;
+* ten constructed falsification cases the corpus does not contain.
 
 The run first asserts that its own gate table reproduces the production classifier on every corpus repository, so it cannot describe a classifier the product does not have. It is opt-in, and a non-zero exit means the diagnostic could not run, never that a classification changed. `tests/scoring/candidacy-policy.test.js` asserts the findings it produced, reading these same functions rather than re-implementing them.
 

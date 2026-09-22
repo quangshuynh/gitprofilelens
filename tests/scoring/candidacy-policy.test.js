@@ -3,11 +3,13 @@ const assert = require("node:assert/strict");
 
 const { CORPUS } = require("./fixtures/index.js");
 const { auditProfile } = require("./harness.js");
+const { CANDIDACY_SCORE_BAND } = require("../../pinned-optimizer.js");
 const {
   STRONG_GATES,
   findScoreConflicts,
   measureCandidacyDecisions,
   measureCliffs,
+  measureReachableBounds,
   policyStages,
   runFalsificationCases,
   runPolicy,
@@ -15,8 +17,7 @@ const {
 } = require("../../evaluation/candidacy-diagnose.js");
 
 /**
- * These tests pin the calibration findings behind the decision to leave the
- * Strong / Worth partition ranked ahead of presentation score.
+ * These tests pin the calibration findings behind the candidacy score band.
  *
  * The decision rests on measurements, not on taste, so the measurements are
  * asserted. If any of them stops holding, the partition has started doing
@@ -26,6 +27,13 @@ const {
  * They deliberately read the diagnostic's own functions. A test that
  * re-implemented the measurement could agree with itself while disagreeing with
  * the report a reviewer actually reads.
+ *
+ * One of these tests previously asserted a bound taken from a single hand-built
+ * pair — a Strong at 87 and a Worth at 90 — and called the 3-point gap between
+ * them the widest inversion the classifier could produce. It was not a bound at
+ * all, only that generator's output, and the real figure found by search is 16.
+ * Bounds are now established by `measureReachableBounds`, which searches rather
+ * than exhibits.
  */
 
 const PROFILES = CORPUS.map((profile) => ({ id: profile.id, audits: auditProfile(profile).audits }));
@@ -52,25 +60,29 @@ test("the documented Strong gates are exactly the classifier's gates", () => {
   );
 });
 
-test("candidacy ranked ahead of score changes no corpus recommendation", () => {
-  // The load-bearing measurement. Across 185 repositories the hard partition
-  // never changes which repositories are recommended, or in which order, versus
-  // ranking presentation score first.
+test("the candidacy band moves no corpus recommendation", () => {
+  // The band bounds a structural override; it is not a way to move a set. Every
+  // width, and removing the rule from the ordering altogether, recommends exactly
+  // what production recommends across all 185 corpus repositories.
   const current = recommendationsUnder("current");
-  const scoreFirst = recommendationsUnder("score-first");
 
-  for (const id of Object.keys(current)) {
-    assert.deepEqual(scoreFirst[id], current[id], `${id} changed when candidacy moved below score`);
+  for (const [kind, band] of [["unbounded"], ["score-first"], ["band", 2], ["band", 5], ["band", 10]]) {
+    const other = recommendationsUnder(kind, band);
+    for (const id of Object.keys(current)) {
+      assert.deepEqual(
+        other[id],
+        current[id],
+        `${id} changed under ${kind}${band === undefined ? "" : ` ${band}`}`
+      );
+    }
   }
 });
 
-test("bounding candidacy by a score band changes no corpus recommendation", () => {
+test("production is exactly the band it documents", () => {
   const current = recommendationsUnder("current");
-  for (const band of [2, 5, 10]) {
-    const banded = recommendationsUnder("band", band);
-    for (const id of Object.keys(current)) {
-      assert.deepEqual(banded[id], current[id], `${id} changed under a ${band}-point candidacy band`);
-    }
+  const banded = recommendationsUnder("band", CANDIDACY_SCORE_BAND);
+  for (const id of Object.keys(current)) {
+    assert.deepEqual(banded[id], current[id], `${id} does not match band ${CANDIDACY_SCORE_BAND}`);
   }
 });
 
@@ -90,29 +102,45 @@ test("candidacy displaces presentation score by at most a small margin on the co
   );
 });
 
-test("a Worth polishing repository can only outscore a Strong one by a narrow margin", () => {
-  // This is why the partition is bounded without needing a band. Seven of the nine
-  // Strong gates read evidence the presentation score already reads, so a
-  // repository that fails one of them has already paid for it in score. It cannot
-  // fail a gate and still run away with the score.
+test("the duplicated evidence does not bound the inversion on its own", () => {
+  // This is why a band exists. Seven of the nine Strong gates read evidence the
+  // presentation score already reads, and it is tempting to conclude that a
+  // repository failing one has already paid for it in score and so cannot run
+  // away with it. Searching the reachable space says otherwise: the coupling caps
+  // the inversion at 16 points, which on a 0-100 scale is not a cap worth relying
+  // on. The band is what actually bounds it.
+  const bounds = measureReachableBounds();
+
+  assert.ok(bounds.searched > 100000, "the bound must come from a search, not an example");
+  assert.equal(bounds.strongFloor, 79);
+  assert.equal(bounds.sharedCeiling, 95);
+  assert.deepEqual(bounds.sharedCeilingFails, ["readme"]);
+  assert.equal(bounds.sharedInversion, 16);
+  assert.ok(
+    bounds.sharedInversion > CANDIDACY_SCORE_BAND,
+    "a band is only meaningful while the unbanded inversion exceeds it"
+  );
+
+  // Not a rare corner: most Strong shapes sit below the highest Worth shape.
+  assert.ok(bounds.strongBelowCeiling / bounds.strongCount > 0.5);
+
+  // Fork and archive status cost no presentation score at all, so those
+  // inversions are capped only by the scale. They are handled by the originality
+  // and archive stages instead, which is why the band does not weaken them.
+  for (const key of ["forkUnknown", "archived", "fork"]) {
+    assert.ok(bounds.exclusive[key].inversion >= bounds.sharedInversion, key);
+  }
+});
+
+test("the corpus inversions are all caused by a gate the score does not read", () => {
   const conflicts = findScoreConflicts(PROFILES);
   assert.ok(
-    conflicts.maximum <= 10,
+    conflicts.maximum <= CANDIDACY_SCORE_BAND,
     `a Worth repository outscored a Strong one by ${conflicts.maximum} points`
   );
-
-  const cases = runFalsificationCases();
-  const widest = cases.find((entry) => entry.name.startsWith("1. "));
-  const scores = [...widest.description.matchAll(/(\S+) (\d+) (strong|polish)/g)]
-    .map((match) => ({ name: match[1], score: Number(match[2]), label: match[3] }));
-  const strongFloor = scores.find((entry) => entry.label === "strong");
-  const worthCeiling = scores.find((entry) => entry.label === "polish");
-
-  assert.ok(worthCeiling.score > strongFloor.score, "the constructed inversion must actually invert");
-  assert.ok(
-    worthCeiling.score - strongFloor.score <= 5,
-    `the constructed inversion reached ${worthCeiling.score - strongFloor.score} points`
-  );
+  // Every corpus conflict comes from archive status, which the archive stage
+  // settles regardless of the band, so banding candidacy cannot change them.
+  assert.deepEqual(Object.keys(conflicts.byGate), ["notArchived"]);
 });
 
 test("the gates candidacy alone reads are already enforced by their own ranking stages", () => {
