@@ -195,15 +195,69 @@ it inherits that order and never grows a chronology of its own.
 | --- | --- |
 | Mechanism | `localStorage`, one JSON value under `gitprofilelens.network-history.v1` |
 | Why | The product is a static page plus stateless functions: no account system, no database, no per-reader server state to extend. Observation history is per-device evidence, so uploading it would need infrastructure that does not exist and would turn a local note into a server-side record of whose followers someone looked at. |
-| Why not IndexedDB | Disproportionate. The bounded worst case is the existing pagination cap of 10,000 accounts per list, which stays well inside a typical 5 MB origin quota as a single atomically written value. |
 | Schema evolution | Versioned. A version this build does not know is **not** migrated; it is discarded and a fresh baseline starts, because guessing at an unknown shape would manufacture history. |
 | Corruption | Entries missing a usable `firstObservedAt` are dropped rather than repaired, for the same reason. |
 | Profile separation | Keyed by normalized login. One profile's history can never order another's. |
 | Bounds | At most 20 profiles; the least recently observed are dropped first, and the profile just observed always survives. |
 | Writes | One read and at most one write per observation, never per relationship. An observation that changes nothing is not written at all. |
-| Failure | A blocked or full storage is a soft failure: history stops accumulating, the Network tab is unaffected. |
 | Reset | An explicit two-step control in the Network tab, and nowhere else. History is never cleared as a side effect of clearing anything else. |
 | Cross-device | History is per browser. A different browser, device, or profile starts its own baseline. |
+
+#### Size, measured
+
+An earlier version of this document claimed the bounded profile count kept the
+snapshot "well inside a typical 5 MB origin quota". **That was wrong**, and it
+was asserted rather than measured. The real figures, from
+`tests/network-history.test.js`:
+
+| Case | Relationships | Serialized |
+| --- | --- | --- |
+| One live-sized profile (147 followers, 396 following) | 543 | ~84 KB |
+| One profile at the pagination caps | 20,000 | ~3.1 MB |
+| 20 profiles at the pagination caps | 400,000 | **~59 MB** |
+
+About 154 bytes per relationship, dominated by two ISO timestamps and the login.
+Browsers commonly charge `localStorage` per UTF-16 code unit, so a browser may
+count roughly twice those figures against its quota.
+
+There is no portable quota to design against: the commonly cited 5 MB is a
+convention, not a standard, and implementations differ. So the worst case is
+**not** claimed to fit. A single profile at the pagination caps already exceeds a
+5 MB budget on its own, and the 20-profile worst case exceeds it by more than an
+order of magnitude.
+
+What *does* hold is that ordinary use is comfortably inside any plausible quota —
+twenty live-sized profiles come to roughly 1.7 MB serialized — and that exceeding
+it is handled rather than hoped against.
+
+#### When storage refuses the write
+
+`localStorage` can refuse for reasons the page cannot predict: a full origin
+quota, a blocked-storage privacy setting, a private window. All of them surface
+as a thrown `setItem`, and all are treated the same way.
+
+1. **The retrieval is never affected.** Followers, Following, non-follow-back and
+   the Markdown export are built from the network that was just retrieved, not
+   from history. A browser test drives a real `QuotaExceededError` through the
+   real `Storage` interface and asserts the Network tab is unchanged.
+2. **Prior history is never damaged.** A `setItem` that throws does not modify the
+   existing entry, so whatever was stored before is still stored after.
+3. **The session does not run ahead of what was stored.** This was a genuine bug
+   in the first implementation: the in-memory snapshot was adopted *before* the
+   write was attempted, so a refused write left the page ordering by a cohort that
+   existed nowhere on disk and silently reverting on the next reload. A feature
+   whose entire purpose is to avoid claiming more than the evidence supports
+   cannot also display an order its own storage rejected. The snapshot is now
+   adopted only once the write succeeds, and a refused write reports the history
+   that is actually stored.
+4. **The profile in view is preferred over the others.** A single large network
+   can exceed the quota by itself. When the full snapshot is refused, the write is
+   retried with only the profile being observed — the history most likely to be
+   wanted, and the only one this observation can improve. If even that is refused,
+   nothing is written and prior history stands.
+5. **It is said out loud.** The Network tab reports that storage is full and this
+   visit could not be added, or that other profiles' history was released to make
+   room. A count that quietly stops advancing would be worse than either.
 
 ### What this still cannot do
 
@@ -215,3 +269,8 @@ it inherits that order and never grows a chronology of its own.
   followed a month apart are indistinguishable if both were first seen in the
   same retrieval.
 - It is not portable between devices and is not a backup.
+- It is not guaranteed to be stored at all. A network at the pagination caps
+  exceeds any plausible `localStorage` quota on its own, and a browser may refuse
+  the write for reasons the page cannot see. When that happens the lists are shown
+  in GitHub's order and the interface says so, rather than ordering by history it
+  could not keep.

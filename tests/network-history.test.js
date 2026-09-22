@@ -409,11 +409,145 @@ test("storage that cannot be read or written leaves the network working", () => 
   const outcome = observe(full, { followers: complete(["a"]) });
   assert.equal(outcome.wrote, false);
   assert.equal(outcome.error, "quota");
-  assert.equal(outcome.lists.followers.accounts.a.currentlyPresent, true);
+  // A refused write must not hand back history it did not store. Reporting the
+  // merged list here would have this session ordering by a cohort that does not
+  // exist, and silently losing that order on the next reload.
+  assert.equal(outcome.lists.followers, null);
+  assert.deepEqual(full.read().profiles, {});
 
   const none = history.createStore({});
   assert.equal(none.isAvailable(), false);
   assert.equal(observe(none, { followers: complete(["a"]) }).wrote, false);
+  assert.equal(none.getList("Quangshuynh", "followers"), null);
+});
+
+test("a refused write leaves the previously stored history exactly as it was", () => {
+  const values = new Map();
+  let accept = true;
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      if (!accept) {
+        const error = new Error("QuotaExceededError");
+        error.name = "QuotaExceededError";
+        throw error;
+      }
+      values.set(key, value);
+    },
+    removeItem: (key) => values.delete(key),
+  };
+  const store = history.createStore({ storage });
+
+  observe(store, { followers: complete(["alice", "bob"]), observedAt: "2026-09-01T00:00:00.000Z" });
+  const persisted = values.get(history.STORAGE_KEY);
+
+  accept = false;
+  const refused = observe(store, {
+    followers: complete(["alice", "bob", "carol"]),
+    observedAt: "2026-09-05T00:00:00.000Z",
+  });
+
+  assert.equal(refused.wrote, false);
+  // The stored entry is untouched: a failed setItem does not modify it.
+  assert.equal(values.get(history.STORAGE_KEY), persisted);
+  // And what this session believes matches it, rather than running ahead.
+  const list = store.getList("Quangshuynh", "followers");
+  assert.deepEqual(Object.keys(list.accounts).sort(), ["alice", "bob"]);
+  assert.equal(history.listCohorts(list).length, 1);
+  assert.equal(list.observationCount, 1);
+
+  // Once storage accepts writes again, the next observation records normally.
+  accept = true;
+  const recovered = observe(store, {
+    followers: complete(["alice", "bob", "carol"]),
+    observedAt: "2026-09-09T00:00:00.000Z",
+  });
+  assert.equal(recovered.wrote, true);
+  assert.equal(recovered.lists.followers.accounts.carol.firstObservedAt, "2026-09-09T00:00:00.000Z");
+  assert.equal(history.listCohorts(recovered.lists.followers).length, 2);
+});
+
+test("a snapshot too large to store surrenders other profiles before the one in view", () => {
+  const values = new Map();
+  let limit = Infinity;
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      if (value.length > limit) {
+        const error = new Error("QuotaExceededError");
+        error.name = "QuotaExceededError";
+        throw error;
+      }
+      values.set(key, value);
+    },
+    removeItem: (key) => values.delete(key),
+  };
+  const store = history.createStore({ storage });
+  const many = (prefix, count) =>
+    Array.from({ length: count }, (unused, index) => `${prefix}${index}`);
+
+  for (const [index, name] of ["alpha", "beta", "gamma"].entries()) {
+    observe(store, {
+      login: name,
+      followers: complete(many(name, 200)),
+      observedAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    });
+  }
+  assert.equal(store.countProfiles(), 3);
+
+  // Only about half the current snapshot now fits, which is the case a single
+  // large network creates on its own.
+  limit = Math.round(values.get(history.STORAGE_KEY).length * 0.5);
+  const outcome = observe(store, {
+    login: "delta",
+    followers: complete(many("delta", 200)),
+    observedAt: "2026-02-01T00:00:00.000Z",
+  });
+
+  assert.equal(outcome.wrote, true);
+  assert.equal(outcome.droppedProfiles, 3);
+  // The reader is looking at one profile, so that is the history that is kept.
+  assert.deepEqual(Object.keys(store.read().profiles), ["delta"]);
+  assert.notEqual(store.getList("delta", "followers"), null);
+  assert.deepEqual(
+    Object.keys(JSON.parse(values.get(history.STORAGE_KEY)).profiles),
+    Object.keys(store.read().profiles)
+  );
+});
+
+test("a single network too large for storage is refused without losing prior history", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      if (value.length > 2000) {
+        const error = new Error("QuotaExceededError");
+        error.name = "QuotaExceededError";
+        throw error;
+      }
+      values.set(key, value);
+    },
+    removeItem: (key) => values.delete(key),
+  };
+  const store = history.createStore({ storage });
+
+  observe(store, { login: "small", followers: complete(["a", "b"]), observedAt: "2026-09-01T00:00:00.000Z" });
+  const persisted = values.get(history.STORAGE_KEY);
+
+  const huge = Array.from({ length: 500 }, (unused, index) => `user${index}`);
+  const outcome = observe(store, {
+    login: "huge",
+    followers: complete(huge),
+    observedAt: "2026-09-05T00:00:00.000Z",
+  });
+
+  // Dropping every other profile still did not make room, so nothing was written.
+  assert.equal(outcome.wrote, false);
+  assert.equal(outcome.error, "quota");
+  assert.equal(outcome.droppedProfiles, 0);
+  assert.equal(values.get(history.STORAGE_KEY), persisted, "prior history survived intact");
+  assert.equal(store.getList("huge", "followers"), null);
+  assert.notEqual(store.getList("small", "followers"), null);
 });
 
 test("resetting history clears every profile", () => {
@@ -507,6 +641,54 @@ test("merging a large observation stays linear rather than quadratic", () => {
   const ordered = history.orderAccounts(accounts(grown), merged.list).accounts;
   assert.equal(ordered[0].login, "newcomer");
   assert.equal(ordered[1].login, "user0");
+});
+
+test("the worst-case snapshot is far larger than any browser will store", () => {
+  // Recorded rather than asserted away. An earlier version of the documentation
+  // claimed the bounded profile count kept the snapshot "well inside a typical
+  // 5 MB origin quota". Measuring it says otherwise, and the honest response is
+  // to state the real figure and make sure exceeding it is handled, not to
+  // pretend the bound is tighter than it is.
+  const store = createStore();
+  const accountsFor = (prefix, count) =>
+    Array.from({ length: count }, (unused, index) => ({
+      login: `${prefix}-user-${index}`,
+      profileUrl: `https://github.com/${prefix}-user-${index}`,
+    }));
+
+  for (let index = 0; index < history.MAXIMUM_TRACKED_PROFILES; index += 1) {
+    store.store.recordNetworkObservation({
+      login: `profile${index}`,
+      followers: { accounts: accountsFor(`f${index}`, 10000), complete: true },
+      following: { accounts: accountsFor(`g${index}`, 10000), complete: true },
+      observedAt: new Date(Date.UTC(2026, 0, index + 1)),
+    });
+  }
+
+  const serialized = store.storage.raw.get(history.STORAGE_KEY);
+  const relationships = history.MAXIMUM_TRACKED_PROFILES * 20000;
+  const bytesEach = serialized.length / relationships;
+
+  assert.equal(store.store.countProfiles(), history.MAXIMUM_TRACKED_PROFILES);
+  // About 154 bytes per relationship, so roughly 59 MB at the caps, which no
+  // browser will accept. The bound that matters in practice is the quota, and
+  // the quota path is covered by the tests above.
+  assert.ok(bytesEach > 100 && bytesEach < 250, `unexpected ${bytesEach} bytes per relationship`);
+  assert.ok(
+    serialized.length > 50 * 1024 * 1024,
+    "if this ever shrinks below the quota the documentation needs revisiting"
+  );
+
+  // One realistically sized profile, for contrast: this is the case that fits.
+  const realistic = createStore();
+  realistic.store.recordNetworkObservation({
+    login: "quangshuynh",
+    followers: { accounts: accountsFor("f", 147), complete: true },
+    following: { accounts: accountsFor("g", 396), complete: true },
+    observedAt: new Date(Date.UTC(2026, 8, 22)),
+  });
+  const oneProfile = realistic.storage.raw.get(history.STORAGE_KEY).length;
+  assert.ok(oneProfile < 120 * 1024, `one live-sized profile used ${oneProfile} bytes`);
 });
 
 test("the ordering sentence never claims a follow date", () => {

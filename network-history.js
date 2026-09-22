@@ -52,8 +52,10 @@
    * How many audited profiles keep history before the least recently observed is dropped.
    *
    * History is a convenience for profiles the reader returns to, not an archive.
-   * Browser storage is a small shared quota, so the snapshot is bounded rather
-   * than allowed to grow with every username ever typed into the search box.
+   * Browser storage is a small shared quota of no portable size, so the snapshot
+   * is bounded rather than allowed to grow with every username ever typed into
+   * the search box. This bound is not on its own enough to guarantee the snapshot
+   * fits — see `createStore` for the measured sizes and what a refused write does.
    */
   const MAXIMUM_TRACKED_PROFILES = 20;
 
@@ -453,10 +455,15 @@
    * the data: one small JSON object, read once per Network load, written at most
    * once per observation, and never on the critical path of a request.
    *
-   * IndexedDB was rejected as disproportionate. The bounded worst case is the
-   * existing pagination cap of 10,000 accounts per list, and the store keeps at
-   * most a bounded number of profiles, so the snapshot stays well inside a typical
-   * 5 MB origin quota while remaining a single atomically written value.
+   * The snapshot is not guaranteed to fit, and is not claimed to. Measured, it
+   * costs about 154 bytes per relationship: roughly 84 KB for a live-sized
+   * profile, about 3.1 MB for one profile at the pagination caps, and about 59 MB
+   * for twenty such profiles. There is no portable quota to design against, so
+   * rather than pretending the bound is tighter than it is, a refused write is a
+   * first-class outcome: prior history survives, this session does not run ahead
+   * of what was stored, the profile in view is preferred over the others, and the
+   * interface says what happened. Ordinary use is far inside any plausible quota;
+   * twenty live-sized profiles come to roughly 1.7 MB.
    *
    * @param {Object} options storage implementation and optional key override
    * @returns {Object} history store
@@ -512,20 +519,59 @@
     }
 
     /**
-     * persists a snapshot, treating a full or unavailable quota as a soft failure
+     * persists a snapshot, adopting it only if it actually reached storage
+     *
+     * The cache is what the rest of the session reads, so adopting a snapshot the
+     * browser refused would leave this session ordering by cohorts that do not
+     * exist on disk and silently reverting on the next reload. A feature whose
+     * whole purpose is to avoid claiming more than the evidence supports cannot
+     * also show an order its own storage never accepted. A refused write therefore
+     * leaves the previous snapshot in place, in memory and on disk alike.
+     *
+     * A failed `setItem` does not modify the existing entry, so prior history
+     * survives a refusal intact.
+     *
      * @param {Object} snapshot snapshot to persist
      * @returns {Object} whether the write reached storage
      */
     function write(snapshot) {
-      cached = snapshot;
       if (!storage) return { wrote: false, error: "unavailable" };
       try {
         storage.setItem(key, JSON.stringify(snapshot));
+        cached = snapshot;
         return { wrote: true, error: null };
       } catch {
         // A full quota costs future history, never the network the reader asked for.
         return { wrote: false, error: "quota" };
       }
+    }
+
+    /**
+     * writes a snapshot, surrendering other profiles' history before giving up
+     *
+     * A single large network can exceed the origin's quota on its own, and the
+     * reader is looking at one profile, not twenty. So a refused write is retried
+     * with only the profile being observed, which is the history most likely to be
+     * wanted and the only one this observation can improve. If even that is
+     * refused, nothing is written and prior history stands.
+     *
+     * @param {Object} snapshot snapshot to persist
+     * @param {string} keepNormalized profile whose history matters most
+     * @returns {Object} whether a write reached storage, and what it cost
+     */
+    function writeWithFallback(snapshot, keepNormalized) {
+      const written = write(snapshot);
+      if (written.wrote || written.error !== "quota") return { ...written, dropped: 0 };
+
+      const others = Object.keys(snapshot.profiles).filter((name) => name !== keepNormalized);
+      if (others.length === 0) return { ...written, dropped: 0 };
+
+      const reduced = {
+        schemaVersion: SCHEMA_VERSION,
+        profiles: { [keepNormalized]: snapshot.profiles[keepNormalized] },
+      };
+      const retried = write(reduced);
+      return { ...retried, dropped: retried.wrote ? others.length : 0 };
     }
 
     /**
@@ -559,6 +605,7 @@
         changed: false,
         error: null,
         skipped: [],
+        droppedProfiles: 0,
         lists: { followers: null, following: null },
         baseline: { followers: false, following: false },
       };
@@ -604,9 +651,19 @@
       next.profiles[normalized] = profile;
       pruneProfiles(next, normalized);
 
-      const written = write(next);
+      const written = writeWithFallback(next, normalized);
       outcome.wrote = written.wrote;
       outcome.error = written.error;
+      outcome.droppedProfiles = written.dropped;
+      // A refused write left the stored snapshot untouched, so the lists this
+      // observation would have ordered by are not the ones history actually holds.
+      // Reporting what was persisted keeps the display and the storage in step.
+      if (!written.wrote) {
+        for (const relationship of RELATIONSHIPS) {
+          outcome.lists[relationship] = existing?.[relationship] ?? null;
+          outcome.baseline[relationship] = false;
+        }
+      }
       return outcome;
     }
 

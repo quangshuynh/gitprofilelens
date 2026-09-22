@@ -164,7 +164,7 @@ const networkState = {
   visibleCounts: createInitialVisibleCounts(),
   // Set once per completed retrieval, then read by rendering and by the export, so
   // the two can never disagree about the order or about what the order means.
-  history: { followers: null, following: null },
+  history: { followers: null, following: null, storage: null, droppedProfiles: 0 },
 };
 
 /**
@@ -2298,6 +2298,9 @@ function recordNetworkObservation(network) {
   networkState.history = {
     followers: network.followers.complete ? outcome.lists.followers : null,
     following: network.following.complete ? outcome.lists.following : null,
+    // What the store actually persisted, so the note can say so when it could not.
+    storage: outcome.wrote ? null : outcome.error,
+    droppedProfiles: outcome.droppedProfiles ?? 0,
   };
   return outcome;
 }
@@ -2352,10 +2355,28 @@ function renderNetworkOrderingNote() {
   }
 
   const observations = Math.max(...lists.map((list) => list.observationCount));
-  networkHistoryNote.textContent =
-    `Observation history is kept only in this browser and is never uploaded. ` +
+  const sentences = [
+    "Observation history is kept only in this browser and is never uploaded.",
     `${observations} ${observations === 1 ? "observation" : "observations"} recorded since ` +
-    `${formatShortDate(describing.baselineObservedAt)}.`;
+      `${formatShortDate(describing.baselineObservedAt)}.`,
+  ];
+
+  // A browser that refused the write leaves the order above describing history
+  // that was already stored, not this visit. Saying so is better than letting the
+  // count quietly stop advancing.
+  if (networkState.history.storage === "quota") {
+    sentences.push(
+      "This browser's storage is full, so this visit could not be added to the history below."
+    );
+  } else if (networkState.history.droppedProfiles > 0) {
+    const dropped = networkState.history.droppedProfiles;
+    sentences.push(
+      `Storage was full, so history for ${dropped} other ${dropped === 1 ? "profile" : "profiles"} ` +
+      "was released to make room for this one."
+    );
+  }
+
+  networkHistoryNote.textContent = sentences.join(" ");
   networkHistoryNote.hidden = false;
   networkHistoryControls.hidden = false;
   setHistoryResetConfirmation(false);
@@ -2386,7 +2407,7 @@ function setHistoryResetConfirmation(confirming) {
  */
 function resetNetworkHistory() {
   networkHistory.reset();
-  networkState.history = { followers: null, following: null };
+  networkState.history = { followers: null, following: null, storage: null, droppedProfiles: 0 };
   networkHistoryConfirmGroup.hidden = true;
   networkHistoryResetButton.hidden = true;
   networkHistoryControls.hidden = true;
@@ -2637,7 +2658,7 @@ function clearNetworkPanel() {
 
   // Disclosure is per profile: a newly loaded list never inherits "Showing 75 of …".
   networkState.visibleCounts = createInitialVisibleCounts();
-  networkState.history = { followers: null, following: null };
+  networkState.history = { followers: null, following: null, storage: null, droppedProfiles: 0 };
   for (const section of networkSections) {
     section.accounts = [];
     section.historyList = null;

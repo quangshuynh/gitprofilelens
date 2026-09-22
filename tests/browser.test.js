@@ -1555,6 +1555,58 @@ test("disclosure appends and trims instead of rebuilding rendered accounts", { s
   }
 });
 
+test("a browser that refuses to store history keeps the Network working", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const browserErrors = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  // A real QuotaExceededError from the real Storage interface, thrown for this
+  // key only, so everything else about the page behaves normally.
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function refusingSetItem(key, value) {
+      if (String(key).startsWith("gitprofilelens.network-history")) {
+        throw new DOMException("exceeded the quota", "QuotaExceededError");
+      }
+      return original.call(this, key, value);
+    };
+  });
+
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("carol"), account("alice")]], following: [[account("bob")]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // The network itself is unaffected.
+  assert.equal(await page.locator("#network-follower-count").innerText(), "2");
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "1");
+  assert.deepEqual(
+    await page.locator("#network-follower-list li").allInnerTexts(),
+    ["carol", "alice"]
+  );
+  assert.ok(await page.locator("#network-output").inputValue());
+
+  // Nothing was stored, so nothing claims an order history does not hold.
+  assert.equal(
+    await page.evaluate(() => window.localStorage.getItem("gitprofilelens.network-history.v1")),
+    null
+  );
+  assert.match(
+    await page.locator("#network-ordering-note").innerText(),
+    /order the GitHub API returned them/
+  );
+  assert.equal(await page.locator("#network-history-controls").isHidden(), true);
+  assert.equal(await page.locator("#network-follower-list a.is-newly-observed").count(), 0);
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("the history controls are keyboard operable and never strand focus", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
