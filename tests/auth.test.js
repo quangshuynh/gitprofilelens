@@ -154,6 +154,8 @@ test("successful callback stores credentials only in an encrypted HttpOnly sessi
       assert.deepEqual(sessionResponse.result.body, {
         authenticated: true,
         user: { login: "example", avatar_url: "https://avatars.example/example.png" },
+        // Ordinary sign-in, so the write capability is withheld.
+        can_manage_follows: false,
       });
     });
   } finally {
@@ -175,6 +177,9 @@ test("session endpoint returns safe identity and never exposes credentials", asy
     assert.deepEqual(result.body, {
       authenticated: true,
       user: { login: "example", avatar_url: "https://avatars.example/example.png" },
+      // A session that never went through the follow-management authorization is
+      // reported as unable to manage follows, not merely left unmentioned.
+      can_manage_follows: false,
     });
     assert.doesNotMatch(JSON.stringify(result.body), /token|secret|credential/i);
     assert.equal(result.headers["Cache-Control"], "private, no-store, max-age=0");

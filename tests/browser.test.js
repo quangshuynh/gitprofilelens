@@ -1756,6 +1756,803 @@ test("one audit computes the profile score once", { skip: !chromePath }, async (
 });
 
 /**
+ * signs the page in, optionally with permission to manage follows
+ *
+ * Registered after mockGithubRequests so it replaces that helper's
+ * unauthenticated session. The browser only ever learns a boolean: there is no
+ * token in this payload because there is never a token in the real one.
+ *
+ * @param {Object} page playwright page
+ * @param {Object} options login and whether the session may manage follows
+ * @returns {Promise<void>} no return value
+ */
+async function mockSession(page, options = {}) {
+  const login = options.login ?? "example";
+  await page.route("**/api/auth/session", (route) => route.fulfill({
+    json: {
+      authenticated: options.authenticated !== false,
+      user: { login, avatar_url: "https://avatars.example/example.png" },
+      can_manage_follows: options.canManageFollows === true,
+    },
+  }));
+}
+
+/**
+ * mocks the GitProfileLens unfollow endpoint and records what it was asked
+ *
+ * The real GitHub mutation is never reached from a test. What is exercised here
+ * is everything the browser does around it: what it sends, what it waits for, and
+ * what it does with each answer.
+ *
+ * @param {Object} page playwright page
+ * @param {Function} respond receives the parsed body and the call index
+ * @returns {Promise<Array<Object>>} the bodies the page posted, in order
+ */
+async function mockUnfollowEndpoint(page, respond) {
+  const calls = [];
+  await page.route("**/api/unfollow", async (route) => {
+    const request = route.request();
+    const body = JSON.parse(request.postData() || "{}");
+    calls.push({ body, method: request.method() });
+    const answer = await respond(body, calls.length - 1);
+    if (answer.delay) await new Promise((resolve) => setTimeout(resolve, answer.delay));
+    await route.fulfill({ status: answer.status ?? 200, json: answer.json ?? {} });
+  });
+  return calls;
+}
+
+/**
+ * opens a profile's Network tab with the given mocks already installed
+ * @param {Object} page playwright page
+ * @param {Object} accounts relationship pages keyed by login
+ * @param {Object} options session options and the audited profile
+ * @returns {Promise<void>} no return value
+ */
+async function openNetwork(page, accounts, options = {}) {
+  await mockGithubRequests(page, [repository], { login: options.audited ?? "example" });
+  await mockNetworkRequests(page, accounts);
+  await mockSession(page, options);
+  await page.goto(`${baseUrl}/?user=${options.audited ?? "example"}&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+}
+
+test("the manager is offered only for your own profile, signed in, with permission", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const network = {
+      example: { followers: [[account("alice")]], following: [[account("alice"), account("bob")]] },
+      other: { followers: [[]], following: [[account("bob")]] },
+    };
+
+    // Signed out: the difference is shown, managing it is not offered.
+    const signedOut = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(signedOut, network, { authenticated: false });
+    assert.equal(await signedOut.locator("#network-unreciprocated-count").innerText(), "1");
+    assert.equal(await signedOut.locator("#network-manage-unfollows").isHidden(), true);
+    assert.match(await signedOut.locator("#network-manage-note").innerText(), /Sign in as @example/);
+
+    // Signed in as someone else, viewing this profile: still not offered, and the
+    // note says whose follows a session can actually manage.
+    const otherUser = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(otherUser, network, { login: "alice", canManageFollows: true });
+    assert.equal(await otherUser.locator("#network-manage-unfollows").isHidden(), true);
+    assert.match(
+      await otherUser.locator("#network-manage-note").innerText(),
+      /signed in as @alice and viewing @example/
+    );
+
+    // Own profile, signed in, but the ordinary read-only authorization: the one
+    // refusal the reader can resolve, so it keeps a control.
+    const noPermission = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(noPermission, network, { canManageFollows: false });
+    assert.equal(
+      await noPermission.locator("#network-manage-unfollows").innerText(),
+      "Allow managing follows"
+    );
+    assert.match(
+      await noPermission.locator("#network-manage-note").innerText(),
+      /requires permission to change who you follow/
+    );
+    assert.match(
+      await noPermission.locator("#network-manage-note").innerText(),
+      /never unfollows accounts automatically/
+    );
+
+    // Everything in place.
+    const ready = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(ready, network, { canManageFollows: true });
+    assert.equal(await ready.locator("#network-manage-unfollows").innerText(), "Manage unfollows");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a case-different login is still recognised as your own profile", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    // GitHub compares logins case-insensitively, so signing in as EXAMPLE and
+    // auditing example is the same account.
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob")]] },
+    }, { login: "EXAMPLE", canManageFollows: true });
+
+    assert.equal(await page.locator("#network-manage-unfollows").innerText(), "Manage unfollows");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an incomplete retrieval never offers to act on a partial difference", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      // The followers list loses a page, so an account missing from it may simply
+      // be on the page that never arrived.
+      example: {
+        followers: [accountList("filler", 100), [{ failWith: 500 }]],
+        following: [[account("bob")]],
+      },
+    }, { canManageFollows: true });
+
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "Unavailable");
+    assert.equal(await page.locator("#network-manage-unfollows").isHidden(), true);
+    assert.match(
+      await page.locator("#network-manage-note").innerText(),
+      /needs both the Followers and Following lists in full/
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a confirmed unfollow reconciles every surface at once", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: {
+        followers: [[account("alice")]],
+        following: [[account("alice"), account("bob"), account("carol")]],
+      },
+    }, { canManageFollows: true });
+    const calls = await mockUnfollowEndpoint(page, (body) => ({
+      json: { login: body.login, state: "unfollowed", message: `Unfollowed @${body.login}.` },
+    }));
+
+    assert.equal(await page.locator("#network-following-count").innerText(), "3");
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "2");
+
+    await page.locator("#network-manage-unfollows").click();
+    await page.locator("#network-manager").waitFor({ state: "visible" });
+    // The manager replaces the lists rather than sitting under them.
+    assert.equal(await page.locator("#network-results").isHidden(), true);
+    assert.match(
+      await page.locator("#network-manager-summary").innerText(),
+      /2 accounts currently appear in "Following who don't follow back" for @example/
+    );
+    assert.match(
+      await page.locator(".network-manager-promise").innerText(),
+      /never unfollows anyone automatically/
+    );
+    assert.deepEqual(
+      await page.locator(".manager-row .manager-login").allInnerTexts(),
+      ["bob\nView on GitHub", "carol\nView on GitHub"]
+    );
+
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    // Nothing has been sent yet: the first press only arms the confirmation.
+    assert.deepEqual(calls, []);
+    assert.equal(await bob.getAttribute("data-state"), "confirming");
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+
+    await bob.getByRole("button", { name: "Unfollowed: bob" }).waitFor();
+    assert.deepEqual(calls, [{ body: { login: "bob" }, method: "POST" }]);
+    assert.equal(await bob.getAttribute("data-state"), "done");
+    assert.match(await page.locator("#network-manager-announcement").innerText(), /Unfollowed @bob\./);
+    assert.match(await page.locator("#network-manager-announcement").innerText(), /1 account remains/);
+    // The row stays, marked, so the rows below it do not jump while the reader
+    // works down the list.
+    assert.equal(await page.locator(".manager-row").count(), 2);
+
+    await page.locator("#network-manager-back").click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+
+    // Counts, both lists, the status line and the Markdown all agree.
+    assert.equal(await page.locator("#network-following-count").innerText(), "2");
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "1");
+    assert.deepEqual(
+      await page.locator("#network-following-list li").allInnerTexts(),
+      ["alice", "carol"]
+    );
+    assert.deepEqual(
+      await page.locator("#network-unreciprocated-list li").allInnerTexts(),
+      ["carol"]
+    );
+    assert.equal(await page.locator("#network-follower-count").innerText(), "1");
+    const markdown = await page.locator("#network-output").inputValue();
+    assert.match(markdown, /\*\*Following:\*\* 2/);
+    assert.match(markdown, /\*\*Following who don't follow back:\*\* 1/);
+    assert.doesNotMatch(markdown.split("## Following")[1] || "", /\bbob\b/);
+    assert.match(await page.locator("#network-status").innerText(), /2 following for @example/);
+
+    // Observation history records the mutation as mutation evidence, not as one
+    // more account that failed to turn up, and does not rewrite when it was first
+    // seen.
+    const stored = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("gitprofilelens.network-history.v1")));
+    const bobEntry = stored.profiles.example.following.accounts.bob;
+    assert.equal(bobEntry.currentlyPresent, false);
+    assert.ok(bobEntry.unfollowConfirmedAt, "the confirmation is recorded as its own evidence");
+    assert.equal(bobEntry.absences, undefined, "a mutation is not counted as an observed absence");
+    assert.equal(
+      bobEntry.firstObservedAt,
+      stored.profiles.example.following.accounts.carol.firstObservedAt,
+      "the baseline cohort's first observation is untouched"
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a reload after an unfollow shows the new state with history intact", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob"), account("carol")]] },
+    }, { canManageFollows: true });
+    await mockUnfollowEndpoint(page, (body) => ({
+      json: { login: body.login, state: "unfollowed", message: `Unfollowed @${body.login}.` },
+    }));
+
+    await page.locator("#network-manage-unfollows").click();
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+    await bob.getByRole("button", { name: "Unfollowed: bob" }).waitFor();
+
+    // GitHub now reports the relationship the way the mutation left it.
+    await mockNetworkRequests(page, {
+      example: { followers: [[]], following: [[account("carol")]] },
+    });
+    await page.reload();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+
+    assert.equal(await page.locator("#network-following-count").innerText(), "1");
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "1");
+    assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), ["carol"]);
+
+    await page.locator("#network-manage-unfollows").click();
+    // No phantom row comes back from a cache that still remembered bob.
+    assert.deepEqual(await page.locator(".manager-row").evaluateAll(
+      (rows) => rows.map((row) => row.dataset.login)
+    ), ["carol"]);
+
+    const stored = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("gitprofilelens.network-history.v1")));
+    const bobEntry = stored.profiles.example.following.accounts.bob;
+    assert.equal(bobEntry.currentlyPresent, false);
+    assert.ok(bobEntry.unfollowConfirmedAt);
+    assert.equal(
+      bobEntry.firstObservedAt,
+      stored.profiles.example.following.baselineObservedAt,
+      "the retrieval that followed the mutation did not rewrite when bob was first seen"
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a failed unfollow keeps the relationship and stays retryable", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob")]] },
+    }, { canManageFollows: true });
+    let attempt = 0;
+    const calls = await mockUnfollowEndpoint(page, (body) => {
+      attempt += 1;
+      if (attempt === 1) {
+        return {
+          status: 429,
+          json: {
+            error: "GitHub is rate limiting this account. Try again in about 2 minutes. @bob was not unfollowed.",
+            reason: "rate_limited",
+          },
+        };
+      }
+      return { json: { login: body.login, state: "unfollowed", message: `Unfollowed @${body.login}.` } };
+    });
+
+    await page.locator("#network-manage-unfollows").click();
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+    await page.locator('.manager-row[data-login="bob"][data-state="failed"]').waitFor();
+
+    // The refusal is stated in words, not signalled by colour alone.
+    assert.match(await bob.locator(".manager-outcome").innerText(), /rate limiting/);
+    assert.match(await bob.locator(".manager-outcome").innerText(), /was not unfollowed/);
+    assert.match(
+      await page.locator("#network-manager-announcement").innerText(),
+      /rate limiting/
+    );
+    // The control returns to its offer, so the reader retries rather than reloads.
+    assert.equal(await bob.getByRole("button", { name: "Unfollow bob" }).count(), 1);
+    assert.equal(await bob.locator(".manager-unfollow").getAttribute("aria-disabled"), null);
+    // Focus never left the row.
+    assert.equal(
+      await page.evaluate(() => document.activeElement.className),
+      "secondary manager-unfollow"
+    );
+
+    await page.locator("#network-manager-back").click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    // Nothing was optimistically removed, so there is nothing to have got wrong.
+    assert.equal(await page.locator("#network-following-count").innerText(), "1");
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "1");
+    assert.match(await page.locator("#network-output").inputValue(), /\bbob\b/);
+
+    // Retrying retries only this mutation.
+    await page.locator("#network-manage-unfollows").click();
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+    await bob.getByRole("button", { name: "Unfollowed: bob" }).waitFor();
+    assert.equal(calls.length, 2);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an account already unfollowed on GitHub is reconciled without pretending", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob"), account("carol")]] },
+    }, { canManageFollows: true });
+    await mockUnfollowEndpoint(page, (body) => ({
+      json: {
+        login: body.login,
+        state: "already_not_following",
+        message: `You were no longer following @${body.login}.`,
+      },
+    }));
+
+    await page.locator("#network-manage-unfollows").click();
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+
+    // The row says what was actually true rather than claiming this click did it.
+    await bob.getByRole("button", { name: "Not following: bob" }).waitFor();
+    assert.match(await bob.locator(".manager-outcome").innerText(), /were no longer following @bob/);
+
+    await page.locator("#network-manager-back").click();
+    assert.equal(await page.locator("#network-following-count").innerText(), "1");
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "1");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a session that expires mid-manager stops offering mutations", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob"), account("carol")]] },
+    }, { canManageFollows: true });
+    await mockUnfollowEndpoint(page, () => ({
+      status: 401,
+      json: { error: "Your GitHub session expired. Please sign in again.", reason: "session_expired" },
+    }));
+
+    await page.locator("#network-manage-unfollows").click();
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+    await page.locator('.manager-row[data-login="bob"][data-state="failed"]').waitFor();
+
+    // The view stays, because this is exactly the moment the reader needs to see
+    // which accounts changed and which did not.
+    assert.equal(await page.locator("#network-manager").isVisible(), true);
+    assert.match(await bob.locator(".manager-outcome").innerText(), /session expired/);
+    assert.match(await page.locator("#network-manager-blocked").innerText(), /session ended/);
+
+    // Every remaining offer is withdrawn rather than left to fail, and says so in
+    // words rather than by appearance alone.
+    const carol = page.locator('.manager-row[data-login="carol"]');
+    assert.equal(await carol.locator(".manager-unfollow").innerText(), "Unavailable");
+    assert.equal(await carol.locator(".manager-unfollow").getAttribute("aria-disabled"), "true");
+    assert.match(
+      await carol.locator(".manager-unfollow").getAttribute("aria-label"),
+      /Cannot unfollow carol: Your GitHub session ended\./
+    );
+
+    await page.locator("#network-manager-back").click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    // The entry point reflects the authorization as it is now, not as it was when
+    // the Network tab loaded.
+    assert.equal(await page.locator("#network-manage-unfollows").isHidden(), true);
+    assert.match(await page.locator("#network-manage-note").innerText(), /Sign in as @example/);
+    assert.equal(await page.locator("#network-following-count").innerText(), "2");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a permission refusal offers the authorization that would fix it", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob")]] },
+    }, { canManageFollows: true });
+    await mockUnfollowEndpoint(page, () => ({
+      status: 403,
+      json: {
+        error: "Managing follows needs permission to change who you follow.",
+        reason: "permission_required",
+      },
+    }));
+
+    await page.locator("#network-manage-unfollows").click();
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+    await page.locator('.manager-row[data-login="bob"][data-state="failed"]').waitFor();
+
+    assert.match(await bob.locator(".manager-outcome").innerText(), /permission to change who you follow/);
+    await page.locator("#network-manager-back").click();
+    assert.equal(
+      await page.locator("#network-manage-unfollows").innerText(),
+      "Allow managing follows"
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("rapid activation of one row sends exactly one request", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob"), account("carol")]] },
+    }, { canManageFollows: true });
+    const calls = await mockUnfollowEndpoint(page, (body) => ({
+      delay: 300,
+      json: { login: body.login, state: "unfollowed", message: `Unfollowed @${body.login}.` },
+    }));
+
+    await page.locator("#network-manage-unfollows").click();
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    const confirm = bob.getByRole("button", { name: "Confirm unfollowing bob" });
+    // A double click, then a held Enter key, then another press while in flight.
+    await confirm.dblclick();
+    await page.locator('.manager-row[data-login="bob"][data-state="pending"]').waitFor();
+
+    // Only the row with a request in flight is inert, and it keeps its place in
+    // the tab order rather than being removed from it.
+    assert.equal(await bob.locator(".manager-unfollow").getAttribute("aria-disabled"), "true");
+    assert.equal(await bob.getAttribute("aria-busy"), "");
+    assert.equal(await bob.locator(".manager-unfollow").innerText(), "Unfollowing…");
+    // force, because Playwright treats aria-disabled as unactionable; a real
+    // pointer and a held Enter key both still reach the element.
+    await bob.locator(".manager-unfollow").click({ force: true });
+    await bob.locator(".manager-unfollow").press("Enter");
+
+    // The rest of the manager is untouched: the other row is still a live offer.
+    const carol = page.locator('.manager-row[data-login="carol"]');
+    assert.equal(await carol.locator(".manager-unfollow").getAttribute("aria-disabled"), null);
+    assert.equal(await carol.getAttribute("data-state"), "idle");
+
+    await bob.getByRole("button", { name: "Unfollowed: bob" }).waitFor();
+    assert.equal(calls.length, 1, "one deliberate confirmation is one request");
+
+    // An acted-on row cannot be acted on again.
+    await bob.locator(".manager-unfollow").click({ force: true });
+    assert.equal(calls.length, 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the manager is fully keyboard operable and announces what happened", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [[account("bob"), account("carol")]] },
+    }, { canManageFollows: true });
+    await mockUnfollowEndpoint(page, (body) => ({
+      json: { login: body.login, state: "unfollowed", message: `Unfollowed @${body.login}.` },
+    }));
+
+    // The entry point is reachable and operable from the keyboard.
+    await page.locator("#network-manage-unfollows").focus();
+    await page.keyboard.press("Enter");
+    await page.locator("#network-manager").waitFor({ state: "visible" });
+    // The view changed, so focus names what the reader is now looking at.
+    assert.equal(await page.evaluate(() => document.activeElement.id), "network-manager-heading");
+
+    // The live region is polite and is a status, so it is read without stealing
+    // focus away from the row being worked on.
+    assert.equal(await page.locator("#network-manager-announcement").getAttribute("role"), "status");
+    assert.equal(await page.locator("#network-manager-announcement").getAttribute("aria-live"), "polite");
+
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    // The profile link is reachable and names its target for a screen reader.
+    assert.equal(
+      await bob.locator(".manager-login").getAttribute("aria-label"),
+      "View bob on GitHub"
+    );
+    assert.equal(await bob.locator(".manager-login").getAttribute("href"), "https://github.com/bob");
+    assert.equal(await bob.locator(".manager-login").getAttribute("target"), "_blank");
+    assert.equal(await bob.locator(".manager-login").getAttribute("rel"), "noopener noreferrer");
+
+    // Every control is a real button, so Enter and Space work without help.
+    assert.deepEqual(
+      await bob.locator("button").evaluateAll((buttons) => buttons.map((button) => button.tagName)),
+      ["BUTTON", "BUTTON", "BUTTON"]
+    );
+
+    // Escape backs out of the confirmation and returns focus to the offer.
+    await bob.locator(".manager-unfollow").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await page.evaluate(() => document.activeElement.getAttribute("aria-label")),
+      "Confirm unfollowing bob"
+    );
+    await page.keyboard.press("Escape");
+    assert.equal(
+      await page.evaluate(() => document.activeElement.getAttribute("aria-label")),
+      "Unfollow bob"
+    );
+    assert.equal(await bob.getAttribute("data-state"), "idle");
+
+    // Arming a second row closes the first, so nothing is left quietly armed.
+    await bob.locator(".manager-unfollow").press("Enter");
+    const carol = page.locator('.manager-row[data-login="carol"]');
+    await carol.locator(".manager-unfollow").press("Enter");
+    assert.equal(await bob.getAttribute("data-state"), "idle");
+    assert.equal(await carol.getAttribute("data-state"), "confirming");
+
+    await page.keyboard.press("Enter");
+    await carol.getByRole("button", { name: "Unfollowed: carol" }).waitFor();
+    // Focus stays exactly where the reader left it.
+    assert.equal(
+      await page.evaluate(() => document.activeElement.getAttribute("aria-label")),
+      "Unfollowed: carol"
+    );
+    // Success is stated in words and the completed control says so in its name.
+    assert.match(await page.locator("#network-manager-announcement").innerText(), /Unfollowed @carol\./);
+    assert.equal(await carol.locator(".manager-unfollow").innerText(), "Unfollowed");
+    assert.equal(await carol.locator(".manager-unfollow").getAttribute("aria-disabled"), "true");
+
+    // Going back restores focus to the control that opened the manager.
+    await page.keyboard.press("Shift+Tab");
+    await page.locator("#network-manager-back").focus();
+    await page.keyboard.press("Enter");
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    assert.equal(await page.evaluate(() => document.activeElement.id), "network-manage-unfollows");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the manager renders a bounded list and discloses more on request", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await openNetwork(page, {
+      example: { followers: [[]], following: [accountList("following", 90)] },
+    }, { canManageFollows: true });
+
+    await page.locator("#network-manage-unfollows").click();
+    assert.equal(await page.locator(".manager-row").count(), 25);
+    assert.equal(await page.locator("#network-manager-status").innerText(), "Showing 25 of 90");
+    assert.match(await page.locator("#network-manager-summary").innerText(), /^90 accounts currently appear/);
+
+    // Show 25 more appends rather than rebuilding what is already on screen.
+    const first = await page.locator(".manager-row").first().evaluate((row) => {
+      row.dataset.marked = "original";
+      return row.dataset.login;
+    });
+    await page.locator("#network-manager-more").click();
+    assert.equal(await page.locator(".manager-row").count(), 50);
+    assert.equal(
+      await page.locator(".manager-row").first().evaluate((row) => row.dataset.marked),
+      "original"
+    );
+    assert.equal(await page.locator(".manager-row").first().evaluate((row) => row.dataset.login), first);
+
+    await page.locator("#network-manager-all").click();
+    assert.equal(await page.locator(".manager-row").count(), 90);
+    assert.equal(await page.locator("#network-manager-status").innerText(), "Showing all 90");
+
+    await page.locator("#network-manager-collapse").click();
+    assert.equal(await page.locator(".manager-row").count(), 25);
+    // Collapse trimmed rather than rebuilt, so the first row is still the one the
+    // reader was looking at.
+    assert.equal(
+      await page.locator(".manager-row").first().evaluate((row) => row.dataset.marked),
+      "original"
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the filter narrows loaded accounts without asking GitHub anything", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const network = await mockNetworkRequests(page, {});
+    await openNetwork(page, {
+      example: {
+        followers: [[]],
+        following: [[...accountList("alpha", 30), account("zebra"), account("zephyr")]],
+      },
+    }, { canManageFollows: true });
+
+    await page.locator("#network-manage-unfollows").click();
+    const before = network.relationshipCalls.length;
+
+    await page.locator("#network-manager-filter").fill("zeb");
+    assert.deepEqual(await page.locator(".manager-row").evaluateAll(
+      (rows) => rows.map((row) => row.dataset.login)
+    ), ["zebra"]);
+    assert.equal(await page.locator("#network-manager-status").innerText(), '1 account matching "zeb"');
+
+    await page.locator("#network-manager-filter").fill("ZE");
+    assert.equal(await page.locator(".manager-row").count(), 2, "matching folds case");
+
+    await page.locator("#network-manager-filter").fill("nobody");
+    assert.equal(await page.locator(".manager-row").count(), 0);
+    assert.match(await page.locator("#network-manager-empty").innerText(), /No loaded account matches "nobody"/);
+
+    await page.locator("#network-manager-filter").fill("");
+    assert.equal(await page.locator(".manager-row").count(), 25, "clearing returns to one page");
+    assert.equal(
+      network.relationshipCalls.length,
+      before,
+      "filtering spent no GitHub request per keystroke"
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("switching profiles leaves no mutation state behind", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await mockGithubRequests(page, [repository], { login: "example" });
+    await page.route("https://api.github.com/users/second", (route) => route.fulfill({
+      json: {
+        login: "second",
+        name: "Second User",
+        avatar_url: "https://avatars.example/second.png",
+        html_url: "https://github.com/second",
+      },
+    }));
+    await page.route("https://api.github.com/users/second/repos**", (route) => route.fulfill({ json: [] }));
+    await page.route("**/api/pinned-repositories?username=second", (route) =>
+      route.fulfill({ json: { repositories: [], readmes: {} } }));
+    await page.route("**/api/report?user=second", (route) =>
+      route.fulfill({ json: { contributed_repositories: [] } }));
+    await mockNetworkRequests(page, {
+      example: { followers: [[]], following: [[account("bob"), account("carol")]] },
+      second: { followers: [[]], following: [[account("dave")]] },
+    });
+    await mockSession(page, { canManageFollows: true });
+    await mockUnfollowEndpoint(page, () => ({
+      status: 502,
+      json: { error: "GitHub could not be reached. Nothing was changed.", reason: "github_unavailable" },
+    }));
+
+    await page.goto(`${baseUrl}/?user=example&view=network`);
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    await page.locator("#network-manage-unfollows").click();
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+    await page.locator('.manager-row[data-login="bob"][data-state="failed"]').waitFor();
+    // Arm a confirmation and leave it armed.
+    await page.locator('.manager-row[data-login="carol"] .manager-unfollow').click();
+
+    await page.evaluate(() => loadProfile("second"));
+    await page.locator("#profile-link").filter({ hasText: "@second" }).waitFor();
+    await page.getByRole("tab", { name: "Network" }).click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+
+    // The manager closed with the profile it belonged to, and took its rows, its
+    // failure and its armed confirmation with it.
+    assert.equal(await page.locator("#network-manager").isHidden(), true);
+    assert.equal(await page.locator("#network-manager-announcement").innerText(), "");
+    assert.equal(await page.locator(".manager-row").count(), 0);
+    assert.equal(await page.evaluate(() => managerState.outcomes.size), 0);
+    assert.equal(await page.evaluate(() => managerState.confirming), null);
+    assert.equal(await page.evaluate(() => managerState.username), null);
+
+    // Someone else's profile is not a profile this session can manage, so the
+    // action is not offered against @second's accounts at all.
+    assert.equal(await page.locator("#network-manage-unfollows").isHidden(), true);
+    assert.match(
+      await page.locator("#network-manage-note").innerText(),
+      /signed in as @example and viewing @second/
+    );
+    assert.deepEqual(
+      await page.locator("#network-unreciprocated-list li").allInnerTexts(),
+      ["dave"]
+    );
+
+    // And going back to the first profile does not resurrect its error either.
+    await page.evaluate(() => loadProfile("example"));
+    await page.locator("#profile-link").filter({ hasText: "@example" }).waitFor();
+    await page.getByRole("tab", { name: "Network" }).click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    await page.locator("#network-manage-unfollows").click();
+    assert.equal(await page.locator(".manager-row[data-state='failed']").count(), 0);
+    assert.equal(await page.locator(".manager-outcome:not([hidden])").count(), 0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a large manager stays bounded and reconciles one account at a time", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    // Ten pages of a hundred: the largest list the Network retrieval will hold.
+    await openNetwork(page, {
+      example: {
+        followers: [[]],
+        following: Array.from({ length: 10 }, (unused, index) =>
+          accountList("following", 100, index * 100)),
+      },
+    }, { canManageFollows: true });
+    await mockUnfollowEndpoint(page, (body) => ({
+      json: { login: body.login, state: "unfollowed", message: `Unfollowed @${body.login}.` },
+    }));
+
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "1000");
+    await page.locator("#network-manage-unfollows").click();
+    // A thousand accounts, twenty-five rows.
+    assert.equal(await page.locator(".manager-row").count(), 25);
+    assert.equal(await page.locator("#network-manager-status").innerText(), "Showing 25 of 1000");
+
+    const target = await page.locator(".manager-row").first().evaluate((row) => row.dataset.login);
+    const row = page.locator(`.manager-row[data-login="${target}"]`);
+    await row.locator(".manager-unfollow").click();
+    await row.locator('[data-action="confirm"]').click();
+    await page.locator(`.manager-row[data-login="${target}"][data-state="done"]`).waitFor();
+
+    // Reconciling one account touched one row, not a thousand.
+    assert.equal(await page.locator(".manager-row").count(), 25);
+    assert.equal(await page.locator(".manager-row[data-state='done']").count(), 1);
+    assert.match(await page.locator("#network-manager-announcement").innerText(), /999 accounts remain/);
+
+    await page.locator("#network-manager-back").click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#network-following-count").innerText(), "999");
+    assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "999");
+    // The Network lists came back at their own page size rather than rebuilding
+    // every account that was ever retrieved.
+    assert.equal(await page.locator("#network-following-list li").count(), 25);
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
  * formats today the way the interface formats a first-observation date
  * @returns {string} short date string
  */

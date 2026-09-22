@@ -24,6 +24,9 @@ function sessionHandler(request, response) {
   response.status(200).json({
     authenticated: true,
     user: { login: session.user.login, avatar_url: session.user.avatar_url },
+    // A capability flag, not a credential. The browser learns whether this session
+    // may change follows; it never learns anything it could change them with.
+    can_manage_follows: session.manageFollows === true,
   });
 }
 

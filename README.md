@@ -55,7 +55,7 @@ Private repositories never affect the public GitHub Profile Score. Private ident
 - It operates on the profile already loaded into GitProfileLens. There is no second username to enter.
 - The lists are fetched the first time the tab is opened, not during the audit itself, so an ordinary audit spends none of the limited unauthenticated request budget on them. A successful result is cached for that username, so leaving the tab and returning does not refetch. Auditing a different profile invalidates it.
 - Both lists are paginated at 100 accounts per request until GitHub returns a short page, so the tab is not limited to the first 30 or 100 accounts.
-- It reads only publicly accessible follower and following data from GitHub's public REST API, and needs no additional permissions.
+- It reads only publicly accessible follower and following data from GitHub's public REST API, and needs no additional permissions. The optional unfollow manager below is the one part that does, and it is gated separately.
 
 ### List ordering
 
@@ -71,7 +71,19 @@ The tab also derives the accounts the profile follows that do not follow it back
 
 This is derived **only when both lists have been retrieved completely**. If either list is incomplete, the section is withheld rather than shown, because a login missing from a partial followers list may simply sit on a page that never arrived - calling that account a non-follower would be unsound. The same completeness rule gates the Markdown export.
 
-It is a factual relationship difference, nothing more. GitProfileLens does not score, rank or recommend followers, does not suggest who to follow or unfollow, and never follows or unfollows anyone.
+It is a factual relationship difference, nothing more. GitProfileLens does not score, rank or recommend followers, does not suggest who to follow or unfollow, and never follows or unfollows anyone on its own.
+
+### Manage unfollows
+
+Beneath that list, **Manage unfollows** opens a focused view where you can unfollow accounts yourself, one at a time. It appears only when all three of its conditions hold, and says which one is missing when they do not:
+
+- Both the Followers and Following lists were retrieved completely, because the difference is only a fact when neither list is missing a page.
+- The audited profile is the account you are signed in as, compared case-insensitively. You cannot manage someone else's follows from their profile.
+- The session carries permission to change who you follow, granted by a separate authorization that exists only to say what it is for.
+
+Every unfollow is one account you choose and confirm. **GitProfileLens never unfollows anyone automatically**, and there is deliberately no "Unfollow all", no selection, no queue and no cleanup mode. Nothing changes until GitHub confirms the change, so a failure leaves the relationship exactly as it was and says so. Rows are built from the avatar and login GitHub already returned with the relationship list, so the manager issues no GitHub requests of its own.
+
+[docs/network-management.md](docs/network-management.md) documents the API contract, the permission model, what happens on every failure, and how a confirmed unfollow is recorded in observation history.
 
 ### Network Markdown
 
@@ -137,7 +149,8 @@ GitProfileLens uses the GitHub App web authorization flow and requests read-only
 - Production cookies use `Secure` and expire after eight hours.
 - OAuth requests use unpredictable, short-lived state values that are verified before callback processing.
 - Authenticated endpoints send private, no-store cache headers and are not eligible for shared CDN caching.
-- Browser JavaScript receives only safe sign-in identity data, never raw tokens or session secrets.
+- Browser JavaScript receives only safe sign-in identity data, never raw tokens or session secrets. Whether a session may manage follows is reported to the browser as a boolean capability, never as anything it could act with.
+- The only endpoint that changes anything on GitHub is `POST /api/unfollow`. It accepts one login and takes the acting identity from the sealed session, so a browser cannot name who is acting or which token to use. It performs exactly one bounded operation and is not a general GitHub proxy.
 - Private repository responses are processed for the current request and are not permanently stored by GitProfileLens.
 - Private Markdown reports are generated locally in the browser and cleared from page state on logout.
 - Logout clears the GitProfileLens session cookie. It does not sign the user out of GitHub.
@@ -294,6 +307,13 @@ Repository permissions:
 - Every other repository and organization permission: **No access**.
 - Subscribe to no webhook events.
 
+Account permissions:
+
+- **Followers:** Read and write, and only if you want the Network tab's unfollow manager. This is the permission behind `DELETE /user/following/{username}`. Leave it at **No access** to run GitProfileLens as a purely read-only audit; everything except the unfollow manager works unchanged.
+- Every other account permission: **No access**.
+
+GitHub grants a GitHub App's user permissions as one set at authorization, so this permission is carried by the token from sign-in onwards. GitProfileLens still refuses to use it until the reader passes through a separate, explicitly labelled authorization, and never unfollows anyone automatically. [docs/network-management.md](docs/network-management.md) records exactly what that gate does and does not guarantee.
+
 Under the GitHub App's Optional Features, keep **User-to-server token expiration** enabled. GitHub's expiring access tokens last eight hours and can be refreshed by the server.
 
 After creating the app:
@@ -336,13 +356,15 @@ gitprofilelens/
 |   |-- github-metadata.js           # public GraphQL enrichment and README analysis
 |   |-- pinned-repositories.js       # public supplemental metadata endpoint
 |   |-- private-repositories.js      # authenticated authorized-repository endpoint
-|   `-- report.js                    # public-only JSON report endpoint
+|   |-- report.js                    # public-only JSON report endpoint
+|   `-- unfollow.js                  # the one endpoint that changes anything on GitHub
 |-- tests/                            # unit, API, security, and browser tests
 |-- audit.js                          # deterministic scoring and normalization
 |-- pinned-optimizer.js               # deterministic pinned repository set selection
 |-- index.html                        # accessible application structure
 |-- evaluation/                       # corpus scoring and pinned recommendation reports
 |-- network-export.js                 # follower and following retrieval, derivation, and Markdown
+|-- network-history.js                # browser-local observation history for the Network lists
 |-- share.js                          # pure sharing and score-card helpers
 |-- script.js                         # browser state, fetching, rendering, and isolation
 |-- styles.css                        # responsive visual system
@@ -362,7 +384,7 @@ npm run eval:pins
 npm run eval:pins:diagnose
 ```
 
-Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs. `npm run eval:pins:diagnose` is an opt-in developer diagnostic that reports which selection rule decided each pinned recommendation, how often presentation score is consulted, and how candidate selection policies compare. `npm run eval:candidacy` is its counterpart for the `Strong` / `Worth polishing` distinction: the gates, which gate held each repository back, every case where a `Worth polishing` repository outscores a `Strong` one, and — by searching 120,960 repository shapes rather than exhibiting one pair — how far the tier could override presentation score before it was given a five-point band. `npm run eval:performance` drives the real page in a browser and reports deterministic counts — requests issued and repeated, elements created per interaction, repeated derived computations, DOM nodes per panel, storage writes — rather than machine-dependent timings. All three are described in [docs/scoring.md](docs/scoring.md). `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, a static server neither executes nor discloses it, and no `dev` script or `vercel.json` development command re-enters `vercel dev`.
+Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, unfollow authorization and its refusals against a mocked GitHub boundary, mutation reconciliation across every derived surface, and browser-level isolation from public scoring, sharing, score cards, and URLs. `npm run eval:pins:diagnose` is an opt-in developer diagnostic that reports which selection rule decided each pinned recommendation, how often presentation score is consulted, and how candidate selection policies compare. `npm run eval:candidacy` is its counterpart for the `Strong` / `Worth polishing` distinction: the gates, which gate held each repository back, every case where a `Worth polishing` repository outscores a `Strong` one, and — by searching 120,960 repository shapes rather than exhibiting one pair — how far the tier could override presentation score before it was given a five-point band. `npm run eval:performance` drives the real page in a browser and reports deterministic counts — requests issued and repeated, elements created per interaction, repeated derived computations, DOM nodes per panel, storage writes — rather than machine-dependent timings, and sweeps a synthetic unfollow manager from 25 to 10,000 accounts to show that opening it and reconciling one confirmed unfollow do not grow with the list. All three are described in [docs/scoring.md](docs/scoring.md). `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, a static server neither executes nor discloses it, and no `dev` script or `vercel.json` development command re-enters `vercel dev`.
 
 ## Deployment options
 
@@ -388,6 +410,8 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - The Network tab sees only what GitHub's public API returns. Accounts GitHub does not expose publicly are not retrievable, and lists can change between the profile request and the last page.
 - GitHub exposes no timestamp for when a follow happened, so the Network lists are shown in the API's order and are never labelled newest or oldest. See [docs/network-ordering.md](docs/network-ordering.md).
 - The Network tab retrieves at most 10,000 accounts per list; a larger network is reported as incomplete rather than silently truncated. It is available for public audits only, not the private repository audit.
+- The unfollow manager works only on the account you are signed in as, only when both relationship lists were retrieved completely, and only one account at a time. GitProfileLens never unfollows anyone automatically and implements no bulk action.
+- A GitHub App's user permissions are granted as one set at authorization, so GitProfileLens cannot narrow the write permission at the GitHub level. Its separate follow-management authorization is an application-level gate that makes the moment explicit; it is not a smaller token. See [docs/network-management.md](docs/network-management.md).
 
 ## Contributing
 

@@ -264,7 +264,41 @@ textarea:focus { border-color: #58a6ff; }
 .list-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .list-controls button { padding: 7px 13px; font-size: .82rem; font-weight: 700; }
 .network-global-controls { margin: 0 0 4px; }
+.network-manage { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-top: 22px; }
+.network-manage button { padding: 7px 13px; font-size: .82rem; font-weight: 700; }
+.network-manage-note { margin: 0; color: #8b949e; font-size: .78rem; line-height: 1.55; }
+.network-manager { margin-top: 30px; }
+#network-manager-back { margin-bottom: 16px; padding: 7px 13px; font-size: .82rem; font-weight: 700; }
+#network-manager-heading { margin-bottom: 8px; }
+#network-manager-heading:focus-visible { outline: 2px solid #58a6ff; outline-offset: 4px; }
+.network-manager .summary-text { margin-bottom: 10px; text-align: left; }
+.network-manager-promise { margin: 0 0 6px; color: #c9d1d9; font-size: .82rem; line-height: 1.55; }
+.network-manager-caveat { margin: 0 0 14px; color: #8b949e; font-size: .78rem; line-height: 1.55; }
+.manager-announcement { min-height: 0; margin: 0 0 14px; font-size: .82rem; }
+.manager-announcement:empty { margin: 0; }
+.manager-announcement.is-error { color: #ffb3ad; }
+.network-manager-filter { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 16px; }
+.network-manager-filter label { color: #8b949e; font-size: .78rem; font-weight: 700; }
+.network-manager-filter input { min-width: 220px; padding: 7px 11px; border: 1px solid #30363d; border-radius: 7px; background: #0d1117; color: #c9d1d9; font-family: inherit; font-size: .82rem; }
+.manager-list { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.manager-row { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; padding: 9px 13px; border: 1px solid #30363d; border-radius: 9px; background: #0d1117; }
+.manager-row[data-state="done"] { border-style: dashed; border-color: #3d4b5c; }
+.manager-row[data-state="failed"] { border-color: #ff7b72; }
+.manager-avatar { flex: none; width: 30px; height: 30px; border: 1px solid #30363d; border-radius: 99px; background: #161b22; }
+.manager-identity { flex: 1 1 180px; min-width: 0; }
+.manager-login { display: block; overflow: hidden; color: #c9d1d9; font-size: .86rem; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.manager-login:hover { color: #58a6ff; }
+.manager-view { display: block; margin-top: 1px; color: #6e7681; font-size: .68rem; font-weight: 700; letter-spacing: .03em; }
+.manager-login:hover .manager-view { color: #58a6ff; }
+.manager-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-left: auto; }
+.manager-actions button { padding: 6px 12px; font-size: .78rem; font-weight: 700; }
+.manager-confirm-label { color: #b1bac4; font-size: .76rem; }
+.manager-unfollow[aria-disabled="true"] { border-color: #30363d; background: #161b22; color: #6e7681; cursor: default; }
+.manager-outcome { flex: 1 1 100%; margin: 0; color: #8b949e; font-size: .76rem; line-height: 1.5; }
+.manager-row[data-state="failed"] .manager-outcome { color: #ffb3ad; }
 .network-notice[hidden], #network-results[hidden], #network-export[hidden], .account-list[hidden], #network-unreciprocated-section[hidden], .list-status[hidden], .list-controls[hidden], .network-history-note[hidden], .network-history-controls[hidden], .network-history-confirm[hidden], .link-button[hidden] { display: none; }
+#network-manage[hidden], #network-manager[hidden], #network-manage-unfollows[hidden], .network-manager-filter[hidden], .manager-list[hidden], .manager-outcome[hidden], .manager-confirm[hidden], .manager-unfollow[hidden] { display: none; }
+.manager-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 #network-export textarea { min-height: 380px; }
 
 .footer { display: flex; justify-content: space-between; gap: 20px; padding: 22px 4px 0; color: #6e7681; font-size: .75rem; }

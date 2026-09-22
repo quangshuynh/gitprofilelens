@@ -120,6 +120,10 @@
     // Present only for a relationship that went absent and was later seen again.
     if (isUsableTime(entry.reappearedAt)) sanitized.reappearedAt = entry.reappearedAt;
     if (Number.isInteger(entry.absences) && entry.absences > 0) sanitized.absences = entry.absences;
+    // Present only where GitProfileLens itself performed the unfollow and GitHub
+    // confirmed it. Kept apart from `absences`, which counts the weaker evidence
+    // of an account simply not turning up in a retrieval.
+    if (isUsableTime(entry.unfollowConfirmedAt)) sanitized.unfollowConfirmedAt = entry.unfollowConfirmedAt;
     return sanitized;
   }
 
@@ -704,12 +708,87 @@
       return Object.keys(read().profiles).length;
     }
 
+    /**
+     * records that gitprofilelens unfollowed one account and github confirmed it
+     *
+     * Why this writes at all, rather than waiting for the next retrieval
+     * ------------------------------------------------------------------
+     * Everything else in this store is an observation: GitProfileLens looked, and
+     * records what it saw. This is stronger. GitHub was asked to end the
+     * relationship and answered that it had. Waiting for the next complete
+     * Following retrieval to notice would leave the history asserting a
+     * relationship that GitProfileLens knows first-hand is over, which is the one
+     * kind of falsehood this module exists to avoid.
+     *
+     * What it deliberately does not do
+     * --------------------------------
+     * `firstObservedAt` is untouched. The first observation really did happen
+     * then, and an unfollow says nothing about when the follow began.
+     * `lastObservedAt` is untouched too, freezing at the last positive sighting
+     * exactly as an observed absence does. The absence is recorded as
+     * `unfollowConfirmedAt` rather than by incrementing `absences`, because those are
+     * different kinds of evidence: `absences` counts times an account did not turn
+     * up in a list, and this account did not fail to turn up, it was removed.
+     *
+     * An account with no history is not invented here. Recording an unfollow for a
+     * relationship this browser never observed would create an entry whose
+     * `firstObservedAt` is a guess.
+     *
+     * @param {Object} mutation audited login, target login, and confirmation time
+     * @returns {Object} what changed and whether the write reached storage
+     */
+    function recordUnfollow(mutation) {
+      const normalized = normalizeLogin(mutation?.login);
+      const target = normalizeLogin(mutation?.target);
+      const confirmedAt = toIsoTime(mutation?.confirmedAt);
+      const outcome = { wrote: false, changed: false, error: null, list: null };
+      if (!normalized || !target) {
+        outcome.error = "invalid-target";
+        return outcome;
+      }
+
+      const snapshot = read();
+      const existing = snapshot.profiles[normalized];
+      const list = existing?.following ?? null;
+      const entry = list?.accounts?.[target] ?? null;
+      if (!entry) {
+        outcome.error = "not-tracked";
+        outcome.list = list;
+        return outcome;
+      }
+      if (entry.currentlyPresent === false && entry.unfollowConfirmedAt) {
+        // Already recorded; a repeat confirmation is not new evidence.
+        outcome.list = list;
+        return outcome;
+      }
+
+      const updatedList = {
+        ...list,
+        accounts: {
+          ...list.accounts,
+          [target]: { ...entry, currentlyPresent: false, unfollowConfirmedAt: confirmedAt },
+        },
+      };
+      const next = { schemaVersion: SCHEMA_VERSION, profiles: { ...snapshot.profiles } };
+      next.profiles[normalized] = { ...existing, following: updatedList };
+
+      const written = writeWithFallback(next, normalized);
+      outcome.changed = true;
+      outcome.wrote = written.wrote;
+      outcome.error = written.error;
+      // A refused write left storage holding the old entry, so the list reported
+      // back is the one storage actually has.
+      outcome.list = written.wrote ? updatedList : getList(normalized, "following");
+      return outcome;
+    }
+
     return {
       countProfiles,
       getList,
       isAvailable,
       read,
       recordNetworkObservation,
+      recordUnfollow,
       reset,
       resetProfile,
     };

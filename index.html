@@ -233,6 +233,11 @@
             </div>
           </section>
 
+          <div id="network-manage" class="network-manage" hidden>
+            <button id="network-manage-unfollows" class="secondary" type="button" hidden>Manage unfollows</button>
+            <p id="network-manage-note" class="network-manage-note"></p>
+          </div>
+
           <div id="network-export" class="section-block" hidden>
             <div class="section-heading export-heading">
               <div><p class="eyebrow">Preview and export</p><h2>Network Markdown</h2></div>
@@ -244,6 +249,27 @@
             <textarea id="network-output" readonly spellcheck="false" aria-label="Generated network Markdown"></textarea>
           </div>
         </div>
+        <section id="network-manager" class="section-block network-manager" hidden aria-labelledby="network-manager-heading">
+          <button id="network-manager-back" class="secondary" type="button">Back to Network</button>
+          <h3 id="network-manager-heading" tabindex="-1">Manage unfollows</h3>
+          <p id="network-manager-summary" class="summary-text"></p>
+          <p class="network-manager-promise">GitProfileLens never unfollows anyone automatically. There is no bulk action here: every unfollow is one account you choose, one at a time.</p>
+          <p id="network-manager-caveat" class="network-manager-caveat">These are accounts you follow that were not in the followers list GitHub returned. That is all it means. GitProfileLens cannot know why an account does not follow back.</p>
+          <p id="network-manager-blocked" class="network-notice is-error" hidden></p>
+          <p id="network-manager-announcement" class="status manager-announcement" role="status" aria-live="polite" tabindex="-1"></p>
+          <div id="network-manager-filter-group" class="network-manager-filter" hidden>
+            <label for="network-manager-filter">Filter by username</label>
+            <input id="network-manager-filter" type="search" autocomplete="off" spellcheck="false" placeholder="Filter the loaded accounts">
+          </div>
+          <p id="network-manager-empty" class="empty-state" hidden></p>
+          <ul id="network-manager-list" class="manager-list" aria-labelledby="network-manager-heading"></ul>
+          <p id="network-manager-status" class="list-status" hidden></p>
+          <div id="network-manager-controls" class="list-controls" hidden>
+            <button id="network-manager-more" class="secondary" type="button" aria-label="Show 25 more accounts to manage">Show 25 more</button>
+            <button id="network-manager-all" class="secondary" type="button" aria-label="Show all accounts to manage">Show all</button>
+            <button id="network-manager-collapse" class="secondary" type="button" aria-label="Collapse the accounts to manage" hidden>Collapse</button>
+          </div>
+        </section>
       </section>
 
       <section id="pinned-panel" class="tab-panel" role="tabpanel" aria-labelledby="pinned-tab" tabindex="0" hidden>
