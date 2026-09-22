@@ -1555,6 +1555,56 @@ test("disclosure appends and trims instead of rebuilding rendered accounts", { s
   }
 });
 
+test("the history controls are keyboard operable and never strand focus", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("alice"), account("bob")]], following: [[]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  const active = () => page.evaluate(() => document.activeElement?.id ?? null);
+
+  // Reached and operated from the keyboard alone.
+  await page.locator("#network-history-reset").focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await active(), "network-history-confirm", "focus followed to the confirmation");
+
+  await page.keyboard.press("Tab");
+  assert.equal(await active(), "network-history-cancel");
+  await page.keyboard.press("Enter");
+  assert.equal(await active(), "network-history-reset", "declining returned focus to the control");
+
+  await page.keyboard.press("Enter");
+  await page.locator("#network-history-confirm").waitFor({ state: "visible" });
+  await page.keyboard.press("Enter");
+
+  // Every control in the group is gone, so focus must land on the explanation
+  // rather than falling back to the document.
+  assert.equal(await active(), "network-history-note");
+  assert.equal(await page.locator("#network-history-note").getAttribute("role"), "status");
+  assert.match(await page.locator("#network-history-note").innerText(), /history deleted/i);
+
+  // Buttons stay buttons, and nothing became a clickable div.
+  for (const id of ["network-history-reset", "network-history-confirm", "network-history-cancel"]) {
+    assert.equal(await page.locator(`#${id}`).evaluate((node) => node.tagName), "BUTTON");
+    assert.equal(await page.locator(`#${id}`).evaluate((node) => node.type), "button");
+  }
+
+  // The list controls remain reachable at a narrow width without a horizontal scroll.
+  await page.setViewportSize({ width: 380, height: 780 });
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    true
+  );
+  } finally {
+    await browser.close();
+  }
+});
+
 test("opening Network reuses the profile the audit already fetched", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {

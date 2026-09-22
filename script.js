@@ -2367,9 +2367,13 @@ function renderNetworkOrderingNote() {
  * @returns {void} no return value
  */
 function setHistoryResetConfirmation(confirming) {
+  const wasConfirming = !networkHistoryConfirmGroup.hidden;
   networkHistoryResetButton.hidden = confirming;
   networkHistoryConfirmGroup.hidden = !confirming;
+  // The control the reader just used disappears either way, so focus is moved to
+  // the one that replaced it rather than dropped back to the document.
   if (confirming) networkHistoryConfirmButton.focus();
+  else if (wasConfirming) networkHistoryResetButton.focus();
 }
 
 /**
@@ -2383,12 +2387,15 @@ function setHistoryResetConfirmation(confirming) {
 function resetNetworkHistory() {
   networkHistory.reset();
   networkState.history = { followers: null, following: null };
-  setHistoryResetConfirmation(false);
+  networkHistoryConfirmGroup.hidden = true;
   networkHistoryResetButton.hidden = true;
   networkHistoryControls.hidden = true;
   networkHistoryNote.hidden = false;
   networkHistoryNote.textContent =
     "Observation history deleted. The next time this network is loaded it starts a new baseline.";
+  // Every control in this group is now gone, so focus lands on the sentence that
+  // says what happened instead of being lost to the document body.
+  networkHistoryNote.focus();
 
   if (!networkState.network) return;
   // The lists on screen were ordered by history that no longer exists, so they are
