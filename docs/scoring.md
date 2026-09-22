@@ -411,6 +411,36 @@ Rule 8 makes the order total, so the recommendation never depends on the order G
 
 Because redundancy sits at rule 4, breadth can never promote a lower candidacy tier, a fork over an original, or an archive over an active repository. Because it applies only within the comparable-score band, it can no longer promote a markedly weaker presentation over a markedly stronger one either. It chooses among repositories the earlier rules already consider equally suitable, which the band makes true rather than merely stated.
 
+#### Why rule 1 is not bounded the way rule 4 is
+
+Rule 1 is a hard partition: every `Strong candidate` precedes every `Worth polishing` repository, whatever their presentation scores. Rule 4 carries a five-point band for exactly the shape of problem rule 1 appears to have, so rule 1 was measured against the same question. `npm run eval:candidacy` reproduces everything below.
+
+**The partition changes nothing that is observable.** Across the 13-profile, 185-repository evaluation corpus, moving candidacy *below* presentation score — and bounding it with bands of 2, 5 and 10 points — produces **byte-identical recommended sets for every profile**. On a live 33-repository profile with 12 `Strong` candidates, every one of those policies again produces the identical set. Two regression tests assert this, so it is a pinned property rather than a remembered result.
+
+**It is bounded by construction, which is the part that distinguishes it from breadth.** Seven of the nine `Strong` gates read evidence the presentation score already reads: README state, description score, topics, maintenance score, high findings, medium findings, and the score itself. A repository that fails one of them has already been charged for it in its score. It cannot fail a gate and still run away with the score, so a `Worth polishing` repository can only outscore a `Strong` one by a narrow margin.
+
+Measured: the lowest score a `Strong` repository can reach while clearing every gate is **87**; the highest a `Worth polishing` repository can reach while failing one is **90**. The widest inversion presentation evidence can produce is therefore **3 points**. On the corpus the widest actual inversion is 5 points, and the largest displacement candidacy causes is 2 points in a single slot.
+
+This is the opposite of the breadth situation. Breadth was unbounded precisely because primary language is *orthogonal* to presentation score: a repository could win on language while scoring arbitrarily lower. Candidacy is *correlated* with presentation score, and that correlation is the ceiling. The duplicate evidence that looks like double counting is what keeps the second count small.
+
+**The two gates the score does not read already have their own rules.** Fork status and archive status are the only `Strong` gates the presentation score ignores, and a repository can fail either while scoring 100. But rules 2 and 3 are originality and archive status, applied immediately after candidacy, so those cases rank identically whether candidacy orders them or not. For its two exclusive gates, rule 1's ordering contribution is fully redundant with rules 2 and 3; for its seven shared gates, it is bounded by the score it duplicates.
+
+**Every gate is still a cliff, and that is recorded rather than fixed.** One unit either side of each threshold flips the label:
+
+| Gate | Boundary crossed | Presentation score cost | Label |
+| --- | --- | --- | --- |
+| `description` | 70, versus 40 — the nearest score the description scorer can actually produce below it | 7 | flips |
+| `topics` | one topic versus none | 8 | flips |
+| `maintenance` | pushed 700 days ago versus 760, one band apart | 3 | flips |
+| `readme` | two core README sections versus one | 4 | flips |
+| `mediumAtMostOne` | one medium finding versus two | 5 | flips |
+
+The maintenance row is the sharpest: a single day either side of 730 flips the label for three points of score. The score always moves in the same direction as the label, which is the coupling described above, and every one of these cliffs is therefore capped by it.
+
+**Outcome: rule 1 is unchanged.** A band would add a constant, a comparison and a paragraph of explanation to a rule whose reach is already bounded by its inputs and which changes no recommendation on any profile measured. `evaluation/candidacy-diagnose.js` and `tests/scoring/candidacy-policy.test.js` keep the finding checkable: if the partition ever starts moving a recommendation, or the inversion ceiling ever widens, the tests fail and the question reopens with the case in hand.
+
+Keeping the partition also keeps the recommended list legible against the labels printed on the same cards. A set that listed `Worth polishing` above `Strong candidate` would read as a contradiction of its own badges for no measured gain.
+
 ### Redundancy and diversity
 
 Only signals GitHub reports directly are compared. **GitProfileLens has no reliable project or domain categories, so it does not invent any.** There is no "backend", "mobile", or "DevOps" inference from README prose, and adding one would need an explicit, testable categorization step that does not exist yet.
@@ -838,3 +868,25 @@ It runs the real selection loop with tracing enabled — the same `optimizePinne
 It is deliberately opt-in and is not part of `npm run eval:pins`, which belongs in ordinary review. A non-zero exit means the diagnostic could not run, never that a recommendation changed.
 
 The trace is available programmatically as `optimizePinnedSet(audits, { trace: true })`. It is absent unless requested, and the interface never asks for it. An alternate ordering can be passed as `{ stages }` for measurement; production always uses the exported `SELECTION_STAGES`.
+
+### Diagnosing the candidacy partition
+
+```bash
+npm run eval:candidacy
+npm run eval:candidacy -- --pairs
+npm run eval:candidacy -- --profile prolific-account
+```
+
+`npm run eval:pins:diagnose` reports that candidacy settles most pairwise comparisons. This answers the narrower question that raises: what is the partition deciding with, and how far can it override presentation evidence?
+
+It reports:
+
+* every `Strong` gate, its input, its threshold, what missing evidence does to it, and whether the presentation score reads the same evidence;
+* which gate each non-`Strong` repository failed, and which repositories were held out by exactly one gate;
+* every pair where a `Worth polishing` repository outscores a `Strong` one, and the gate behind each;
+* how often the partition settles a slot, how much score displacement it causes, and on how many profiles;
+* threshold sensitivity: the label and score one reachable step either side of each gate;
+* the policy comparison — current, candidacy-below-score, and candidacy bands of 2, 5 and 10 points;
+* ten constructed falsification cases the corpus does not contain, including the widest score inversion the classifier can produce.
+
+The run first asserts that its own gate table reproduces the production classifier on every corpus repository, so it cannot describe a classifier the product does not have. It is opt-in, and a non-zero exit means the diagnostic could not run, never that a classification changed. `tests/scoring/candidacy-policy.test.js` asserts the findings it produced, reading these same functions rather than re-implementing them.
