@@ -1288,6 +1288,85 @@ test("disclosure controls are keyboard operable and wrap on mobile", { skip: !ch
 });
 
 
+test("network lists keep the API order and claim no follow chronology", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  await mockGithubRequests(page);
+
+  // A deliberately unsorted order. Anything that re-sorted the list, alphabetically
+  // or by the id the fixture carries, would visibly disturb this sequence.
+  const shuffled = [30, 4, 21, 8, 15, 1, 27, 12, 19, 6, 25, 10, 17, 3, 23, 14, 29, 7, 20, 11,
+                    26, 2, 18, 13, 28, 5, 22, 9, 24, 16].map((n) => account(`user-${n}`));
+  await mockNetworkRequests(page, {
+    example: { followers: [[]], following: [shuffled] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  const expected = shuffled.map((entry) => entry.login);
+
+  // Ordering is applied to the complete list before the first 25 are sliced off,
+  // so the initial page is the first 25 of the API order, not a re-sorted subset.
+  assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), expected.slice(0, 25));
+
+  // Nobody follows back, so the derived list must inherit the Following order.
+  assert.deepEqual(
+    await page.locator("#network-unreciprocated-list li").allInnerTexts(),
+    expected.slice(0, 25)
+  );
+
+  await page.getByRole("button", { name: "Show 25 more Following users" }).click();
+  assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), expected);
+
+  await page.getByRole("button", { name: "Collapse Following users" }).click();
+  assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), expected.slice(0, 25));
+
+  await page.getByRole("button", { name: "Show all Following users" }).click();
+  assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), expected);
+
+  // Leaving and returning to the tab reuses the loaded network rather than
+  // refetching it, so the order cannot change underneath the reader.
+  await page.locator("#overview-tab").click();
+  await page.locator("#network-tab").click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), expected);
+
+  // The interface states the ordering neutrally.
+  const note = await page.locator("#network-ordering-note").innerText();
+  assert.match(note, /order the GitHub API returned them/);
+
+  // No chronology claim anywhere in the panel or the export, once the note that
+  // explicitly denies one is set aside.
+  const panelText = (await page.locator("#network-panel").innerText()).split(note).join("");
+  const markdown = await page.locator("#network-output").inputValue();
+  const exportText = markdown.split(note.trim()).join("");
+  for (const surface of [panelText, exportText]) {
+    assert.doesNotMatch(surface, /newest\s+(follow|first)/i);
+    assert.doesNotMatch(surface, /oldest\s+(follow|first|last)/i);
+    assert.doesNotMatch(surface, /most\s+recent(ly)?\s+follow/i);
+    assert.doesNotMatch(surface, /chronological/i);
+    assert.doesNotMatch(surface, /\bfollowed[\s_]?at\b/i);
+  }
+
+  // The export lists the same accounts in the same order as the interface.
+  const exported = markdown
+    .split("## Following\n")[1]
+    .split("## Following who")[0]
+    .match(/\[([^\]]+)\]/g)
+    .map((match) => match.slice(1, -1));
+  assert.deepEqual(exported, expected);
+
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
 /**
  * Repository fixtures for the pinned optimizer view.
  *

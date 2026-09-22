@@ -27,6 +27,21 @@
   const MAX_PAGES = 100;
 
   /**
+   * how these lists are ordered, stated without claiming a chronology
+   *
+   * GitHub's follower and following endpoints return only account identities: no
+   * field records when one account followed another, and no ordering is documented
+   * for either endpoint. The GraphQL edge types carry only a cursor and a node, and
+   * neither relationship field accepts an ordering argument, so no GitHub API can
+   * tell GitProfileLens which follow is newer. These lists therefore keep the order
+   * the API returned and say so, rather than implying a newest-to-oldest reading.
+   */
+  const ORDERING_NOTE =
+    "Accounts appear in the order the GitHub API returned them. GitHub does not record " +
+    "when a follow happened and does not document an order for these lists, so this is " +
+    "not a newest-to-oldest follow history.";
+
+  /**
    * builds an error carrying a stable reason for the interface to branch on
    * @param {string} message user-facing message
    * @param {string} reason machine-readable failure reason
@@ -376,6 +391,8 @@
       "",
     ];
 
+    lines.push(`> ${ORDERING_NOTE}`, "");
+
     const countNote = buildCountNote(network);
     if (countNote) lines.push(`> ${countNote}`, "");
 
@@ -422,6 +439,7 @@
   }
 
   return {
+    ORDERING_NOTE,
     buildFilename,
     buildMarkdown,
     buildProfileUrl,
