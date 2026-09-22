@@ -76,6 +76,7 @@ const networkManager = document.querySelector("#network-manager");
 const networkManagerBack = document.querySelector("#network-manager-back");
 const networkManagerHeading = document.querySelector("#network-manager-heading");
 const networkManagerSummary = document.querySelector("#network-manager-summary");
+const networkManagerBlocked = document.querySelector("#network-manager-blocked");
 const networkManagerAnnouncement = document.querySelector("#network-manager-announcement");
 const networkManagerFilterGroup = document.querySelector("#network-manager-filter-group");
 const networkManagerFilter = document.querySelector("#network-manager-filter");
@@ -224,6 +225,10 @@ const managerState = {
   outcomes: new Map(),
   confirming: null,
   pending: null,
+  // Set when the authorization the manager depends on has gone while it was open.
+  // The view stays readable so the reader can see what happened; it just stops
+  // offering an action that can no longer succeed.
+  blocked: "",
   // Set when a confirmed unfollow has changed `networkState` but the Network
   // sections behind the manager have not been repainted yet.
   dirty: false,
@@ -527,9 +532,12 @@ function renderAuthState() {
     appState.canManageFollows = false;
   }
   // Whether unfollowing may be offered follows the authorization as it stands now,
-  // not the one that happened to hold when the Network tab was first loaded. A
-  // sign-out closes the manager rather than leaving its controls on screen.
-  if (!authenticated && managerState.open) closeUnfollowManager();
+  // not the one that happened to hold when the Network tab was first loaded. An
+  // open manager keeps showing what already happened, with its remaining offers
+  // withdrawn, rather than vanishing mid-action.
+  if (!authenticated && managerState.open && !managerState.blocked) {
+    blockUnfollowManager("You are no longer signed in to GitHub.");
+  }
   updateManageAvailability();
 }
 
@@ -2704,9 +2712,12 @@ function openUnfollowManager() {
   managerState.pending = null;
   managerState.renderedAccounts = null;
   managerState.renderedCount = 0;
+  managerState.blocked = "";
   networkManagerFilter.value = "";
   networkManagerAnnouncement.textContent = "";
   networkManagerAnnouncement.classList.remove("is-error");
+  networkManagerBlocked.hidden = true;
+  networkManagerBlocked.textContent = "";
 
   networkResults.hidden = true;
   networkExport.hidden = true;
@@ -2766,6 +2777,7 @@ function resetUnfollowManager() {
   managerState.outcomes = new Map();
   managerState.confirming = null;
   managerState.pending = null;
+  managerState.blocked = "";
   managerState.dirty = false;
   managerState.renderedAccounts = null;
   managerState.renderedCount = 0;
@@ -2775,6 +2787,8 @@ function resetUnfollowManager() {
   networkManagerList.replaceChildren();
   networkManagerAnnouncement.textContent = "";
   networkManagerAnnouncement.classList.remove("is-error");
+  networkManagerBlocked.hidden = true;
+  networkManagerBlocked.textContent = "";
   networkManagerFilter.value = "";
   networkManagerFilterGroup.hidden = true;
   networkManage.hidden = true;
@@ -2999,6 +3013,9 @@ function createManagerRow(account) {
  * @returns {void} no return value
  */
 function applyManagerRowState(row, account) {
+  // Read before anything is hidden: the browser blurs a control the moment it
+  // disappears, and by then where the reader was is already lost.
+  const previouslyFocused = document.activeElement;
   const normalized = account.login.toLowerCase();
   const outcome = managerState.outcomes.get(normalized) ?? null;
   const pending = managerState.pending === normalized;
@@ -3020,6 +3037,12 @@ function applyManagerRowState(row, account) {
     button.textContent = outcome.label;
     button.setAttribute("aria-label", `${outcome.label}: ${account.login}`);
     button.setAttribute("aria-disabled", "true");
+  } else if (managerState.blocked) {
+    // The authorization is gone, so the offer is withdrawn rather than left to
+    // fail. The label says why in words rather than relying on how it looks.
+    button.textContent = "Unavailable";
+    button.setAttribute("aria-label", `Cannot unfollow ${account.login}: ${managerState.blocked}`);
+    button.setAttribute("aria-disabled", "true");
   } else {
     button.textContent = "Unfollow";
     button.setAttribute("aria-label", `Unfollow ${account.login}`);
@@ -3031,6 +3054,32 @@ function applyManagerRowState(row, account) {
   outcomeText.hidden = !message;
   if (message) button.setAttribute("aria-describedby", outcomeText.id);
   else button.removeAttribute("aria-describedby");
+
+  // Confirming a request collapses the confirmation the reader was standing in,
+  // so focus follows to the control that replaced it. Without this, pressing
+  // Enter on a confirmation drops focus to the document and a keyboard reader
+  // loses their place in a list of several hundred.
+  if (row.contains(previouslyFocused) && previouslyFocused.closest("[hidden]")) button.focus();
+}
+
+/**
+ * withdraws every remaining offer in an open manager, saying why
+ *
+ * Preferred to closing the manager outright. A session that ends mid-action is
+ * exactly the moment the reader most needs to see which accounts were changed and
+ * which were not, and pulling the view away would take that with it.
+ *
+ * @param {string} reason short phrase naming what is missing
+ * @returns {void} no return value
+ */
+function blockUnfollowManager(reason) {
+  managerState.blocked = reason;
+  managerState.confirming = null;
+  networkManagerBlocked.textContent =
+    `${reason} Nothing further can be unfollowed from here until that is resolved. ` +
+    "Accounts already marked below were confirmed by GitHub before this happened.";
+  networkManagerBlocked.hidden = false;
+  for (const [normalized] of managerState.rows) refreshManagerRow(normalized);
 }
 
 /**
@@ -3134,6 +3183,7 @@ async function requestUnfollow(login) {
   // nothing, and a different row waits rather than turning deliberate review into
   // a burst of writes against GitHub's content-creation limit.
   if (managerState.pending) return;
+  if (managerState.blocked) return;
   if (managerState.outcomes.get(normalized)?.state === "done") return;
 
   managerState.pending = normalized;
@@ -3163,19 +3213,19 @@ async function requestUnfollow(login) {
     // The session is gone, so every other row is unactionable too.
     appState.authUser = null;
     appState.canManageFollows = false;
-    renderAuthState();
     finishUnfollow(login, {
       state: "failed",
       message: data?.error || "Your GitHub session expired. Please sign in again.",
     });
+    blockUnfollowManager("Your GitHub session ended.");
+    renderAuthState();
     return;
   }
   if (response.status === 403 && data?.reason === "permission_required") {
     appState.canManageFollows = false;
-    finishUnfollow(login, {
-      state: "failed",
-      message: data.error + " Go back to Network to grant it.",
-    });
+    finishUnfollow(login, { state: "failed", message: data.error });
+    blockUnfollowManager("GitProfileLens no longer has permission to change who you follow.");
+    updateManageAvailability();
     return;
   }
   if (!response.ok || !data?.state) {
