@@ -243,6 +243,7 @@ textarea:focus { border-color: #58a6ff; }
 .network-counts dd { margin: 5px 0 0; color: #e6edf3; font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
 .network-notice { margin: 0 0 20px; padding: 12px 14px; border-left: 2px solid #58a6ff; background: #11161d; color: #b1bac4; font-size: .84rem; line-height: 1.55; }
 .network-notice.is-error { border-left-color: #ff7b72; color: #ffb3ad; }
+.network-ordering-note { margin: 0 0 20px; color: #8b949e; font-size: .8rem; line-height: 1.55; }
 .network-section { margin-top: 30px; }
 #network-panel h3 { margin-bottom: 14px; font-size: 1.05rem; }
 .account-list { display: flex; flex-wrap: wrap; gap: 7px; margin: 0; padding: 0; list-style: none; }

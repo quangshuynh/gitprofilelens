@@ -57,6 +57,14 @@ Private repositories never affect the public GitHub Profile Score. Private ident
 - Both lists are paginated at 100 accounts per request until GitHub returns a short page, so the tab is not limited to the first 30 or 100 accounts.
 - It reads only publicly accessible follower and following data from GitHub's public REST API, and needs no additional permissions.
 
+### List ordering
+
+Accounts appear in the order GitHub's API returned them, and both the tab and the export say so.
+
+GitProfileLens does not present these lists as a newest-to-oldest follow history, because GitHub does not publish the evidence such a claim would need. The REST responses carry no field recording when one account followed another, the endpoints document no ordering and accept no `sort` parameter, the GraphQL follower and following edges expose only a cursor and a user node with no `orderBy` argument, and the Events API keeps at most 300 events from the past 30 days, which cannot reconstruct a full follow history. An account's `created_at` is when that account joined GitHub, not when the follow happened, and is never used as a substitute.
+
+[docs/network-ordering.md](docs/network-ordering.md) records the evidence in full, including a measurement of what the response order actually tracks.
+
 ### Following who don't follow back
 
 The tab also derives the accounts the profile follows that do not follow it back: the following list minus the followers list, comparing logins case-insensitively because GitHub treats them as case-insensitive identities. Results keep the spelling and ordering GitHub returned for the following list.
@@ -351,9 +359,10 @@ npm run check
 npm run test:browser
 npm run eval
 npm run eval:pins
+npm run eval:pins:diagnose
 ```
 
-Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs. `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, a static server neither executes nor discloses it, and no `dev` script or `vercel.json` development command re-enters `vercel dev`.
+Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, and browser-level isolation from public scoring, sharing, score cards, and URLs. `npm run eval:pins:diagnose` is an opt-in developer diagnostic that reports which selection rule decided each pinned recommendation, how often presentation score is consulted, and how candidate selection policies compare; see [docs/scoring.md](docs/scoring.md). `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, a static server neither executes nor discloses it, and no `dev` script or `vercel.json` development command re-enters `vercel dev`.
 
 ## Deployment options
 
@@ -377,6 +386,7 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - The pinned optimizer is a browser feature. The recommended set is not part of any Markdown export.
 - A public share URL re-fetches current public data; no audit snapshot is stored.
 - The Network tab sees only what GitHub's public API returns. Accounts GitHub does not expose publicly are not retrievable, and lists can change between the profile request and the last page.
+- GitHub exposes no timestamp for when a follow happened, so the Network lists are shown in the API's order and are never labelled newest or oldest. See [docs/network-ordering.md](docs/network-ordering.md).
 - The Network tab retrieves at most 10,000 accounts per list; a larger network is reported as incomplete rather than silently truncated. It is available for public audits only, not the private repository audit.
 
 ## Contributing

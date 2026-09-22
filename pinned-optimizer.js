@@ -74,6 +74,30 @@
   const SHARED_TOPIC_THRESHOLD = 2;
 
   /**
+   * How close two presentation scores must be for breadth to choose between them.
+   *
+   * Breadth is a tie-breaker: it decides which of two comparably well presented
+   * repositories to feature, not whether presentation evidence matters. Outside
+   * this band the two are not comparable, so the stronger presentation evidence
+   * decides and breadth abstains.
+   *
+   * The band exists because the alternative has no upper bound. With breadth
+   * ranked ahead of presentation score unconditionally, a repository could enter
+   * the set over one scoring arbitrarily higher purely for reporting a different
+   * primary language, which is not a claim about portfolio quality that
+   * GitProfileLens can support from what it observes.
+   *
+   * Five points is the middle of the range the evidence leaves open. Across the
+   * evaluation corpus every band from 2 to 9 produces identical sets, and on a
+   * 32-repository profile with a deep Strong pool, bands of 3 to 6 keep four
+   * distinct languages in the set while cutting the largest score a breadth
+   * decision overrides from 7 points to 3. Tighter bands collapse that profile to
+   * a two-language set, which defeats the purpose of measuring breadth at all;
+   * wider bands restore the unbounded overrides the band exists to prevent.
+   */
+  const COMPARABLE_SCORE_BAND = 5;
+
+  /**
    * reports the maximum number of repositories a GitHub profile can pin
    * @returns {number} GitHub's documented pinned-item limit
    */
@@ -236,29 +260,72 @@
    * 2. originality, so confirmed original work precedes unreported fork status,
    *    which precedes a confirmed fork;
    * 3. archive status, so an active repository precedes a retired one;
-   * 4. redundancy, so within those constraints breadth precedes repetition;
+   * 4. redundancy, but only between repositories whose presentation scores sit
+   *    within COMPARABLE_SCORE_BAND of each other, so breadth precedes repetition
+   *    among comparable work and abstains otherwise;
    * 5. presentation score, then maintenance, then verified metadata count;
    * 6. repository name, which makes the order total and independent of API order.
    *
    * Redundancy therefore can never promote a weaker tier, a fork over an original,
-   * or an archive over an active project. It only chooses among repositories the
-   * earlier rules already consider equally suitable.
+   * or an archive over an active project, and it can no longer promote a markedly
+   * weaker presentation over a markedly stronger one. It only chooses among
+   * repositories the earlier rules already consider equally suitable, which is
+   * what the band makes true rather than merely stated.
    *
    * @param {Object} entryA first candidate with its redundancy measurement
    * @param {Object} entryB second candidate with its redundancy measurement
    * @returns {number} sort order
    */
   function compareCandidates(entryA, entryB) {
-    const candidateA = entryA.candidate;
-    const candidateB = entryB.candidate;
-    return candidateA.tier - candidateB.tier
-      || candidateA.originalityRank - candidateB.originalityRank
-      || candidateA.archivedRank - candidateB.archivedRank
-      || entryA.redundancy.total - entryB.redundancy.total
-      || candidateB.score - candidateA.score
-      || candidateB.maintenance - candidateA.maintenance
-      || candidateB.metadataCount - candidateA.metadataCount
-      || compareNames(candidateA.name, candidateB.name);
+    return compareByStages(entryA, entryB, SELECTION_STAGES).order;
+  }
+
+  /**
+   * the ordering rules, in the order they are applied, each one named
+   *
+   * The comparator is built from this list rather than from a chain of `||`
+   * expressions so that the rule which actually settled a comparison can be
+   * reported rather than inferred. The resulting order is identical; naming the
+   * stages only makes the decision legible.
+   *
+   * Each stage returns a negative number when the first entry should precede the
+   * second, so a stage phrased as "higher wins" subtracts in the opposite order.
+   */
+  const SELECTION_STAGES = [
+    { name: "candidacy", compare: (a, b) => a.candidate.tier - b.candidate.tier },
+    {
+      name: "originality",
+      compare: (a, b) => a.candidate.originalityRank - b.candidate.originalityRank,
+    },
+    { name: "archive", compare: (a, b) => a.candidate.archivedRank - b.candidate.archivedRank },
+    {
+      name: "breadth",
+      // Abstains unless the two repositories present comparably well, so breadth
+      // breaks ties rather than overriding presentation evidence.
+      compare: (a, b) =>
+        Math.abs(b.candidate.score - a.candidate.score) <= COMPARABLE_SCORE_BAND
+          ? a.redundancy.total - b.redundancy.total
+          : 0,
+    },
+    { name: "score", compare: (a, b) => b.candidate.score - a.candidate.score },
+    { name: "maintenance", compare: (a, b) => b.candidate.maintenance - a.candidate.maintenance },
+    { name: "metadata", compare: (a, b) => b.candidate.metadataCount - a.candidate.metadataCount },
+    { name: "name", compare: (a, b) => compareNames(a.candidate.name, b.candidate.name) },
+  ];
+
+  /**
+   * applies ordering stages in turn and reports which one decided the comparison
+   * @param {Object} entryA first candidate with its redundancy measurement
+   * @param {Object} entryB second candidate with its redundancy measurement
+   * @param {Array<Object>} stages ordering stages to apply, in order
+   * @returns {Object} the sort order and the name of the deciding stage
+   */
+  function compareByStages(entryA, entryB, stages) {
+    for (const stage of stages) {
+      const order = stage.compare(entryA, entryB);
+      if (order !== 0) return { order, stage: stage.name };
+    }
+    return { order: 0, stage: null };
   }
 
   /**
@@ -360,15 +427,19 @@
    * @param {number} limit maximum recommended repositories
    * @returns {Array<Object>} recommended entries in selection order
    */
-  function selectSet(candidates, limit) {
+  function selectSet(candidates, limit, options = {}) {
+    const stages = options.stages || SELECTION_STAGES;
+    const trace = options.trace ? [] : null;
     const remaining = [...candidates];
     const selected = [];
 
     while (selected.length < limit && remaining.length > 0) {
       const ranked = remaining
         .map((candidate) => ({ candidate, redundancy: measureRedundancy(candidate, selected) }))
-        .sort(compareCandidates);
+        .sort((entryA, entryB) => compareByStages(entryA, entryB, stages).order);
       const best = ranked[0];
+
+      if (trace) trace.push(describeSlot(selected.length, ranked, stages));
 
       selected.push(best.candidate);
       remaining.splice(remaining.indexOf(best.candidate), 1);
@@ -378,7 +449,65 @@
       };
     }
 
-    return selected;
+    return { selected, trace };
+  }
+
+  /**
+   * records which rule settled one greedy selection, and against whom
+   *
+   * The deciding stage of a slot is the stage on which the winner beat the
+   * runner-up: the first rule that separated them. Every other remaining
+   * candidate is reported with the stage on which it lost to the winner, so a
+   * recommendation can be read as a sequence of named comparisons rather than a
+   * final score whose components cannot be recovered. This is measurement only;
+   * nothing here influences the selection.
+   *
+   * @param {number} slotIndex zero-based slot being filled
+   * @param {Array<Object>} ranked remaining candidates already in selection order
+   * @param {Array<Object>} stages ordering stages in use
+   * @returns {Object} the slot's decision record
+   */
+  function describeSlot(slotIndex, ranked, stages) {
+    const [winner, ...alternatives] = ranked;
+
+    return {
+      slot: slotIndex + 1,
+      candidatesRemaining: ranked.length,
+      winner: describeTracedCandidate(winner),
+      decidingStage: alternatives.length
+        ? compareByStages(winner, alternatives[0], stages).stage
+        : null,
+      alternatives: alternatives.map((entry) => ({
+        ...describeTracedCandidate(entry),
+        lostAt: compareByStages(winner, entry, stages).stage,
+      })),
+    };
+  }
+
+  /**
+   * captures the facts every ordering stage reads, for one traced candidate
+   * @param {Object} entry candidate with its redundancy measurement
+   * @returns {Object} the candidate's stage inputs
+   */
+  function describeTracedCandidate(entry) {
+    return {
+      name: entry.candidate.name,
+      label: entry.candidate.label,
+      score: entry.candidate.score,
+      language: entry.candidate.language,
+      topics: entry.candidate.topics,
+      originality: entry.candidate.originality,
+      archived: entry.candidate.archived,
+      maintenance: entry.candidate.maintenance,
+      metadataCount: entry.candidate.metadataCount,
+      addsLanguage: entry.redundancy.addsLanguage,
+      addsTopics: entry.redundancy.addsTopics,
+      redundancyTotal: entry.redundancy.total,
+      languageMatch: entry.redundancy.languageMatch ? entry.redundancy.languageMatch.name : null,
+      topicMatch: entry.redundancy.topicMatch
+        ? { name: entry.redundancy.topicMatch.repository.name, shared: entry.redundancy.topicMatch.shared }
+        : null,
+    };
   }
 
   /**
@@ -680,7 +809,11 @@
       else excluded.push({ name: repositoryAudit.repository.name, reason: outcome.reason });
     }
 
-    const recommended = selectSet(eligible, limit).map(describeRecommendation);
+    const selection = selectSet(eligible, limit, {
+      stages: options.stages,
+      trace: options.trace,
+    });
+    const recommended = selection.selected.map(describeRecommendation);
     const currentPins = readCurrentPins(audits);
     const changes = currentPins.known ? compareWithCurrentPins(recommended, currentPins.names) : [];
     const alreadyOptimal = currentPins.known
@@ -701,13 +834,17 @@
       shortfall: explainShortfall(recommended, limit, audits.length),
       diversity: summarizeDiversity(recommended),
       privateCandidates: collectPrivateCandidates(audits),
+      // Diagnostics only, and absent unless asked for. The interface never reads it.
+      ...(selection.trace ? { trace: selection.trace } : {}),
     };
   }
 
   return {
     ACTIONS,
+    COMPARABLE_SCORE_BAND,
     EXCLUSION_REASONS,
     MAXIMUM_PINNED_REPOSITORIES,
+    SELECTION_STAGES,
     SHARED_TOPIC_THRESHOLD,
     getPinnedLimit,
     optimizePinnedSet,

@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  ORDERING_NOTE,
   buildFilename,
   buildMarkdown,
   deriveNotFollowingBack,
@@ -364,7 +365,9 @@ test("agreeing counts produce no change note", async () => {
   const network = await fetchNetwork("example", { fetchImpl });
 
   assert.equal(describeCountDifference(network), null);
-  assert.doesNotMatch(buildMarkdown(network), /^>/m);
+  // The ordering note is always present, so the absence of a count note is checked
+  // by its own wording rather than by the absence of any blockquote.
+  assert.doesNotMatch(buildMarkdown(network), /GitHub's profile reported/);
 });
 
 test("markdown escapes control characters found in account text", async () => {
@@ -513,4 +516,147 @@ test("the request order of relationship pages is deterministic and uses per_page
       .filter((url) => url.includes("?"))
       .every((url) => url.includes("per_page=100"))
   );
+});
+
+// Ordering semantics.
+//
+// GitHub exposes no timestamp for when one account followed another and documents
+// no order for the follower and following endpoints, so GitProfileLens keeps the
+// API's order and never presents it as a follow chronology. These tests exist to
+// stop that claim from reappearing. See docs/network-ordering.md for the evidence.
+
+/**
+ * collects every ordering claim GitProfileLens must never make
+ * @returns {Array<RegExp>} unsupported chronology wordings
+ */
+function chronologyClaims() {
+  return [
+    /newest\s+(follow|first)/i,
+    /oldest\s+(follow|first|last)/i,
+    /most\s+recent(ly)?\s+follow/i,
+    /\bfollowed[\s_]?at\b/i,
+    /\bfollowed\s+on\b/i,
+    /chronological/i,
+    /sorted\s+by\s+(date|time)/i,
+  ];
+}
+
+test("the retrieved lists carry no follow timestamp GitHub never supplied", async () => {
+  const fetchImpl = createNetworkFetch({
+    followerPages: [accountPage("follower", 2)],
+    followingPages: [accountPage("following", 2)],
+  });
+  const network = await fetchNetwork("example", { fetchImpl });
+
+  for (const account of [...network.followers.accounts, ...network.following.accounts]) {
+    assert.deepEqual(Object.keys(account).sort(), ["login", "profileUrl"]);
+  }
+});
+
+test("markdown states the ordering neutrally and claims no follow chronology", async () => {
+  const fetchImpl = createNetworkFetch({
+    followerPages: [accountPage("follower", 3)],
+    followingPages: [accountPage("following", 3)],
+  });
+  const markdown = buildMarkdown(await fetchNetwork("example", { fetchImpl }));
+
+  assert.ok(markdown.includes(ORDERING_NOTE));
+  // The note is a disclaimer and names the reading it rules out, so it is removed
+  // before the rest of the document is scanned for an affirmative claim.
+  const withoutNote = markdown.replace(ORDERING_NOTE, "");
+  for (const claim of chronologyClaims()) {
+    assert.doesNotMatch(withoutNote, claim, `markdown must not claim ${claim}`);
+  }
+});
+
+test("the ordering note appears once, before the account lists", async () => {
+  const fetchImpl = createNetworkFetch({
+    followerPages: [accountPage("follower", 1)],
+    followingPages: [accountPage("following", 1)],
+  });
+  const markdown = buildMarkdown(await fetchNetwork("example", { fetchImpl }));
+
+  assert.equal(markdown.split(ORDERING_NOTE).length - 1, 1);
+  assert.ok(markdown.indexOf(ORDERING_NOTE) < markdown.indexOf("## Followers"));
+});
+
+test("the ordering note survives alongside a count-difference note", async () => {
+  const fetchImpl = createNetworkFetch({
+    profile: { login: "example", followers: 9, following: 9 },
+    followerPages: [accountPage("follower", 2)],
+    followingPages: [accountPage("following", 2)],
+  });
+  const markdown = buildMarkdown(await fetchNetwork("example", { fetchImpl }));
+
+  assert.ok(markdown.includes(ORDERING_NOTE));
+  assert.match(markdown, /GitHub's profile reported/);
+});
+
+test("the ordering note describes the API order and denies a chronology", () => {
+  assert.match(ORDERING_NOTE, /order the GitHub API returned them/);
+  assert.match(ORDERING_NOTE, /does not record\b[^.]*when a follow happened/);
+  assert.match(ORDERING_NOTE, /does not document an order/);
+  // Every mention of a chronology in the note is negated rather than asserted.
+  assert.match(ORDERING_NOTE, /not a newest-to-oldest follow history/);
+  assert.doesNotMatch(ORDERING_NOTE, /\bfollowed[\s_]?at\b/i);
+});
+
+test("markdown preserves the following order, not a re-sorted one", async () => {
+  const fetchImpl = createNetworkFetch({
+    followerPages: [[]],
+    followingPages: [[{ login: "zeta" }, { login: "alpha" }, { login: "mike" }]],
+  });
+  const markdown = buildMarkdown(await fetchNetwork("example", { fetchImpl }));
+  const following = markdown
+    .split("## Following\n")[1]
+    .split("##")[0]
+    .match(/\[([^\]]+)\]/g);
+
+  assert.deepEqual(following, ["[zeta]", "[alpha]", "[mike]"]);
+});
+
+test("the derived set follows the Following order even when unsorted", async () => {
+  const fetchImpl = createNetworkFetch({
+    followerPages: [[{ login: "mike" }]],
+    followingPages: [[{ login: "zeta" }, { login: "alpha" }, { login: "mike" }]],
+  });
+  const network = await fetchNetwork("example", { fetchImpl });
+
+  assert.deepEqual(
+    deriveNotFollowingBack(network).map((account) => account.login),
+    ["zeta", "alpha"]
+  );
+});
+
+test("an incomplete retrieval produces no export and therefore no ordering claim", async () => {
+  const fetchImpl = createNetworkFetch({
+    followerPages: [
+      accountPage("follower", PER_PAGE),
+      { failWith: 403, headers: { "X-RateLimit-Reset": "1" } },
+    ],
+    followingPages: [accountPage("following", 2)],
+  });
+  const network = await fetchNetwork("example", { fetchImpl });
+
+  assert.equal(network.complete, false);
+  assert.throws(() => buildMarkdown(network), /could not be retrieved/);
+  assert.equal(deriveNotFollowingBack(network), null);
+  for (const claim of chronologyClaims()) {
+    assert.doesNotMatch(describeIncompleteRetrieval(network), claim);
+  }
+});
+
+test("retrying a retrieval reproduces the same order", async () => {
+  const pages = {
+    followerPages: [[{ login: "zeta" }, { login: "alpha" }]],
+    followingPages: [[{ login: "mike" }, { login: "beta" }]],
+  };
+  const first = await fetchNetwork("example", { fetchImpl: createNetworkFetch(pages) });
+  const second = await fetchNetwork("example", { fetchImpl: createNetworkFetch(pages) });
+
+  assert.deepEqual(
+    first.following.accounts.map((account) => account.login),
+    second.following.accounts.map((account) => account.login)
+  );
+  assert.equal(buildMarkdown(first), buildMarkdown(second));
 });
