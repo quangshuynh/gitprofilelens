@@ -252,9 +252,33 @@
   }
 
   /**
+   * reads a caller-supplied profile, or null when it cannot stand in for a request
+   *
+   * The supplied payload has to be the profile for the username actually being
+   * retrieved, compared the way GitHub compares logins. Anything else is treated
+   * as absent and the profile is fetched, because a network attributed to the
+   * wrong account is worse than a duplicate request.
+   *
+   * @param {*} profile caller-supplied github user payload
+   * @param {string} username username being retrieved
+   * @returns {Object|null} usable profile, or null
+   */
+  function readSuppliedProfile(profile, username) {
+    const login = profile ? readLogin(profile) : null;
+    return login && login.toLowerCase() === username.toLowerCase() ? profile : null;
+  }
+
+  /**
    * retrieves the public profile plus the complete follower and following lists
+   *
+   * The caller may supply a profile payload it already holds. The audit fetches
+   * `GET /users/{username}` before the Network tab is ever opened, and re-fetching
+   * it here spent a second request from an unauthenticated allowance of sixty an
+   * hour on an answer the page already had. A caller that needs the profile read
+   * again, such as an explicit retry, simply does not supply one.
+   *
    * @param {string} username github username to export
-   * @param {Object} options optional fetch implementation override
+   * @param {Object} options fetch implementation override and an optional profile
    * @returns {Promise<Object>} network result with per-list completeness
    */
   async function fetchNetwork(username, options = {}) {
@@ -264,10 +288,11 @@
       throw createNetworkError(validation.message, "validation");
     }
 
-    const profile = await requestJson(
-      `${API_ORIGIN}/users/${encodeURIComponent(validation.username)}`,
-      fetchImpl
-    );
+    const profile = readSuppliedProfile(options.profile, validation.username)
+      ?? await requestJson(
+        `${API_ORIGIN}/users/${encodeURIComponent(validation.username)}`,
+        fetchImpl
+      );
     const login = readLogin(profile) || validation.username;
 
     const [followers, following] = await Promise.all([

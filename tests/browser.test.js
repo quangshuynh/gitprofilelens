@@ -1555,6 +1555,104 @@ test("disclosure appends and trims instead of rebuilding rendered accounts", { s
   }
 });
 
+test("opening Network reuses the profile the audit already fetched", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const profileRequests = [];
+  page.on("request", (request) => {
+    if (request.url() === "https://api.github.com/users/example") profileRequests.push(request.url());
+  });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("alice")]], following: [[account("bob")]] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  assert.equal(profileRequests.length, 1, "the audit reads the profile once");
+
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.equal(
+    profileRequests.length,
+    1,
+    "the Network tab reused the audit's profile instead of requesting it again"
+  );
+  // The reused payload still identifies the profile the network belongs to.
+  assert.match(await page.locator("#network-summary").innerText(), /Public network for @example/);
+  assert.equal(await page.locator("#network-follower-count").innerText(), "1");
+
+  await browser.close();
+  } finally {
+    if (browser.isConnected()) await browser.close();
+  }
+});
+
+test("an explicit Network retry reads the profile again", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const profileRequests = [];
+  page.on("request", (request) => {
+    if (request.url() === "https://api.github.com/users/example") profileRequests.push(request.url());
+  });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[{ failWith: 500 }]], following: [[account("bob")]] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-retry-button").waitFor({ state: "visible" });
+  const afterFailure = profileRequests.length;
+
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("alice")]], following: [[account("bob")]] },
+  });
+  await page.getByRole("button", { name: "Try again" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // Retry means "look at GitHub again", including at the profile, so the saved
+  // copy is deliberately not reused here.
+  assert.equal(profileRequests.length, afterFailure + 1);
+  assert.equal(await page.locator("#network-follower-count").innerText(), "1");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("one audit computes the profile score once", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  // The profile score is a deterministic function of the finished audits, so
+  // computing it twice for one render is repeated work over every repository.
+  await page.addInitScript(() => {
+    window.addEventListener("DOMContentLoaded", () => {
+      window.__scoreProfileCalls = 0;
+      const original = window.GitHubAudit.scoreProfile;
+      window.GitHubAudit.scoreProfile = function countedScoreProfile(...args) {
+        window.__scoreProfileCalls += 1;
+        return original.apply(this, args);
+      };
+    }, { once: true });
+  });
+  await mockGithubRequests(page);
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  assert.equal(await page.evaluate(() => window.__scoreProfileCalls), 1);
+
+  // The values it produced still reach both places that need them.
+  assert.match(await page.locator("#overall-score").innerText(), /^\d+$/);
+  assert.match(await page.locator("#profile-insight").innerText(), /strongest signal:/);
+  } finally {
+    await browser.close();
+  }
+});
+
 /**
  * formats today the way the interface formats a first-observation date
  * @returns {string} short date string

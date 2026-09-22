@@ -890,3 +890,34 @@ It reports:
 * ten constructed falsification cases the corpus does not contain, including the widest score inversion the classifier can produce.
 
 The run first asserts that its own gate table reproduces the production classifier on every corpus repository, so it cannot describe a classifier the product does not have. It is opt-in, and a non-zero exit means the diagnostic could not run, never that a classification changed. `tests/scoring/candidacy-policy.test.js` asserts the findings it produced, reading these same functions rather than re-implementing them.
+
+### Diagnosing performance
+
+```bash
+npm run eval:performance
+npm run eval:performance -- --scenario large
+```
+
+Drives the real page in a real browser against mocked GitHub responses, through the same static server the browser tests use, and reports **counts** rather than durations: data requests issued and repeated, elements created per interaction, derived computations repeated, DOM nodes per tab panel, storage writes, and the DOM left behind after a second audit. Counts are deterministic, so a change in one is a change in behavior; wall-clock figures are printed for orientation and labelled informational. Nothing here is a CI threshold — `tests/browser.test.js` owns the assertions.
+
+Two scenarios: a live-shaped profile (33 repositories, 131 followers, 60 following) and a large one near the retrieval caps (150 repositories, 1,200 each way).
+
+#### What it found, and what was changed
+
+| Finding | Evidence | Outcome |
+| --- | --- | --- |
+| The profile was fetched twice | `GET /users/{login}` appeared twice per session: once for the audit, once inside `fetchNetwork` | **Fixed.** The audit hands its profile to `fetchNetwork`. Opening Network on a live-shaped profile went from 4 GitHub requests to 3; repeated URLs went from 2 to 0. An explicit retry still re-reads the profile, because retry means "look again". |
+| The profile score was computed twice per render | `GitHubAudit.scoreProfile` called twice per audit, from the header and from the overview | **Fixed.** Computed once in `renderResults` and passed to both. 2 calls to 1, over every repository. |
+| Disclosure rebuilt lists it had already rendered | On 1,200 followers: *Show 25 more* created 50 list items, *Show all* created 1,200, *Collapse* created 25 | **Fixed** alongside the observation-history work. Now 25, 1,150 and 0: the changed tail is appended or trimmed, and the pills already on screen are left alone. |
+
+#### What it found and left alone
+
+| Finding | Evidence | Why nothing changed |
+| --- | --- | --- |
+| The audit panel dominates the DOM | 5,797 of 7,415 nodes at 150 repositories, built before its tab is opened | Deferring it was measured, not assumed: removing the entire audit render — 5,790 of 7,133 created elements — produced **no measurable change** in time to a usable audit (255–320 ms with, 292–320 ms without; run-to-run noise is larger than the effect). Element creation is not the bottleneck, so deferral would buy state-invalidation complexity for nothing. |
+| The optimizer and Markdown render eagerly | Both run once during the audit | Together they account for **121 of 7,415 DOM nodes**, and each already runs exactly once. There is nothing to defer that would be worth the invalidation logic. |
+| The README GraphQL query requests three filename aliases | The response for a real 33-repository profile is 371 KB, of which 359 KB (97%) is README text; the other two aliases resolved for **zero** repositories | The aliases cost nothing — GitHub returns `null` for the ones that do not exist. The README text is what the analysis reads, and trimming it would weaken the analysis. The browser never receives it: the function returns only the analysis, 6.5 KB for 33 repositories. |
+| Relationship pagination issues one request past the last full page | 13 requests for 1,200 followers rather than 12 | A short page is the only evidence that a list has ended. The profile's reported count is not a substitute: it can change mid-retrieval, and trusting it could truncate a list. Completeness is not traded for a request. |
+| Tab switching | 0 requests, 0 elements created, 0 derived computations across seven switches | Already correct. |
+| Repeated audits | DOM falls from 9,915 nodes to 357 after auditing a second profile | Already correct. |
+| Storage | Two no-op disclosure changes perform 0 writes | Already correct: one read and at most one write per observation, and an observation that changes nothing is not written. |

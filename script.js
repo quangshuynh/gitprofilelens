@@ -691,8 +691,12 @@ function renderResults() {
     return;
   }
   setResultMode("public");
-  renderProfileHeader();
-  renderOverview();
+  // One profile score for the whole render. It is a deterministic function of the
+  // finished audits, so the header and the overview were computing the same answer
+  // twice over every repository.
+  const profileScore = GitHubAudit.scoreProfile(appState.audits);
+  renderProfileHeader(profileScore);
+  renderOverview(profileScore);
   renderAudits();
   renderRepositories();
   renderContributions();
@@ -738,11 +742,11 @@ function setResultMode(mode) {
 
 /**
  * renders profile identity information
+ * @param {Object} profileScore profile score already computed for this render
  * @returns {void} no return value
  */
-function renderProfileHeader() {
+function renderProfileHeader(profileScore) {
   const user = appState.user;
-  const profileScore = GitHubAudit.scoreProfile(appState.audits);
   const firstName = (user.name || user.login).trim().split(/\s+/)[0];
   const strongestCategory = getStrongestCategory(profileScore.categories);
   profileAvatar.crossOrigin = "anonymous";
@@ -776,11 +780,11 @@ function getStrongestCategory(categories) {
 
 /**
  * renders the overall score, category scores, and portfolio recommendations
+ * @param {Object} profileScore profile score already computed for this render
  * @returns {void} no return value
  */
-function renderOverview() {
+function renderOverview(profileScore) {
   if (appState.mode !== "public") return;
-  const profileScore = GitHubAudit.scoreProfile(appState.audits);
   const recommendations = GitHubAudit.generateRecommendations(appState.audits);
   overallScore.textContent = profileScore.overall;
   categoryScores.replaceChildren();
@@ -2134,7 +2138,9 @@ function isNetworkTabActive() {
  */
 function reloadNetwork() {
   if (appState.mode !== "public" || !appState.user?.login) return;
-  loadNetwork(appState.user.login);
+  // An explicit retry reads the profile again rather than reusing the audit's
+  // copy: the reader asked for another look at GitHub, not at what is in memory.
+  loadNetwork(appState.user.login, { refresh: true });
 }
 
 /**
@@ -2154,9 +2160,10 @@ function resetNetworkState() {
 /**
  * retrieves and renders the complete public follower and following lists
  * @param {string} username github username to load
+ * @param {Object} options set refresh to re-read the profile instead of reusing the audit's
  * @returns {Promise<void>} no return value
  */
-async function loadNetwork(username) {
+async function loadNetwork(username, options = {}) {
   const validation = GitProfileNetwork.validateUsername(username);
   if (!validation.ok) {
     resetNetworkState();
@@ -2177,7 +2184,12 @@ async function loadNetwork(username) {
   networkSummary.textContent = "Loading…";
 
   try {
-    const network = await GitProfileNetwork.fetchNetwork(validation.username);
+    // The audit already fetched this profile. Handing it over turns opening the
+    // Network tab from four GitHub requests into three on a live-shaped profile,
+    // which matters against an unauthenticated allowance of sixty an hour.
+    const network = await GitProfileNetwork.fetchNetwork(validation.username, {
+      profile: options.refresh ? null : appState.user,
+    });
     if (requestId !== networkState.requestId) return;
     networkState.status = "loaded";
     renderNetwork(network);
