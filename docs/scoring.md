@@ -401,7 +401,7 @@ Selection is greedy and lexicographic. There is **no internal utility score**: n
 1. **Candidacy tier.** Every `Strong candidate` is considered before any `Worth polishing` repository.
 2. **Originality.** Confirmed original, then unreported fork status, then GitHub-identified fork.
 3. **Archive status.** Active before archived.
-4. **Redundancy.** Fewer earned breadth credits last; see below.
+4. **Redundancy**, applied only between repositories whose presentation scores are within five points of each other. Fewer earned breadth credits last; see below.
 5. **Presentation score**, highest first.
 6. **Maintenance score**, highest first.
 7. **Verified metadata count**: topics, license, homepage, a comprehensive README, a description scoring 100.
@@ -409,7 +409,7 @@ Selection is greedy and lexicographic. There is **no internal utility score**: n
 
 Rule 8 makes the order total, so the recommendation never depends on the order GitHub returned repositories in. Reversing the audit array changes nothing, which is asserted across the whole corpus.
 
-Because redundancy sits at rule 4, breadth can never promote a lower candidacy tier, a fork over an original, or an archive over an active repository. It only chooses among repositories that rules 1 through 3 already consider equally suitable.
+Because redundancy sits at rule 4, breadth can never promote a lower candidacy tier, a fork over an original, or an archive over an active repository. Because it applies only within the comparable-score band, it can no longer promote a markedly weaker presentation over a markedly stronger one either. It chooses among repositories the earlier rules already consider equally suitable, which the band makes true rather than merely stated.
 
 ### Redundancy and diversity
 
@@ -424,7 +424,22 @@ Breadth is a **credit earned by verified distinctness**, never by absent data. A
 
 Homepage presence is recorded but is **not** a redundancy dimension. Two repositories both linking a demo is not a portfolio story overlap, so a homepage counts toward verified metadata at rule 7 and appears in an entry's reasons, and nothing more.
 
-Language diversity is supporting evidence, not the goal. Six repositories in one language are not automatically a worse set than six in six languages, and the tie-break order above is what stops breadth from displacing substantially better-supported work.
+Language diversity is supporting evidence, not the goal. Six repositories in one language are not automatically a worse set than six in six languages.
+
+#### The comparable-score band
+
+Breadth applies only between two repositories whose presentation scores differ by at most **five points**. Outside that band the two do not read as comparable evidence, rule 4 abstains, and rule 5 decides on presentation score alone.
+
+The band exists because the alternative has no upper bound. With redundancy ranked ahead of presentation score unconditionally, a repository could enter the set over one scoring arbitrarily higher purely for reporting a different primary language. That is not a claim about portfolio quality GitProfileLens can support: it observes description quality, README evidence, topics, license, homepage, maintenance, fork and archive status, presentation findings, and primary language, and it does not observe implementation complexity, architectural depth, amount of original code, production usage, release maturity, or engineering effort. "Represents a language no other selection represents" is a fact about the composition of the set, not a measure of the work.
+
+Five points is the middle of the range the evidence leaves open, measured rather than chosen:
+
+* Across the 13-profile evaluation corpus, **every band from 2 to 9 produces identical recommended sets**. All of them remove one override in which breadth promoted a repository scoring 82 over one scoring 92, and none of them change anything else. A band of 10 or more is indistinguishable from the unbounded rule.
+* On a 33-repository profile with 12 `Strong` candidates, where the corpus has at most 6, bands of **3 to 6** keep four distinct languages in the set while reducing the largest presentation gap a breadth decision overrides from 7 points to 3. Bands of 2 or less collapse that set to two languages, which defeats the purpose of measuring breadth at all; bands of 7 or more restore the unbounded overrides.
+
+The intersection of those two ranges is 3 to 6, and five sits in the middle of it. `evaluation/pinned-diagnose.js` reproduces both measurements.
+
+The corpus alone cannot distinguish bands inside 2 to 9, which is a known gap: no corpus profile has a deep `Strong` pool dominated by a single language, and that is the regime in which breadth does the most work.
 
 ### Forks
 
@@ -629,6 +644,16 @@ The fixed score is therefore not neutral relative to the account. It penalizes a
 
 A likely alternative is to exclude unverifiable repositories from the profile README mean rather than imputing a score. That requires a separate decision for the all-unverifiable case represented by `unverified-metadata`, so the behavior remains unchanged for now.
 
+### F13: The corpus under-represents deep `Strong` pools
+
+The evaluation corpus contains 29 `Strong` candidates across 13 profiles, and only 2 profiles reach 6 `Strong` candidates at all. Real accounts can sit far outside that: a 33-repository profile measured during the breadth calibration had 12 `Strong` candidates and 32 eligible repositories.
+
+That regime is exactly where set selection does the most work. With fewer than 6 `Strong` candidates, candidacy decides most slots on its own — 81.9% of pairwise comparisons across the corpus are settled at rule 1, before any later rule is consulted. With a deep pool, candidacy stops discriminating and rules 4 through 8 decide everything.
+
+The practical consequence is that a corpus-only measurement can report a selection rule as nearly inert when it is in fact decisive for larger accounts. The comparable-score band was measured against a live profile for this reason, and the corpus could not distinguish any band from 2 to 9.
+
+Adding a fixture with a deep, single-language `Strong` pool would close the gap. It is not added here because doing so during a calibration interval would change the baseline for two reasons at once.
+
 ---
 
 ## Changing scoring safely
@@ -791,3 +816,25 @@ This is a **separate** report on purpose. `npm run eval` records scoring outcome
 For each profile it records the eligible count, the recommended names and their candidacy labels, the current pinned overlap, any forks, archived, or `Worth polishing` repositories selected, the diversity evidence each selection earned, the exclusion counts by reason, and the advisory changes. `De-emphasize` selections are recorded too, and the corpus asserts that the list is always empty.
 
 Before recording a new baseline, run `--full`, read every recommendation, and account for anything surprising: an optimizer bug, a candidacy limitation, a corpus limitation, or evidence the corpus does not carry. Do not snapshot a recommendation you cannot explain.
+
+### Diagnosing why a recommendation was made
+
+```bash
+npm run eval:pins:diagnose
+npm run eval:pins:diagnose -- --trace
+npm run eval:pins:diagnose -- --profile prolific-account
+```
+
+`npm run eval:pins` answers "did a recommendation move?". This answers "why is the recommendation what it is?".
+
+It runs the real selection loop with tracing enabled — the same `optimizePinnedSet` the interface calls, through the same entry point, so a measurement cannot drift from the behavior it describes — and reports:
+
+* which named rule settled each filled slot, and which settled each pairwise comparison;
+* how often presentation score is reached at all before a winner is determined;
+* whether a breadth decision was earned by language, by topics, or by both, and how large a presentation gap it overrode;
+* score displacement: every case where a selected repository scores below an eligible repository the set passed over, with the rule that decided it;
+* the candidate-policy comparison, covering the current policy, score-before-breadth, and breadth bands of 2, 5 and 10 points.
+
+It is deliberately opt-in and is not part of `npm run eval:pins`, which belongs in ordinary review. A non-zero exit means the diagnostic could not run, never that a recommendation changed.
+
+The trace is available programmatically as `optimizePinnedSet(audits, { trace: true })`. It is absent unless requested, and the interface never asks for it. An alternate ordering can be passed as `{ stages }` for measurement; production always uses the exported `SELECTION_STAGES`.
