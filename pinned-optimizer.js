@@ -74,6 +74,30 @@
   const SHARED_TOPIC_THRESHOLD = 2;
 
   /**
+   * How close two presentation scores must be for breadth to choose between them.
+   *
+   * Breadth is a tie-breaker: it decides which of two comparably well presented
+   * repositories to feature, not whether presentation evidence matters. Outside
+   * this band the two are not comparable, so the stronger presentation evidence
+   * decides and breadth abstains.
+   *
+   * The band exists because the alternative has no upper bound. With breadth
+   * ranked ahead of presentation score unconditionally, a repository could enter
+   * the set over one scoring arbitrarily higher purely for reporting a different
+   * primary language, which is not a claim about portfolio quality that
+   * GitProfileLens can support from what it observes.
+   *
+   * Five points is the middle of the range the evidence leaves open. Across the
+   * evaluation corpus every band from 2 to 9 produces identical sets, and on a
+   * 32-repository profile with a deep Strong pool, bands of 3 to 6 keep four
+   * distinct languages in the set while cutting the largest score a breadth
+   * decision overrides from 7 points to 3. Tighter bands collapse that profile to
+   * a two-language set, which defeats the purpose of measuring breadth at all;
+   * wider bands restore the unbounded overrides the band exists to prevent.
+   */
+  const COMPARABLE_SCORE_BAND = 5;
+
+  /**
    * reports the maximum number of repositories a GitHub profile can pin
    * @returns {number} GitHub's documented pinned-item limit
    */
@@ -236,13 +260,17 @@
    * 2. originality, so confirmed original work precedes unreported fork status,
    *    which precedes a confirmed fork;
    * 3. archive status, so an active repository precedes a retired one;
-   * 4. redundancy, so within those constraints breadth precedes repetition;
+   * 4. redundancy, but only between repositories whose presentation scores sit
+   *    within COMPARABLE_SCORE_BAND of each other, so breadth precedes repetition
+   *    among comparable work and abstains otherwise;
    * 5. presentation score, then maintenance, then verified metadata count;
    * 6. repository name, which makes the order total and independent of API order.
    *
    * Redundancy therefore can never promote a weaker tier, a fork over an original,
-   * or an archive over an active project. It only chooses among repositories the
-   * earlier rules already consider equally suitable.
+   * or an archive over an active project, and it can no longer promote a markedly
+   * weaker presentation over a markedly stronger one. It only chooses among
+   * repositories the earlier rules already consider equally suitable, which is
+   * what the band makes true rather than merely stated.
    *
    * @param {Object} entryA first candidate with its redundancy measurement
    * @param {Object} entryB second candidate with its redundancy measurement
@@ -270,7 +298,15 @@
       compare: (a, b) => a.candidate.originalityRank - b.candidate.originalityRank,
     },
     { name: "archive", compare: (a, b) => a.candidate.archivedRank - b.candidate.archivedRank },
-    { name: "breadth", compare: (a, b) => a.redundancy.total - b.redundancy.total },
+    {
+      name: "breadth",
+      // Abstains unless the two repositories present comparably well, so breadth
+      // breaks ties rather than overriding presentation evidence.
+      compare: (a, b) =>
+        Math.abs(b.candidate.score - a.candidate.score) <= COMPARABLE_SCORE_BAND
+          ? a.redundancy.total - b.redundancy.total
+          : 0,
+    },
     { name: "score", compare: (a, b) => b.candidate.score - a.candidate.score },
     { name: "maintenance", compare: (a, b) => b.candidate.maintenance - a.candidate.maintenance },
     { name: "metadata", compare: (a, b) => b.candidate.metadataCount - a.candidate.metadataCount },
@@ -805,6 +841,7 @@
 
   return {
     ACTIONS,
+    COMPARABLE_SCORE_BAND,
     EXCLUSION_REASONS,
     MAXIMUM_PINNED_REPOSITORIES,
     SELECTION_STAGES,

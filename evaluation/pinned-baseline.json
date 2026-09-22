@@ -288,7 +288,7 @@
         "config-lint",
         "bench-suite",
         "legacy-api-gateway",
-        "prototype-scheduler"
+        "deprecated-cli"
       ],
       "labels": "SSSSPP",
       "currentPinsKnown": true,
@@ -303,25 +303,23 @@
       "unknownOriginalitySelected": [],
       "archivedSelected": [
         "legacy-api-gateway",
-        "prototype-scheduler"
+        "deprecated-cli"
       ],
       "polishSelected": [
         "legacy-api-gateway",
-        "prototype-scheduler"
+        "deprecated-cli"
       ],
       "deemphasizeSelected": [],
       "privateCandidates": [],
       "diversity": {
         "languages": [
           "TypeScript",
-          "Go",
-          "Python"
+          "Go"
         ],
         "unknownLanguage": 0,
         "addsLanguage": [
           "edge-cache",
-          "legacy-api-gateway",
-          "prototype-scheduler"
+          "legacy-api-gateway"
         ],
         "addsTopics": [
           "edge-cache",
@@ -329,7 +327,7 @@
           "config-lint",
           "bench-suite",
           "legacy-api-gateway",
-          "prototype-scheduler"
+          "deprecated-cli"
         ],
         "sharedTopicPairs": 0,
         "withHomepage": 3
@@ -365,7 +363,7 @@
         },
         {
           "action": "add",
-          "repository": "prototype-scheduler",
+          "repository": "deprecated-cli",
           "replacement": null
         }
       ],

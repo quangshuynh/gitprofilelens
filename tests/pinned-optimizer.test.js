@@ -14,7 +14,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { scoreRepository, transformRepository } = require("../audit.js");
-const { optimizePinnedSet } = require("../pinned-optimizer.js");
+const { COMPARABLE_SCORE_BAND, optimizePinnedSet } = require("../pinned-optimizer.js");
 const {
   comprehensiveReadme,
   missingReadme,
@@ -123,6 +123,16 @@ function changeFor(result, name) {
   return result.changes.find((change) => change.repository === name);
 }
 
+/**
+ * reads one repository's presentation score out of a built audit list
+ * @param {Array<Object>} audits repository audits
+ * @param {string} name repository name
+ * @returns {number} presentation score
+ */
+function scoreOf(audits, name) {
+  return audits.find((audit) => audit.repository.name === name).score;
+}
+
 /** Builds a Strong candidate, optionally overriding any fixture field. */
 function strongFixture(name, overrides = {}) {
   return { name, readme: comprehensiveReadme(), ...overrides };
@@ -220,28 +230,73 @@ test("falsification: a high-scoring archived repository does not displace an act
     reason.includes("recommended below comparable active repositories")));
 });
 
-test("falsification: redundant top scores yield to a lower-scoring candidate with observable breadth", () => {
+test("breadth decides between repositories presenting comparably well", () => {
   const audits = buildAudits([
     ...["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"].map((name) =>
-      strongFixture(name, { language: "TypeScript" })),
-    // Lower scoring, and the only repository representing its language.
-    { name: "zulu", language: "Python", readme: solidReadme(), description: TERSE_DESCRIPTION },
+      strongFixture(name, { language: "TypeScript", homepage: "https://example.dev" })),
+    // Lower scoring, but close enough to read as comparable evidence, and the only
+    // repository representing its language.
+    { name: "zulu", language: "Python", readme: solidReadme() },
   ]);
   const result = optimizePinnedSet(audits);
-  const zulu = audits.find((audit) => audit.repository.name === "zulu");
+  const gap = scoreOf(audits, "alpha") - scoreOf(audits, "zulu");
 
-  for (const audit of audits) {
-    if (audit.repository.name === "zulu") continue;
-    assert.ok(audit.score > zulu.score,
-      `expected every TypeScript repository to outscore zulu, received ${audit.score} and ${zulu.score}`);
-  }
+  assert.ok(gap > 0 && gap <= COMPARABLE_SCORE_BAND,
+    `this case needs a positive gap inside the band, received ${gap}`);
 
   assert.equal(result.recommended.length, 6);
-  assert.ok(names(result).includes("zulu"), describe(result));
-  assert.equal(names(result)[1], "zulu", `expected breadth to decide the second slot.\n${describe(result)}`);
+  assert.equal(names(result)[1], "zulu", describe(result));
   assert.ok(recommendationFor(result, "zulu").reasons.some((reason) =>
     reason === "Adds Python, which no other recommended repository represents."), describe(result));
   assert.deepEqual(result.diversity.languages, ["TypeScript", "Python"]);
+});
+
+test("falsification: a unique language does not override markedly stronger presentation", () => {
+  const audits = buildAudits([
+    ...["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"].map((name) =>
+      strongFixture(name, { language: "TypeScript", homepage: "https://example.dev" })),
+    // The only repository representing its language, but it presents clearly less
+    // well than every repository it would displace.
+    { name: "zulu", language: "Python", readme: solidReadme(), description: TERSE_DESCRIPTION },
+  ]);
+  const result = optimizePinnedSet(audits);
+  const zulu = scoreOf(audits, "zulu");
+
+  for (const audit of audits) {
+    if (audit.repository.name === "zulu") continue;
+    assert.ok(audit.score - zulu > COMPARABLE_SCORE_BAND,
+      `this case needs a gap outside the band, received ${audit.score - zulu}`);
+  }
+
+  // Language uniqueness is not by itself a portfolio-quality claim GitProfileLens
+  // can support, so it does not buy a place ahead of stronger presentation evidence.
+  assert.ok(!names(result).includes("zulu"), describe(result));
+  assert.deepEqual(names(result).sort(),
+    ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"], describe(result));
+});
+
+test("the comparable band decides at its exact boundary", () => {
+  // Exactly at the band edge the two still read as comparable, so breadth decides.
+  const atEdge = buildAudits([
+    ...["alpha", "bravo"].map((name) => strongFixture(name, { language: "Python" })),
+    { name: "zulu", language: "TypeScript", readme: solidReadme() },
+  ]);
+  const edgeGap = scoreOf(atEdge, "alpha") - scoreOf(atEdge, "zulu");
+  assert.equal(edgeGap, COMPARABLE_SCORE_BAND,
+    `fixture drift: this case needs a gap of exactly the band, received ${edgeGap}`);
+  assert.equal(names(optimizePinnedSet(atEdge, { limit: 2 }))[1], "zulu",
+    describe(optimizePinnedSet(atEdge, { limit: 2 })));
+
+  // One point further apart they do not, so presentation evidence decides alone.
+  const beyondEdge = buildAudits([
+    ...["alpha", "bravo"].map((name) => strongFixture(name, { language: "TypeScript" })),
+    { name: "zulu", language: "Python", readme: solidReadme(), description: TERSE_DESCRIPTION },
+  ]);
+  const beyondGap = scoreOf(beyondEdge, "alpha") - scoreOf(beyondEdge, "zulu");
+  assert.equal(beyondGap, COMPARABLE_SCORE_BAND + 1,
+    `fixture drift: this case needs a gap one point past the band, received ${beyondGap}`);
+  assert.equal(names(optimizePinnedSet(beyondEdge, { limit: 2 }))[1], "bravo",
+    describe(optimizePinnedSet(beyondEdge, { limit: 2 })));
 });
 
 test("breadth never overrides candidacy, originality, or archive status", () => {
@@ -578,5 +633,150 @@ test("every recommendation carries at least one evidence-backed reason", () => {
     assert.ok(!entry.reasons.some((reason) =>
       /one of your best|great portfolio project|amazing|impressive/i.test(reason)),
       `${entry.name} makes a claim with no deterministic definition: ${entry.reasons.join(" ")}`);
+  }
+});
+
+// Breadth calibration: the falsification cases the comparable band was measured
+// against, plus the decision trace the diagnostics read. See docs/scoring.md.
+
+test("falsification: near-identical evidence in different languages lets breadth break the tie", () => {
+  const languages = ["TypeScript", "Python", "Go", "Rust", "Ruby", "Swift"];
+  const audits = buildAudits(languages.map((language, index) =>
+    strongFixture(`project-${"abcdef"[index]}`, { language, homepage: "https://example.dev" })));
+  const scores = audits.map((audit) => audit.score);
+  const result = optimizePinnedSet(audits);
+
+  assert.ok(Math.max(...scores) - Math.min(...scores) <= COMPARABLE_SCORE_BAND,
+    `this case needs comparable evidence, received ${scores.join(", ")}`);
+
+  // Nothing is displaced: every repository fits, and each one is credited with the
+  // language it actually adds.
+  assert.equal(result.recommended.length, 6);
+  assert.equal(result.diversity.languages.length, 6);
+  for (const entry of result.recommended.slice(1)) {
+    assert.ok(entry.reasons.some((reason) => reason.startsWith("Adds ")), describe(result));
+  }
+});
+
+test("falsification: a shared language marks redundancy even when topics differ entirely", () => {
+  const audits = buildAudits([
+    strongFixture("solver", { language: "Python", topics: ["optimization", "solver"] }),
+    strongFixture("scraper", { language: "Python", topics: ["scraping", "html"] }),
+  ]);
+  const result = optimizePinnedSet(audits);
+  const second = result.recommended[1];
+
+  // This records a deliberate limit rather than an endorsement. GitProfileLens has
+  // no project or domain categories, so a shared primary language is the only
+  // repetition it can observe here, and it is reported as exactly that: a shared
+  // language, alongside the fact that the topics do not overlap.
+  assert.match(second.reasons.find((reason) => reason.startsWith("Shares its primary language")) ?? "",
+    /^Shares its primary language, Python, with (solver|scraper)\.$/);
+  assert.ok(!second.reasons.some((reason) => /same (kind|type) of project|similar project/i.test(reason)),
+    describe(result));
+  assert.equal(result.diversity.sharedTopicPairs, 0);
+});
+
+test("falsification: a different language does not claim breadth when the topics repeat", () => {
+  const audits = buildAudits([
+    strongFixture("api-node", { language: "TypeScript", topics: ["rest-api", "openapi", "server"] }),
+    strongFixture("api-go", { language: "Go", topics: ["rest-api", "openapi", "cli"] }),
+  ]);
+  const result = optimizePinnedSet(audits);
+  const second = result.recommended[1];
+
+  // The language is genuinely new, and that clause is earned. The overlapping
+  // topics are reported alongside it rather than hidden by it.
+  assert.ok(second.reasons.some((reason) => /^Adds (Go|TypeScript), which no other recommended repository represents\.$/.test(reason)),
+    describe(result));
+  assert.ok(second.reasons.some((reason) =>
+    /^Shares the topics rest-api and openapi with api-(node|go), so the two may read as one project story\.$/.test(reason)),
+    describe(result));
+  assert.equal(result.diversity.sharedTopicPairs, 1);
+});
+
+test("a repository with no topics earns no breadth claim and no penalty", () => {
+  const audits = buildAudits([
+    strongFixture("tagged", { language: "Go", topics: ["cli", "tooling"] }),
+    strongFixture("untagged", { language: "Go", topics: [] }),
+  ]);
+  const result = optimizePinnedSet(audits);
+  const entry = recommendationFor(result, "untagged");
+
+  assert.equal(result.recommended.length, 2);
+  assert.ok(!entry.reasons.some((reason) => /topics do not overlap/.test(reason)), describe(result));
+  assert.ok(!entry.reasons.some((reason) => /Shares the topics/.test(reason)), describe(result));
+});
+
+test("more than six Strong candidates are narrowed on evidence, not on arrival order", () => {
+  const fixtures = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+    .map((name) => strongFixture(name, { language: "Go" }));
+  const forward = optimizePinnedSet(buildAudits(fixtures));
+  const reversed = optimizePinnedSet(buildAudits([...fixtures].reverse()));
+
+  assert.equal(forward.eligibleCount, 8);
+  assert.equal(forward.recommended.length, 6);
+  assert.deepEqual(names(forward), names(reversed), "arrival order changed the recommendation");
+});
+
+test("the decision trace names the rule that settled each slot, and is absent unless asked for", () => {
+  const audits = buildAudits([
+    strongFixture("alpha", { language: "Go" }),
+    strongFixture("bravo", { language: "Go" }),
+    { name: "charlie", language: "Rust", readme: solidReadme(), description: TERSE_DESCRIPTION },
+  ]);
+
+  assert.equal(optimizePinnedSet(audits).trace, undefined, "diagnostics must be opt-in");
+
+  const traced = optimizePinnedSet(audits, { trace: true });
+  assert.equal(traced.trace.length, traced.recommended.length);
+  for (const slot of traced.trace) {
+    assert.equal(slot.winner.name, traced.recommended[slot.slot - 1].name);
+    assert.ok(slot.decidingStage === null || typeof slot.decidingStage === "string");
+    for (const alternative of slot.alternatives) {
+      assert.ok(typeof alternative.lostAt === "string", "every alternative must lose at a named stage");
+    }
+  }
+
+  // charlie presents far enough below the two Go repositories that breadth abstains
+  // and the score stage settles it, which is exactly what the trace should say.
+  const gap = scoreOf(audits, "alpha") - scoreOf(audits, "charlie");
+  assert.ok(gap > COMPARABLE_SCORE_BAND, `this case needs a gap outside the band, received ${gap}`);
+  assert.equal(traced.trace[1].winner.name, "bravo");
+  assert.equal(traced.trace[1].decidingStage, "score");
+});
+
+test("tracing changes neither the recommended set nor any audit", () => {
+  const fixtures = [
+    strongFixture("alpha", { language: "Go" }),
+    strongFixture("bravo", { language: "Rust" }),
+    strongFixture("charlie", { language: "Python" }),
+  ];
+  const plain = optimizePinnedSet(buildAudits(fixtures));
+  const traced = optimizePinnedSet(buildAudits(fixtures), { trace: true });
+
+  assert.deepEqual(names(traced), names(plain));
+  assert.deepEqual(
+    traced.recommended.map((entry) => entry.reasons),
+    plain.recommended.map((entry) => entry.reasons)
+  );
+});
+
+test("current pin status stays out of selection under the comparable band", () => {
+  // The band changes which repository wins a close comparison, so the invariant is
+  // re-checked at exactly the distance where breadth is now decisive.
+  const fixtures = [
+    strongFixture("alpha", { language: "Python" }),
+    strongFixture("bravo", { language: "Python" }),
+    { name: "charlie", language: "TypeScript", readme: solidReadme() },
+  ];
+  const gapAudits = buildAudits(fixtures);
+  const gap = scoreOf(gapAudits, "alpha") - scoreOf(gapAudits, "charlie");
+  assert.ok(gap > 0 && gap <= COMPARABLE_SCORE_BAND, `this case needs a decisive band, received ${gap}`);
+
+  const unpinned = optimizePinnedSet(buildAudits(fixtures), { limit: 2 });
+  for (const pinned of [["bravo"], ["charlie"], ["alpha", "bravo", "charlie"]]) {
+    const result = optimizePinnedSet(buildAudits(fixtures, { pinned }), { limit: 2 });
+    assert.deepEqual(names(result), names(unpinned), `pinning ${pinned.join(", ")} changed the recommendation`);
   }
 });
