@@ -398,7 +398,7 @@ Note what is **not** an eligibility rule: archive status, fork status, and prese
 
 Selection is greedy and lexicographic. There is **no internal utility score**: no weighted sum, no tuned coefficients, nothing that produces a number a user could mistake for a second repository score. Each step re-measures every remaining candidate against the set built so far and applies one total order:
 
-1. **Candidacy tier.** Every `Strong candidate` is considered before any `Worth polishing` repository.
+1. **Candidacy tier**, applied only between repositories whose presentation scores are within five points of each other. A `Strong candidate` precedes a `Worth polishing` repository among comparable presentations; outside that band rule 1 abstains and the score decides. See below.
 2. **Originality.** Confirmed original, then unreported fork status, then GitHub-identified fork.
 3. **Archive status.** Active before archived.
 4. **Redundancy**, applied only between repositories whose presentation scores are within five points of each other. Fewer earned breadth credits last; see below.
@@ -409,7 +409,62 @@ Selection is greedy and lexicographic. There is **no internal utility score**: n
 
 Rule 8 makes the order total, so the recommendation never depends on the order GitHub returned repositories in. Reversing the audit array changes nothing, which is asserted across the whole corpus.
 
-Because redundancy sits at rule 4, breadth can never promote a lower candidacy tier, a fork over an original, or an archive over an active repository. Because it applies only within the comparable-score band, it can no longer promote a markedly weaker presentation over a markedly stronger one either. It chooses among repositories the earlier rules already consider equally suitable, which the band makes true rather than merely stated.
+Because redundancy sits at rule 4, breadth can never promote a fork over an original, or an archive over an active repository, and among comparable presentations it cannot promote a lower candidacy tier either. Because it applies only within the comparable-score band, it can no longer promote a markedly weaker presentation over a markedly stronger one. It chooses among repositories the earlier rules already consider equally suitable, which the band makes true rather than merely stated.
+
+#### The candidacy score band
+
+Rule 1 used to be an unqualified hard partition: every `Strong candidate` preceded every `Worth polishing` repository, whatever their presentation scores. Rule 4 already carried a five-point band for the shape of problem that creates, so rule 1 was measured against the same question and now carries one too. `npm run eval:candidacy` reproduces every figure below.
+
+**Two of the nine `Strong` gates read evidence the presentation score does not read at all**: fork status and archive status. A repository can fail either while scoring 100, because neither costs it a single point. Those two are *not* what the band is about — rules 2 and 3 apply them directly, immediately after rule 1, so they keep deciding whether or not rule 1 abstains.
+
+**The other seven gates read evidence the score already reads**: README state, description score, topics, maintenance score, high findings, medium findings, and the score itself. A repository that fails one of them has already been charged for it once, in its score. Ranking candidacy ahead of score without a band charged it a second time, and the second charge had no ceiling worth relying on.
+
+##### How large the override actually was
+
+This was first answered with a single hand-built pair — a `Strong` scoring 87 against a `Worth polishing` scoring 90 — and the 3-point gap between them was reported as the widest inversion the classifier could produce. **That was wrong.** It was one generator's output, not a bound, and it was contradicted by the live profile it was supposed to explain, which carries `Worth polishing` repositories at 93, 93 and 94.
+
+A bound has to come from a search. `measureReachableBounds` enumerates the cross product of every scoring input that can vary — 120,960 shapes per population — and reports what the classifier actually admits:
+
+| Quantity | Value |
+| --- | --- |
+| Lowest score a `Strong candidate` can reach | **79** |
+| Highest a `Worth polishing` repository can reach while failing only score-visible gates | **95** (failing the README gate) |
+| Maximum inversion from score-visible gates | **16 points** |
+| Highest `Worth polishing` with unreported fork status | 100 (21-point inversion) |
+| Highest `Worth polishing` archived | 98 (19-point inversion) |
+| `Strong` shapes scoring below that 95 ceiling | **5,764 of 6,912** |
+
+So the unbanded rule allowed a repository presenting at 79 to precede one presenting at 95, because the latter's README carried one core section fewer than the gate wants — and that is not a rare corner, it is most of the `Strong` space. The duplicate-evidence coupling does cap the override, but it caps it at 16 points on a 0–100 scale, which is not a cap worth relying on. This is the same defect rule 4 was given a band for, with the aggravating detail that the evidence was already counted once.
+
+##### Why five points
+
+* Every corpus `Strong`/`Worth` inversion is **5 points or less**, and all three of them are caused by archive status, which rule 3 settles regardless of the band.
+* On a live 33-repository profile the largest inversion is **3 points**.
+* Five is the band rule 4 already uses, so the optimizer has one notion of "comparable presentation" rather than two.
+
+Within the band, candidacy still decides, which is the case its evidence was meant for: two repositories presenting comparably, one of which has a named deficiency. Outside it, the presentation gap is wide enough that the score speaks for itself.
+
+##### What changed, and what did not
+
+**No recommendation moved.** Across all 13 corpus profiles and on the live 33-repository profile, the banded rule, the unbanded rule, removing candidacy from the ordering entirely, and bands of 2, 5 and 10 all produce **identical recommended sets**. In particular the live recommended set contains none of the three `Worth polishing` repositories whose classification prompted the question. The band bounds a structural override; it is not a way to move a set, and it was not adopted to make any repository win.
+
+Candidacy's role in **eligibility** is untouched. `De-emphasize` is still excluded, `Worth polishing` with an open high-priority finding is still excluded, and the evidence floor is unchanged. The band affects ordering only.
+
+##### Every gate is still a cliff
+
+One unit either side of each threshold flips the label:
+
+| Gate | Boundary crossed | Presentation score cost | Label |
+| --- | --- | --- | --- |
+| `description` | 70, versus 40 — the nearest score the description scorer can actually produce below it | 7 | flips |
+| `topics` | one topic versus none | 8 | flips |
+| `maintenance` | pushed 700 days ago versus 760, one band apart | 3 | flips |
+| `readme` | two core README sections versus one | 4 | flips |
+| `mediumAtMostOne` | one medium finding versus two | 5 | flips |
+
+The maintenance row is the sharpest: a single day either side of 730 flips the label for three points of score. The cliffs are recorded rather than smoothed, because smoothing them would mean inventing intermediate evidence the audit does not have. What the band does is cap what falling off one can cost in the recommended set.
+
+`tests/scoring/candidacy-policy.test.js` asserts all of this through the diagnostic's own functions, including the searched bounds, so a re-implementation cannot quietly disagree with the report a reviewer reads.
 
 ### Redundancy and diversity
 
@@ -648,9 +703,9 @@ A likely alternative is to exclude unverifiable repositories from the profile RE
 
 The evaluation corpus contains 29 `Strong` candidates across 13 profiles, and only 2 profiles reach 6 `Strong` candidates at all. Real accounts can sit far outside that: a 33-repository profile measured during the breadth calibration had 12 `Strong` candidates and 32 eligible repositories.
 
-That regime is exactly where set selection does the most work. With fewer than 6 `Strong` candidates, candidacy decides most slots on its own — 81.9% of pairwise comparisons across the corpus are settled at rule 1, before any later rule is consulted. With a deep pool, candidacy stops discriminating and rules 4 through 8 decide everything.
+That regime is exactly where set selection does the most work. Before rule 1 was given a score band, candidacy settled **81.9%** of pairwise comparisons across the corpus, before any later rule was consulted. With the band, that figure is **2.3%** and presentation score settles **90.4%**, while archive status — which the band deliberately leaves to rule 3 — picks up the 7 comparisons it should have been settling all along. The recommended sets are identical either way; what changed is which rule can be pointed at for each decision. With a deep `Strong` pool, candidacy stops discriminating regardless and rules 4 through 8 decide everything.
 
-The practical consequence is that a corpus-only measurement can report a selection rule as nearly inert when it is in fact decisive for larger accounts. The comparable-score band was measured against a live profile for this reason, and the corpus could not distinguish any band from 2 to 9.
+The practical consequence is that a corpus-only measurement can report a selection rule as nearly inert when it is in fact decisive for larger accounts. Both bands were measured against a live profile for this reason. The corpus could not distinguish any breadth band from 2 to 9, and it could not distinguish any candidacy band at all — which is why the candidacy band's width rests on a search of the reachable input space rather than on corpus output.
 
 Adding a fixture with a deep, single-language `Strong` pool would close the gap. It is not added here because doing so during a calibration interval would change the baseline for two reasons at once.
 
@@ -838,3 +893,57 @@ It runs the real selection loop with tracing enabled — the same `optimizePinne
 It is deliberately opt-in and is not part of `npm run eval:pins`, which belongs in ordinary review. A non-zero exit means the diagnostic could not run, never that a recommendation changed.
 
 The trace is available programmatically as `optimizePinnedSet(audits, { trace: true })`. It is absent unless requested, and the interface never asks for it. An alternate ordering can be passed as `{ stages }` for measurement; production always uses the exported `SELECTION_STAGES`.
+
+### Diagnosing the candidacy partition
+
+```bash
+npm run eval:candidacy
+npm run eval:candidacy -- --pairs
+npm run eval:candidacy -- --profile prolific-account
+```
+
+`npm run eval:pins:diagnose` reports that candidacy settles most pairwise comparisons. This answers the narrower question that raises: what is the partition deciding with, and how far can it override presentation evidence?
+
+It reports:
+
+* every `Strong` gate, its input, its threshold, what missing evidence does to it, and whether the presentation score reads the same evidence;
+* which gate each non-`Strong` repository failed, and which repositories were held out by exactly one gate;
+* every pair where a `Worth polishing` repository outscores a `Strong` one, and the gate behind each;
+* how often the partition settles a slot, how much score displacement it causes, and on how many profiles;
+* threshold sensitivity: the label and score one reachable step either side of each gate;
+* the policy comparison — current, candidacy-below-score, unbanded, and candidacy bands of 2, 5 and 10 points;
+* the reachable bounds, found by searching 120,960 repository shapes per population rather than by exhibiting one pair: the lowest score a `Strong candidate` can reach, the highest a `Worth polishing` repository can reach while failing only score-visible gates, and the inversion between them;
+* ten constructed falsification cases the corpus does not contain.
+
+The run first asserts that its own gate table reproduces the production classifier on every corpus repository, so it cannot describe a classifier the product does not have. It is opt-in, and a non-zero exit means the diagnostic could not run, never that a classification changed. `tests/scoring/candidacy-policy.test.js` asserts the findings it produced, reading these same functions rather than re-implementing them.
+
+### Diagnosing performance
+
+```bash
+npm run eval:performance
+npm run eval:performance -- --scenario large
+```
+
+Drives the real page in a real browser against mocked GitHub responses, through the same static server the browser tests use, and reports **counts** rather than durations: data requests issued and repeated, elements created per interaction, derived computations repeated, DOM nodes per tab panel, storage writes, and the DOM left behind after a second audit. Counts are deterministic, so a change in one is a change in behavior; wall-clock figures are printed for orientation and labelled informational. Nothing here is a CI threshold — `tests/browser.test.js` owns the assertions.
+
+Two scenarios: a live-shaped profile (33 repositories, 131 followers, 60 following) and a large one near the retrieval caps (150 repositories, 1,200 each way).
+
+#### What it found, and what was changed
+
+| Finding | Evidence | Outcome |
+| --- | --- | --- |
+| The profile was fetched twice | `GET /users/{login}` appeared twice per session: once for the audit, once inside `fetchNetwork` | **Fixed.** The audit hands its profile to `fetchNetwork`. Opening Network on a live-shaped profile went from 4 GitHub requests to 3; repeated URLs went from 2 to 0. An explicit retry still re-reads the profile, because retry means "look again". |
+| The profile score was computed twice per render | `GitHubAudit.scoreProfile` called twice per audit, from the header and from the overview | **Fixed.** Computed once in `renderResults` and passed to both. 2 calls to 1, over every repository. |
+| Disclosure rebuilt lists it had already rendered | On 1,200 followers: *Show 25 more* created 50 list items, *Show all* created 1,200, *Collapse* created 25 | **Fixed** alongside the observation-history work. Now 25, 1,150 and 0: the changed tail is appended or trimmed, and the pills already on screen are left alone. |
+
+#### What it found and left alone
+
+| Finding | Evidence | Why nothing changed |
+| --- | --- | --- |
+| The audit panel dominates the DOM | 5,797 of 7,415 nodes at 150 repositories, built before its tab is opened | Deferring it was measured, not assumed: removing the entire audit render — 5,790 of 7,133 created elements — produced **no measurable change** in time to a usable audit (255–320 ms with, 292–320 ms without; run-to-run noise is larger than the effect). Element creation is not the bottleneck, so deferral would buy state-invalidation complexity for nothing. |
+| The optimizer and Markdown render eagerly | Both run once during the audit | Together they account for **121 of 7,415 DOM nodes**, and each already runs exactly once. There is nothing to defer that would be worth the invalidation logic. |
+| The README GraphQL query requests three filename aliases | The response for a real 33-repository profile is 371 KB, of which 359 KB (97%) is README text; the other two aliases resolved for **zero** repositories | The aliases cost nothing — GitHub returns `null` for the ones that do not exist. The README text is what the analysis reads, and trimming it would weaken the analysis. The browser never receives it: the function returns only the analysis, 6.5 KB for 33 repositories. |
+| Relationship pagination issues one request past the last full page | 13 requests for 1,200 followers rather than 12 | A short page is the only evidence that a list has ended. The profile's reported count is not a substitute: it can change mid-retrieval, and trusting it could truncate a list. Completeness is not traded for a request. |
+| Tab switching | 0 requests, 0 elements created, 0 derived computations across seven switches | Already correct. |
+| Repeated audits | DOM falls from 9,915 nodes to 357 after auditing a second profile | Already correct. |
+| Storage | Two no-op disclosure changes perform 0 writes | Already correct: one read and at most one write per observation, and an observation that changes nothing is not written. |

@@ -243,8 +243,18 @@ textarea:focus { border-color: #58a6ff; }
 .network-counts dd { margin: 5px 0 0; color: #e6edf3; font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
 .network-notice { margin: 0 0 20px; padding: 12px 14px; border-left: 2px solid #58a6ff; background: #11161d; color: #b1bac4; font-size: .84rem; line-height: 1.55; }
 .network-notice.is-error { border-left-color: #ff7b72; color: #ffb3ad; }
-.network-ordering-note { margin: 0 0 20px; color: #8b949e; font-size: .8rem; line-height: 1.55; }
+.network-ordering-note { margin: 0 0 10px; color: #8b949e; font-size: .8rem; line-height: 1.55; }
+.network-history-note { margin: 0 0 8px; color: #6e7681; font-size: .76rem; line-height: 1.55; }
+.network-history-controls { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 0 0 20px; }
+.network-history-confirm { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 10px; color: #b1bac4; font-size: .76rem; }
+.link-button { padding: 0; border: 0; background: none; color: #8b949e; font-family: inherit; font-size: .76rem; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.link-button:hover { color: #58a6ff; }
+.link-button.is-destructive { color: #ff7b72; }
+.link-button.is-destructive:hover { color: #ffb3ad; }
 .network-section { margin-top: 30px; }
+.account-observed { display: block; margin-top: 1px; color: #6e7681; font-size: .68rem; font-weight: 700; letter-spacing: .03em; }
+.account-list a.is-newly-observed { border-color: #3d4b5c; }
+.account-list a.is-newly-observed:hover .account-observed { color: #58a6ff; }
 #network-panel h3 { margin-bottom: 14px; font-size: 1.05rem; }
 .account-list { display: flex; flex-wrap: wrap; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .account-list li { min-width: 0; }
@@ -254,7 +264,7 @@ textarea:focus { border-color: #58a6ff; }
 .list-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .list-controls button { padding: 7px 13px; font-size: .82rem; font-weight: 700; }
 .network-global-controls { margin: 0 0 4px; }
-.network-notice[hidden], #network-results[hidden], #network-export[hidden], .account-list[hidden], #network-unreciprocated-section[hidden], .list-status[hidden], .list-controls[hidden] { display: none; }
+.network-notice[hidden], #network-results[hidden], #network-export[hidden], .account-list[hidden], #network-unreciprocated-section[hidden], .list-status[hidden], .list-controls[hidden], .network-history-note[hidden], .network-history-controls[hidden], .network-history-confirm[hidden], .link-button[hidden] { display: none; }
 #network-export textarea { min-height: 380px; }
 
 .footer { display: flex; justify-content: space-between; gap: 20px; padding: 22px 4px 0; color: #6e7681; font-size: .75rem; }

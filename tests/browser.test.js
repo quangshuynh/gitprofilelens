@@ -1288,7 +1288,7 @@ test("disclosure controls are keyboard operable and wrap on mobile", { skip: !ch
 });
 
 
-test("network lists keep the API order and claim no follow chronology", { skip: !chromePath }, async () => {
+test("a first observation keeps the API order and claims no follow chronology", { skip: !chromePath }, async () => {
   const browser = await chromium.launch({ executablePath: chromePath, headless: true });
   try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -1336,9 +1336,15 @@ test("network lists keep the API order and claim no follow chronology", { skip: 
   await page.locator("#network-results").waitFor({ state: "visible" });
   assert.deepEqual(await page.locator("#network-following-list li").allInnerTexts(), expected);
 
-  // The interface states the ordering neutrally.
+  // This is the first observation on this device, so every account was first seen
+  // together and the interface says exactly that rather than implying an order.
   const note = await page.locator("#network-ordering-note").innerText();
-  assert.match(note, /order the GitHub API returned them/);
+  assert.match(note, /history started on this device/i);
+  assert.match(note, /first seen together and their historical order is unknown/i);
+  assert.match(
+    await page.locator("#network-history-note").innerText(),
+    /kept only in this browser and is never uploaded/i
+  );
 
   // No chronology claim anywhere in the panel or the export, once the note that
   // explicitly denies one is set aside.
@@ -1366,6 +1372,397 @@ test("network lists keep the API order and claim no follow chronology", { skip: 
     await browser.close();
   }
 });
+
+test("a later observation lifts newly seen accounts above the baseline", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const browserErrors = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  await mockGithubRequests(page);
+
+  const baseline = [account("carol"), account("alice"), account("bob")];
+  await mockNetworkRequests(page, { example: { followers: [baseline], following: [[]] } });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.deepEqual(
+    await page.locator("#network-follower-list li").allInnerTexts(),
+    ["carol", "alice", "bob"]
+  );
+
+  // A second visit sees two accounts the first visit did not. Those two, and only
+  // those two, were first observed later; the baseline three keep GitHub's order.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[...baseline, account("dave"), account("erin")]], following: [[]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  assert.deepEqual(
+    await page.locator("#network-follower-list li").allInnerTexts(),
+    ["dave\nfirst seen " + shortDate(), "erin\nfirst seen " + shortDate(), "carol", "alice", "bob"]
+  );
+  assert.equal(await page.locator("#network-follower-list a.is-newly-observed").count(), 2);
+
+  const note = await page.locator("#network-ordering-note").innerText();
+  assert.match(note, /most recently observed first/i);
+  assert.match(note, /GitHub does not expose follow dates/i);
+  assert.match(note, /first seen in the same observation keep GitHub's order/i);
+  assert.match(await page.locator("#network-history-note").innerText(), /2 observations recorded/i);
+
+  // The export orders the same accounts the same way and reuses the same sentence.
+  const markdown = await page.locator("#network-output").inputValue();
+  const exported = markdown
+    .split("## Followers\n")[1]
+    .split("## Following")[0]
+    .match(/\[([^\]]+)\]/g)
+    .map((match) => match.slice(1, -1));
+  assert.deepEqual(exported, ["dave", "erin", "carol", "alice", "bob"]);
+  assert.ok(markdown.includes(note.trim()), "the export restates the interface's ordering sentence");
+  assert.doesNotMatch(markdown, /\bfollowed[\s_]?at\b|newest follows?\b/i);
+
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an incomplete retrieval never records a removal", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("alice"), account("bob")]], following: [[]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // The second visit loses a page mid-pagination, so the followers list is
+  // incomplete. alice arrived; bob did not. bob must not be recorded as gone.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [accountList("filler", 100), [{ failWith: 500 }]], following: [[]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-status.error").waitFor({ state: "visible" });
+
+  const stored = await page.evaluate(() =>
+    JSON.parse(window.localStorage.getItem("gitprofilelens.network-history.v1")));
+  const followers = stored.profiles.example.followers;
+  assert.equal(followers.accounts.alice.currentlyPresent, true);
+  assert.equal(followers.accounts.bob.currentlyPresent, true);
+  assert.equal(followers.observationCount, 1, "the incomplete retrieval was not recorded at all");
+  assert.equal(followers.accounts["filler-1"], undefined);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("observation history is deleted only after a deliberate confirmation", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  const baseline = [account("carol"), account("alice")];
+  await mockNetworkRequests(page, { example: { followers: [baseline], following: [[]] } });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[...baseline, account("zoe")]], following: [[]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.deepEqual(
+    (await page.locator("#network-follower-list li").allInnerTexts()).map((text) => text.split("\n")[0]),
+    ["zoe", "carol", "alice"]
+  );
+
+  // The first click only asks. Nothing is deleted and the order is untouched.
+  await page.getByRole("button", { name: "Reset observation history" }).click();
+  assert.match(await page.locator("#network-history-confirm-group").innerText(), /Delete the observation history/);
+  await page.getByRole("button", { name: "Keep it" }).click();
+  assert.notEqual(await page.evaluate(() =>
+    window.localStorage.getItem("gitprofilelens.network-history.v1")), null);
+
+  await page.getByRole("button", { name: "Reset observation history" }).click();
+  await page.getByRole("button", { name: "Delete history" }).click();
+
+  assert.equal(await page.evaluate(() =>
+    window.localStorage.getItem("gitprofilelens.network-history.v1")), null);
+  // Nothing now explains the observed order, so the list returns to GitHub's.
+  assert.deepEqual(
+    await page.locator("#network-follower-list li").allInnerTexts(),
+    ["carol", "alice", "zoe"]
+  );
+  assert.match(
+    await page.locator("#network-ordering-note").innerText(),
+    /order the GitHub API returned them/
+  );
+  assert.match(await page.locator("#network-output").inputValue(), /order the GitHub API returned them/);
+  assert.equal(await page.locator("#network-history-controls").isHidden(), true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("disclosure appends and trims instead of rebuilding rendered accounts", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [accountList("follower", 80)], following: [[]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // Tag the rendered nodes. Anything that survives a disclosure change was reused
+  // rather than destroyed and recreated.
+  await page.evaluate(() => {
+    document.querySelectorAll("#network-follower-list li").forEach((item, index) => {
+      item.dataset.original = String(index);
+    });
+  });
+
+  await page.getByRole("button", { name: "Show 25 more Followers" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 50);
+  assert.equal(await page.locator("#network-follower-list li[data-original]").count(), 25);
+
+  await page.getByRole("button", { name: "Show all Followers" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 80);
+  assert.equal(await page.locator("#network-follower-list li[data-original]").count(), 25);
+
+  await page.getByRole("button", { name: "Collapse Followers" }).click();
+  assert.equal(await page.locator("#network-follower-list li").count(), 25);
+  assert.equal(
+    await page.locator("#network-follower-list li[data-original]").count(),
+    25,
+    "collapsing trimmed the tail rather than rebuilding the head"
+  );
+  assert.match(await page.locator("#network-followers-status").innerText(), /Showing 25 of 80/);
+
+  await page.getByRole("button", { name: "Show all Followers" }).click();
+  assert.match(await page.locator("#network-followers-status").innerText(), /Showing all 80/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a browser that refuses to store history keeps the Network working", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const browserErrors = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  // A real QuotaExceededError from the real Storage interface, thrown for this
+  // key only, so everything else about the page behaves normally.
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function refusingSetItem(key, value) {
+      if (String(key).startsWith("gitprofilelens.network-history")) {
+        throw new DOMException("exceeded the quota", "QuotaExceededError");
+      }
+      return original.call(this, key, value);
+    };
+  });
+
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("carol"), account("alice")]], following: [[account("bob")]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // The network itself is unaffected.
+  assert.equal(await page.locator("#network-follower-count").innerText(), "2");
+  assert.equal(await page.locator("#network-unreciprocated-count").innerText(), "1");
+  assert.deepEqual(
+    await page.locator("#network-follower-list li").allInnerTexts(),
+    ["carol", "alice"]
+  );
+  assert.ok(await page.locator("#network-output").inputValue());
+
+  // Nothing was stored, so nothing claims an order history does not hold.
+  assert.equal(
+    await page.evaluate(() => window.localStorage.getItem("gitprofilelens.network-history.v1")),
+    null
+  );
+  assert.match(
+    await page.locator("#network-ordering-note").innerText(),
+    /order the GitHub API returned them/
+  );
+  assert.equal(await page.locator("#network-history-controls").isHidden(), true);
+  assert.equal(await page.locator("#network-follower-list a.is-newly-observed").count(), 0);
+  assert.deepEqual(browserErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the history controls are keyboard operable and never strand focus", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("alice"), account("bob")]], following: [[]] },
+  });
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  const active = () => page.evaluate(() => document.activeElement?.id ?? null);
+
+  // Reached and operated from the keyboard alone.
+  await page.locator("#network-history-reset").focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await active(), "network-history-confirm", "focus followed to the confirmation");
+
+  await page.keyboard.press("Tab");
+  assert.equal(await active(), "network-history-cancel");
+  await page.keyboard.press("Enter");
+  assert.equal(await active(), "network-history-reset", "declining returned focus to the control");
+
+  await page.keyboard.press("Enter");
+  await page.locator("#network-history-confirm").waitFor({ state: "visible" });
+  await page.keyboard.press("Enter");
+
+  // Every control in the group is gone, so focus must land on the explanation
+  // rather than falling back to the document.
+  assert.equal(await active(), "network-history-note");
+  assert.equal(await page.locator("#network-history-note").getAttribute("role"), "status");
+  assert.match(await page.locator("#network-history-note").innerText(), /history deleted/i);
+
+  // Buttons stay buttons, and nothing became a clickable div.
+  for (const id of ["network-history-reset", "network-history-confirm", "network-history-cancel"]) {
+    assert.equal(await page.locator(`#${id}`).evaluate((node) => node.tagName), "BUTTON");
+    assert.equal(await page.locator(`#${id}`).evaluate((node) => node.type), "button");
+  }
+
+  // The list controls remain reachable at a narrow width without a horizontal scroll.
+  await page.setViewportSize({ width: 380, height: 780 });
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    true
+  );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("opening Network reuses the profile the audit already fetched", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const profileRequests = [];
+  page.on("request", (request) => {
+    if (request.url() === "https://api.github.com/users/example") profileRequests.push(request.url());
+  });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("alice")]], following: [[account("bob")]] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  assert.equal(profileRequests.length, 1, "the audit reads the profile once");
+
+  await page.getByRole("tab", { name: "Network" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+  assert.equal(
+    profileRequests.length,
+    1,
+    "the Network tab reused the audit's profile instead of requesting it again"
+  );
+  // The reused payload still identifies the profile the network belongs to.
+  assert.match(await page.locator("#network-summary").innerText(), /Public network for @example/);
+  assert.equal(await page.locator("#network-follower-count").innerText(), "1");
+
+  await browser.close();
+  } finally {
+    if (browser.isConnected()) await browser.close();
+  }
+});
+
+test("an explicit Network retry reads the profile again", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const profileRequests = [];
+  page.on("request", (request) => {
+    if (request.url() === "https://api.github.com/users/example") profileRequests.push(request.url());
+  });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[{ failWith: 500 }]], following: [[account("bob")]] },
+  });
+
+  await page.goto(`${baseUrl}/?user=example&view=network`);
+  await page.locator("#network-retry-button").waitFor({ state: "visible" });
+  const afterFailure = profileRequests.length;
+
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await mockGithubRequests(page);
+  await mockNetworkRequests(page, {
+    example: { followers: [[account("alice")]], following: [[account("bob")]] },
+  });
+  await page.getByRole("button", { name: "Try again" }).click();
+  await page.locator("#network-results").waitFor({ state: "visible" });
+
+  // Retry means "look at GitHub again", including at the profile, so the saved
+  // copy is deliberately not reused here.
+  assert.equal(profileRequests.length, afterFailure + 1);
+  assert.equal(await page.locator("#network-follower-count").innerText(), "1");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("one audit computes the profile score once", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  // The profile score is a deterministic function of the finished audits, so
+  // computing it twice for one render is repeated work over every repository.
+  await page.addInitScript(() => {
+    window.addEventListener("DOMContentLoaded", () => {
+      window.__scoreProfileCalls = 0;
+      const original = window.GitHubAudit.scoreProfile;
+      window.GitHubAudit.scoreProfile = function countedScoreProfile(...args) {
+        window.__scoreProfileCalls += 1;
+        return original.apply(this, args);
+      };
+    }, { once: true });
+  });
+  await mockGithubRequests(page);
+
+  await page.goto(`${baseUrl}/?user=example`);
+  await page.locator("#result-section").waitFor({ state: "visible" });
+  assert.equal(await page.evaluate(() => window.__scoreProfileCalls), 1);
+
+  // The values it produced still reach both places that need them.
+  assert.match(await page.locator("#overall-score").innerText(), /^\d+$/);
+  assert.match(await page.locator("#profile-insight").innerText(), /strongest signal:/);
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
+ * formats today the way the interface formats a first-observation date
+ * @returns {string} short date string
+ */
+function shortDate() {
+  return new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric" })
+    .format(new Date());
+}
 
 /**
  * Repository fixtures for the pinned optimizer view.

@@ -98,6 +98,40 @@
   const COMPARABLE_SCORE_BAND = 5;
 
   /**
+   * How close two presentation scores must be for candidacy to choose between them.
+   *
+   * Candidacy answers a different question from the presentation score, and for
+   * two of its nine gates it answers it from evidence the score does not read at
+   * all: fork status and archive status. Those two keep deciding without any
+   * band, because stages 2 and 3 apply them directly.
+   *
+   * The other seven gates read evidence the score already reads — README state,
+   * description score, topics, maintenance score, high findings, medium findings,
+   * and the score itself. A repository that fails one of them has already been
+   * charged for it once, in its score. Ranking candidacy ahead of score without a
+   * band charges it a second time, with no ceiling on the second charge.
+   *
+   * The ceiling was measured rather than assumed. Searching the reachable input
+   * space, the lowest score a Strong candidate can reach is 79 and the highest a
+   * Worth polishing repository can reach while failing only score-visible gates is
+   * 95. So the unbanded rule allowed a 16-point override: a repository presenting
+   * at 79 could precede one presenting at 95 because the latter's README carried
+   * one core section fewer than the gate wants. 5,764 of the 6,912 Strong shapes
+   * in that search sit below that ceiling, so this is not a rare corner.
+   *
+   * Five points is the same band breadth uses, so the optimizer has one notion of
+   * "comparable presentation" rather than two. It is also at or above the largest
+   * inversion actually observed: 5 points across the evaluation corpus, 3 on a
+   * live 33-repository profile. Within the band, candidacy still decides, which is
+   * the case its evidence was meant for. Outside it, the presentation gap is wide
+   * enough that the score speaks for itself.
+   *
+   * Applying it changes no recommendation on any profile measured, on the corpus
+   * or live. It bounds a structural override rather than moving a set.
+   */
+  const CANDIDACY_SCORE_BAND = 5;
+
+  /**
    * reports the maximum number of repositories a GitHub profile can pin
    * @returns {number} GitHub's documented pinned-item limit
    */
@@ -292,7 +326,17 @@
    * second, so a stage phrased as "higher wins" subtracts in the opposite order.
    */
   const SELECTION_STAGES = [
-    { name: "candidacy", compare: (a, b) => a.candidate.tier - b.candidate.tier },
+    {
+      name: "candidacy",
+      // Abstains when the two presentations are too far apart to read as
+      // comparable, because seven of the nine gates behind the tier are evidence
+      // the score already counted. Fork and archive status are not among them and
+      // keep deciding unbanded, at stages 2 and 3.
+      compare: (a, b) =>
+        Math.abs(b.candidate.score - a.candidate.score) <= CANDIDACY_SCORE_BAND
+          ? a.candidate.tier - b.candidate.tier
+          : 0,
+    },
     {
       name: "originality",
       compare: (a, b) => a.candidate.originalityRank - b.candidate.originalityRank,
@@ -841,6 +885,7 @@
 
   return {
     ACTIONS,
+    CANDIDACY_SCORE_BAND,
     COMPARABLE_SCORE_BAND,
     EXCLUSION_REASONS,
     MAXIMUM_PINNED_REPOSITORIES,
