@@ -1,10 +1,12 @@
 # Network list ordering
 
-GitProfileLens shows Followers, Following, and "Following who don't follow back"
-in the order GitHub's API returned them, and says so in both the interface and
-the Markdown export. It does **not** claim a newest-to-oldest follow order.
+GitProfileLens does **not** claim a newest-to-oldest *follow* order for
+Followers, Following, or "Following who don't follow back", because GitHub does
+not expose one. What it does instead is remember which relationships it has seen
+before, on the reader's own device, and order the lists by **first observation**.
 
-This document records why, so the question does not have to be re-litigated.
+This document records the evidence for the first half of that sentence, so the
+question does not have to be re-litigated, and then specifies the second half.
 
 ## The question
 
@@ -20,7 +22,7 @@ last? That requires GitProfileLens to know *when* one account followed another.
 | Normalization | Each entry is reduced to `{ login, profileUrl }` |
 | Completeness | Every list carries an explicit `complete` flag; a partial list blocks both the derived list and the export |
 | Non-follow-back | `following` minus `followers`, compared case-insensitively, preserving Following order |
-| Ordering | Untouched — the API's order is never re-sorted |
+| Ordering | By first local observation where history exists; otherwise the API's order, untouched |
 
 ## Evidence
 
@@ -96,34 +98,120 @@ A 30-day, 300-event window cannot reconstruct the full follow history of an
 arbitrary profile, so events are not a source of complete chronology. Partial
 event data is not blended into an otherwise unordered list.
 
-## Outcome
+## Outcome for the API question
 
 Outcome C: GitHub provides no authoritative chronology.
 
 > GitHub does not expose sufficient relationship-time evidence for GitProfileLens
 > to claim newest-to-oldest follow ordering.
 
-The API order is preserved and described neutrally. The same sentence appears in
-the interface and in the Markdown export, so the two can never disagree.
+Nothing above changed. The sections below describe a *different* claim, built on
+evidence GitProfileLens gathers itself.
 
-## Possible future work: locally observed history
+## Locally observed relationship history
 
-GitProfileLens could record snapshots of a profile's network over time and detect
-that a relationship first appeared between two observations:
+`network-history.js` records, per audited profile and per relationship list, when
+GitProfileLens first and last observed each account **in this browser**. It is not
+a follow timestamp and is never named as one.
+
+### What a recorded time means
+
+| Field | Meaning |
+| --- | --- |
+| `firstObservedAt` | The first time *this browser* completed a retrieval that contained this account. It is an upper bound on the follow: the follow happened at or before it, by an unknown amount. |
+| `lastObservedAt` | The most recent complete retrieval that contained the account. For an account that has gone, it is frozen at its last positive sighting. |
+| `currentlyPresent` | Whether the most recent **complete** retrieval contained the account. |
+| `reappearedAt` | Present only when an account went absent and was later seen again. |
+
+The names `followedAt`, `followTimestamp`, and `followDate` appear nowhere in the
+shipped source, and `tests/network-history.test.js` scans for them.
+
+### Cohorts, and why a baseline has no order
+
+An observation establishes a set, not a sequence. Seeing 131 followers in one
+retrieval proves that all 131 existed by that moment and proves nothing about
+their order relative to each other.
+
+Every account first seen in the same observation therefore receives the *same*
+`firstObservedAt` and forms one **cohort**. Using a per-account insertion time
+would turn loop iteration order into apparent chronology, which is the specific
+failure mode this design exists to prevent.
+
+The first observation of a list is the **baseline cohort**: one cohort containing
+everything, carrying no internal order. Each later observation adds at most one
+new cohort, containing exactly the accounts that were not there before.
 
 ```
-Seen following @alice on Sep 22
-Not present in the Sep 15 snapshot
-→ first observed between Sep 15 and Sep 22
+observation 1:  alice bob carol            -> baseline cohort  (order unknown)
+observation 2:  alice bob carol dave erin   -> cohort 2: dave, erin
 ```
 
-This is feasible in principle but is **not** a follow timestamp. It is bounded by
-when GitProfileLens first observed the profile, it says nothing about follows that
-predate the first snapshot, and it cannot distinguish a new follow from a re-follow.
+Lists sort by cohort, newest cohort first, and **stably** within a cohort, so the
+accounts inside one cohort keep the neutral order GitHub returned them in.
 
-If it is ever built, the terminology must be `first observed`, never `followed at`,
-and an ordering derived from it must not be presented as a follow chronology.
+```
+dave erin | alice bob carol
+  newer   |  baseline, order unknown
+```
 
-Nothing persistent is stored today: network state lives only in memory for the
-current profile, so this remains a documented possibility rather than a partial
-implementation.
+The interface and the export both say "Most recently observed first" and explain
+the limitation. Neither ever says "newest follows".
+
+### Incomplete retrievals
+
+Completeness is respected **per list**. A list whose retrieval hit the pagination
+cap, failed mid-pagination, or returned an unusable entry is not merged at all:
+
+- no account is marked `currentlyPresent: false`, because a missing account may
+  simply sit on a page that never arrived;
+- no new cohort is created, because a partial page is not an observation of the
+  set;
+- prior history is left exactly as it was;
+- the list is displayed in GitHub's order rather than ordered by history that
+  deliberately excludes the current retrieval.
+
+### Removal and reappearance
+
+A complete retrieval that no longer contains a previously seen account records
+`currentlyPresent: false` and freezes `lastObservedAt` at the last positive
+sighting.
+
+If the account is seen again, `firstObservedAt` is **not** rewritten — the first
+observation really did happen then — and `reappearedAt` plus an `absences` count
+record the interruption. Relationship episodes are deliberately not modelled: the
+simplest model that does not lie is one first observation plus an explicit record
+that the relationship was interrupted. The limitation this leaves is real and
+stated here: a re-followed account keeps its original position in the order.
+
+### Non-follow-back
+
+"Following who don't follow back" is `following` minus `followers`, compared
+case-insensitively. It is derived from the **already ordered** Following list, so
+it inherits that order and never grows a chronology of its own.
+
+### Storage
+
+| Concern | Decision |
+| --- | --- |
+| Mechanism | `localStorage`, one JSON value under `gitprofilelens.network-history.v1` |
+| Why | The product is a static page plus stateless functions: no account system, no database, no per-reader server state to extend. Observation history is per-device evidence, so uploading it would need infrastructure that does not exist and would turn a local note into a server-side record of whose followers someone looked at. |
+| Why not IndexedDB | Disproportionate. The bounded worst case is the existing pagination cap of 10,000 accounts per list, which stays well inside a typical 5 MB origin quota as a single atomically written value. |
+| Schema evolution | Versioned. A version this build does not know is **not** migrated; it is discarded and a fresh baseline starts, because guessing at an unknown shape would manufacture history. |
+| Corruption | Entries missing a usable `firstObservedAt` are dropped rather than repaired, for the same reason. |
+| Profile separation | Keyed by normalized login. One profile's history can never order another's. |
+| Bounds | At most 20 profiles; the least recently observed are dropped first, and the profile just observed always survives. |
+| Writes | One read and at most one write per observation, never per relationship. An observation that changes nothing is not written at all. |
+| Failure | A blocked or full storage is a soft failure: history stops accumulating, the Network tab is unaffected. |
+| Reset | An explicit two-step control in the Network tab, and nowhere else. History is never cleared as a side effect of clearing anything else. |
+| Cross-device | History is per browser. A different browser, device, or profile starts its own baseline. |
+
+### What this still cannot do
+
+- It says nothing about follows that predate the first observation, which for an
+  established profile is almost all of them.
+- It cannot distinguish a new follow from a re-follow, only a new *observation*
+  from a repeat one.
+- The interval between two observations bounds the resolution: two accounts
+  followed a month apart are indistinguishable if both were first seen in the
+  same retrieval.
+- It is not portable between devices and is not a backup.

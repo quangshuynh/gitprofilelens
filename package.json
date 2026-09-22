@@ -11,7 +11,7 @@
     "eval": "node evaluation/report.js",
     "eval:pins": "node evaluation/pinned-report.js",
     "eval:pins:diagnose": "node evaluation/pinned-diagnose.js",
-    "check": "node --check share.js && node --check audit.js && node --check pinned-optimizer.js && node --check network-export.js && node --check script.js && node --check api/github-contributions.js && node --check api/github-metadata.js && node --check api/pinned-repositories.js && node --check api/report.js && node --check api/private-repositories.js && node --check api/auth/session-crypto.js && node --check api/auth/authenticated-session.js && node --check api/auth/github.js && node --check api/auth/callback.js && node --check api/auth/session.js && node --check api/auth/logout.js && node --check evaluation/report.js && node --check evaluation/pinned-report.js && node --check evaluation/pinned-diagnose.js"
+    "check": "node --check share.js && node --check audit.js && node --check pinned-optimizer.js && node --check network-history.js && node --check network-export.js && node --check script.js && node --check api/github-contributions.js && node --check api/github-metadata.js && node --check api/pinned-repositories.js && node --check api/report.js && node --check api/private-repositories.js && node --check api/auth/session-crypto.js && node --check api/auth/authenticated-session.js && node --check api/auth/github.js && node --check api/auth/callback.js && node --check api/auth/session.js && node --check api/auth/logout.js && node --check evaluation/report.js && node --check evaluation/pinned-report.js && node --check evaluation/pinned-diagnose.js"
   },
   "devDependencies": {
     "playwright-core": "^1.62.1"

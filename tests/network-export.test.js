@@ -660,3 +660,79 @@ test("retrying a retrieval reproduces the same order", async () => {
   );
   assert.equal(buildMarkdown(first), buildMarkdown(second));
 });
+
+test("a caller-supplied order reaches the export, for every list and the note", async () => {
+  const network = await fetchNetwork("example", {
+    fetchImpl: createNetworkFetch({
+      followerPages: [[{ login: "alice" }, { login: "bob" }]],
+      followingPages: [[{ login: "alice" }, { login: "carol" }, { login: "dave" }]],
+    }),
+  });
+
+  const reverse = (accounts) => [...accounts].reverse();
+  const markdown = buildMarkdown(network, {
+    followers: reverse(network.followers.accounts),
+    following: reverse(network.following.accounts),
+    orderingNote: "Most recently observed first.",
+  });
+
+  assert.match(markdown, /> Most recently observed first\./);
+  assert.deepEqual(exportedSection(markdown, "Followers"), ["bob", "alice"]);
+  assert.deepEqual(exportedSection(markdown, "Following"), ["dave", "carol", "alice"]);
+  // Non-follow-back is derived from the supplied Following order, so it inherits
+  // it rather than carrying an order of its own.
+  assert.deepEqual(exportedSection(markdown, "Following who don't follow back"), ["dave", "carol"]);
+});
+
+test("a supplied order that is not the retrieved accounts is ignored", async () => {
+  const network = await fetchNetwork("example", {
+    fetchImpl: createNetworkFetch({
+      followerPages: [[{ login: "alice" }, { login: "bob" }]],
+      followingPages: [[{ login: "alice" }]],
+    }),
+  });
+
+  // Each of these would change which accounts the export names, not merely their
+  // order, so the export falls back to what was actually retrieved.
+  const rejected = [
+    [{ login: "alice", profileUrl: "https://github.com/alice" }],
+    [
+      { login: "alice", profileUrl: "https://github.com/alice" },
+      { login: "mallory", profileUrl: "https://github.com/mallory" },
+    ],
+    [
+      { login: "alice", profileUrl: "https://github.com/alice" },
+      { login: "alice", profileUrl: "https://github.com/alice" },
+    ],
+  ];
+
+  for (const followers of rejected) {
+    assert.deepEqual(
+      exportedSection(buildMarkdown(network, { followers }), "Followers"),
+      ["alice", "bob"]
+    );
+  }
+});
+
+test("the default export is unchanged when no order is supplied", async () => {
+  const network = await fetchNetwork("example", {
+    fetchImpl: createNetworkFetch({
+      followerPages: [[{ login: "alice" }]],
+      followingPages: [[{ login: "bob" }]],
+    }),
+  });
+
+  assert.equal(buildMarkdown(network), buildMarkdown(network, {}));
+  assert.match(buildMarkdown(network, {}), /order the GitHub API returned them/);
+});
+
+/**
+ * reads the logins one markdown section lists, in the order it lists them
+ * @param {string} markdown generated network markdown
+ * @param {string} heading section heading to read
+ * @returns {Array<string>} logins in export order
+ */
+function exportedSection(markdown, heading) {
+  const body = markdown.split(`## ${heading}\n`)[1].split("\n## ")[0];
+  return [...body.matchAll(/^\d+\. \[([^\]]+)\]/gm)].map((match) => match[1]);
+}

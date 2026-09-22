@@ -181,6 +181,15 @@
             <div><dt>Following who don't follow back</dt><dd id="network-unreciprocated-count">0</dd></div>
           </dl>
           <p id="network-ordering-note" class="network-ordering-note">Accounts appear in the order the GitHub API returned them. GitHub does not record when a follow happened and does not document an order for these lists, so this is not a newest-to-oldest follow history.</p>
+          <p id="network-history-note" class="network-history-note" hidden></p>
+          <div id="network-history-controls" class="network-history-controls" hidden>
+            <button id="network-history-reset" class="link-button" type="button">Reset observation history</button>
+            <span id="network-history-confirm-group" class="network-history-confirm" hidden>
+              <span id="network-history-confirm-label">Delete the observation history stored in this browser?</span>
+              <button id="network-history-confirm" class="link-button is-destructive" type="button">Delete history</button>
+              <button id="network-history-cancel" class="link-button" type="button">Keep it</button>
+            </span>
+          </div>
           <p id="network-notice" class="network-notice" hidden></p>
 
           <div id="network-disclosure-controls" class="list-controls network-global-controls" hidden>
@@ -320,6 +329,7 @@
   <script src="share.js"></script>
   <script src="audit.js"></script>
   <script src="pinned-optimizer.js"></script>
+  <script src="network-history.js"></script>
   <script src="network-export.js"></script>
   <script src="script.js"></script>
   <script src="markdown-format.js"></script>

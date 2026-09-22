@@ -35,6 +35,12 @@
    * neither relationship field accepts an ordering argument, so no GitHub API can
    * tell GitProfileLens which follow is newer. These lists therefore keep the order
    * the API returned and say so, rather than implying a newest-to-oldest reading.
+   *
+   * GitProfileLens can order these lists by when it first *observed* each
+   * relationship on the reader's own device, which is a different and much weaker
+   * claim. When that history exists the caller supplies both the ordered accounts
+   * and the sentence describing them, so the export and the interface can never
+   * present different orders or describe the same order differently.
    */
   const ORDERING_NOTE =
     "Accounts appear in the order the GitHub API returned them. GitHub does not record " +
@@ -366,11 +372,33 @@
   }
 
   /**
+   * reads one ordered account list supplied by the caller, falling back to API order
+   *
+   * A supplied list must name the same accounts as the retrieved one. Ordering is
+   * the only thing a caller may change here; an export that quietly dropped or
+   * added an account would no longer describe the network that was retrieved.
+   *
+   * @param {Array<Object>|undefined} supplied caller-ordered accounts
+   * @param {Array<Object>} retrieved accounts in the order github returned them
+   * @returns {Array<Object>} accounts to export
+   */
+  function readOrderedAccounts(supplied, retrieved) {
+    if (!Array.isArray(supplied) || supplied.length !== retrieved.length) return retrieved;
+    const expected = new Set(retrieved.map((account) => account.login.toLowerCase()));
+    for (const account of supplied) {
+      const login = typeof account?.login === "string" ? account.login.toLowerCase() : null;
+      if (!login || !expected.delete(login)) return retrieved;
+    }
+    return supplied;
+  }
+
+  /**
    * builds deterministic markdown for a completely retrieved network
    * @param {Object} network retrieved network result
+   * @param {Object} options optional caller-ordered lists and the sentence describing them
    * @returns {string} markdown document
    */
-  function buildMarkdown(network) {
+  function buildMarkdown(network, options = {}) {
     if (!network || !network.complete) {
       throw createNetworkError(
         "The complete follower and following lists could not be retrieved, so no export was generated.",
@@ -379,27 +407,39 @@
     }
 
     const login = network.user.login;
-    const notFollowingBack = deriveNotFollowingBack(network);
+    const followers = readOrderedAccounts(options.followers, network.followers.accounts);
+    const following = readOrderedAccounts(options.following, network.following.accounts);
+    // Non-follow-back has no chronology of its own: it is Following minus
+    // Followers, so it inherits whatever order Following is presented in.
+    const notFollowingBack = readOrderedAccounts(
+      options.notFollowingBack,
+      deriveNotFollowingBack({ ...network, following: { ...network.following, accounts: following } })
+    );
     const lines = [
       "# GitHub Network",
       "",
       `**Username:** [${escapeNetworkMarkdown(login)}](${network.user.profileUrl})`,
       "",
-      `**Followers:** ${network.followers.accounts.length}  `,
-      `**Following:** ${network.following.accounts.length}  `,
+      `**Followers:** ${followers.length}  `,
+      `**Following:** ${following.length}  `,
       `**Following who don't follow back:** ${notFollowingBack.length}`,
       "",
     ];
 
-    lines.push(`> ${ORDERING_NOTE}`, "");
+    // One sentence, supplied by whoever decided the order, so the export can never
+    // describe an ordering the interface is not showing.
+    const orderingNote = typeof options.orderingNote === "string" && options.orderingNote.trim()
+      ? options.orderingNote.trim()
+      : ORDERING_NOTE;
+    lines.push(`> ${orderingNote}`, "");
 
     const countNote = buildCountNote(network);
     if (countNote) lines.push(`> ${countNote}`, "");
 
     lines.push("## Followers", "");
-    appendAccountList(lines, network.followers.accounts);
+    appendAccountList(lines, followers);
     lines.push("## Following", "");
-    appendAccountList(lines, network.following.accounts);
+    appendAccountList(lines, following);
     lines.push("## Following who don't follow back", "");
     appendAccountList(lines, notFollowingBack);
 

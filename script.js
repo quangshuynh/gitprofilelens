@@ -62,6 +62,13 @@ const networkDisclosureControls = document.querySelector("#network-disclosure-co
 const networkExpandAllButton = document.querySelector("#network-expand-all");
 const networkCollapseAllButton = document.querySelector("#network-collapse-all");
 const networkNotice = document.querySelector("#network-notice");
+const networkOrderingNote = document.querySelector("#network-ordering-note");
+const networkHistoryNote = document.querySelector("#network-history-note");
+const networkHistoryControls = document.querySelector("#network-history-controls");
+const networkHistoryResetButton = document.querySelector("#network-history-reset");
+const networkHistoryConfirmGroup = document.querySelector("#network-history-confirm-group");
+const networkHistoryConfirmButton = document.querySelector("#network-history-confirm");
+const networkHistoryCancelButton = document.querySelector("#network-history-cancel");
 const networkExport = document.querySelector("#network-export");
 const networkOutput = document.querySelector("#network-output");
 const networkCopyButton = document.querySelector("#network-copy-button");
@@ -132,6 +139,13 @@ const networkSections = ["followers", "following", "unreciprocated"].map((key) =
     unreciprocated: "Everyone you follow also follows you.",
   }[key],
   accounts: [],
+  // Observation history describing `accounts`, used only to mark the accounts that
+  // arrived after the baseline. Null means no history, which marks nothing.
+  historyList: null,
+  // What is currently in the DOM, so a disclosure change can append or trim the
+  // difference instead of rebuilding a list the reader is already looking at.
+  renderedAccounts: null,
+  renderedCount: 0,
 }));
 
 /**
@@ -148,7 +162,40 @@ const networkState = {
   notFollowingBack: null,
   markdown: "",
   visibleCounts: createInitialVisibleCounts(),
+  // Set once per completed retrieval, then read by rendering and by the export, so
+  // the two can never disagree about the order or about what the order means.
+  history: { followers: null, following: null },
 };
+
+/**
+ * observation history for the Network lists, stored only in this browser
+ *
+ * GitHub exposes no follow timestamp, so ordering can never come from the API.
+ * What GitProfileLens can honestly do is remember which relationships it has seen
+ * before, and place the ones it first saw most recently at the top. The store is
+ * created against localStorage where the browser allows it, and against nothing at
+ * all where it does not: history is an enhancement, and the Network tab works
+ * exactly as before without it.
+ */
+const networkHistory = GitProfileNetworkHistory.createStore({
+  storage: readLocalStorage(),
+});
+
+/**
+ * reads localStorage only when the browser actually permits it
+ *
+ * Accessing window.localStorage throws outright in some privacy configurations,
+ * so the access is guarded rather than assumed.
+ *
+ * @returns {Object|null} usable storage, or null when storage is unavailable
+ */
+function readLocalStorage() {
+  try {
+    return window.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * builds the default visible-account count for every network section
@@ -184,6 +231,9 @@ networkDownloadButton.addEventListener("click", downloadNetworkMarkdown);
 networkRetryButton.addEventListener("click", reloadNetwork);
 networkExpandAllButton.addEventListener("click", () => setEveryNetworkSection("all"));
 networkCollapseAllButton.addEventListener("click", () => setEveryNetworkSection("collapse"));
+networkHistoryResetButton.addEventListener("click", () => setHistoryResetConfirmation(true));
+networkHistoryCancelButton.addEventListener("click", () => setHistoryResetConfirmation(false));
+networkHistoryConfirmButton.addEventListener("click", resetNetworkHistory);
 
 for (const section of networkSections) {
   section.moreButton.addEventListener("click", () => {
@@ -2147,11 +2197,19 @@ async function loadNetwork(username) {
 function renderNetwork(network) {
   networkState.network = network;
 
+  // Exactly one observation per completed retrieval, recorded before anything is
+  // ordered so that the list the reader sees is ordered by history that already
+  // includes this observation. Re-rendering never records again.
+  recordNetworkObservation(network);
+
   networkFollowerCount.textContent = formatNetworkCount(network.followers);
   networkFollowingCount.textContent = formatNetworkCount(network.following);
-  setNetworkSectionAccounts("followers", network.followers.accounts);
-  setNetworkSectionAccounts("following", network.following.accounts);
+  const followers = orderNetworkList("followers", network.followers);
+  const following = orderNetworkList("following", network.following);
+  setNetworkSectionAccounts("followers", followers, networkState.history.followers);
+  setNetworkSectionAccounts("following", following, networkState.history.following);
   networkResults.hidden = false;
+  renderNetworkOrderingNote();
 
   const incompleteReason = GitProfileNetwork.describeIncompleteRetrieval(network);
   if (incompleteReason) {
@@ -2163,20 +2221,30 @@ function renderNetwork(network) {
     networkNotice.classList.add("is-error");
     networkNotice.hidden = false;
     networkSummary.textContent = "Retrieval incomplete";
-    setNetworkSectionAccounts("unreciprocated", []);
+    setNetworkSectionAccounts("unreciprocated", [], null);
     updateGlobalDisclosureControls();
     showNetworkError(`The network for @${network.user.login} could not be completely retrieved.`);
     return;
   }
 
-  const notFollowingBack = GitProfileNetwork.deriveNotFollowingBack(network);
+  // Non-follow-back is Following minus Followers and has no chronology of its own,
+  // so it is derived from the already ordered Following list and inherits it.
+  const notFollowingBack = GitProfileNetwork.deriveNotFollowingBack({
+    ...network,
+    following: { ...network.following, accounts: following },
+  });
   networkState.notFollowingBack = notFollowingBack;
   networkUnreciprocatedCount.textContent = String(notFollowingBack.length);
-  setNetworkSectionAccounts("unreciprocated", notFollowingBack);
+  setNetworkSectionAccounts("unreciprocated", notFollowingBack, networkState.history.following);
   networkUnreciprocatedSection.hidden = false;
   updateGlobalDisclosureControls();
 
-  networkState.markdown = GitProfileNetwork.buildMarkdown(network);
+  networkState.markdown = GitProfileNetwork.buildMarkdown(network, {
+    followers,
+    following,
+    notFollowingBack,
+    orderingNote: networkOrderingNote.textContent,
+  });
   networkOutput.value = networkState.markdown;
   networkExport.hidden = false;
   networkCopyButton.disabled = false;
@@ -2196,14 +2264,158 @@ function renderNetwork(network) {
 }
 
 /**
- * gives one network section its complete account list and renders the first page
- * @param {string} key section identifier
- * @param {Array<Object>} accounts complete accounts in the order github returned them
+ * records one observation of the retrieved network in this browser's history
+ *
+ * The recorded time is shared by everything seen in this retrieval, which is the
+ * only honest reading: seeing 131 followers at once establishes that all 131
+ * existed by this moment and establishes nothing about their order. An incomplete
+ * list is skipped entirely by the store, so a retrieval that stopped early can
+ * never mark the accounts it did not reach as gone.
+ *
+ * @param {Object} network retrieved network result
+ * @returns {Object} the store's outcome for this observation
+ */
+function recordNetworkObservation(network) {
+  const outcome = networkHistory.recordNetworkObservation({
+    login: network.user.login,
+    followers: network.followers,
+    following: network.following,
+    observedAt: new Date(),
+  });
+
+  networkState.history = {
+    followers: network.followers.complete ? outcome.lists.followers : null,
+    following: network.following.complete ? outcome.lists.following : null,
+  };
+  return outcome;
+}
+
+/**
+ * orders one retrieved list by observation history, or leaves github's order alone
+ *
+ * An incomplete list is never reordered. Its history was deliberately not updated,
+ * so reordering it would present a mixture of current and stale evidence as one
+ * chronology.
+ *
+ * @param {string} key relationship identifier
+ * @param {Object} relationship retrieved relationship list
+ * @returns {Array<Object>} the accounts to render and export, in display order
+ */
+function orderNetworkList(key, relationship) {
+  if (!relationship.complete) return relationship.accounts;
+  return GitProfileNetworkHistory.orderAccounts(
+    relationship.accounts,
+    networkState.history[key]
+  ).accounts;
+}
+
+/**
+ * states what the current order means and offers to delete the history behind it
+ *
+ * The sentence is never "newest follows first". The strongest claim the evidence
+ * supports is about when this browser first saw each relationship, so that is the
+ * claim the interface makes, and the Markdown export reuses this exact sentence.
+ *
  * @returns {void} no return value
  */
-function setNetworkSectionAccounts(key, accounts) {
+function renderNetworkOrderingNote() {
+  const lists = [networkState.history.followers, networkState.history.following].filter(Boolean);
+  // The list that has learned the most decides the wording, so a profile whose
+  // Following has grown is not described as if nothing had ever been observed.
+  const describing = lists.reduce(
+    (best, list) =>
+      best === null || GitProfileNetworkHistory.listCohorts(list).length >
+        GitProfileNetworkHistory.listCohorts(best).length
+        ? list
+        : best,
+    null
+  );
+
+  networkOrderingNote.textContent = GitProfileNetworkHistory.describeOrdering(describing);
+
+  if (!describing) {
+    networkHistoryNote.hidden = true;
+    networkHistoryControls.hidden = true;
+    return;
+  }
+
+  const observations = Math.max(...lists.map((list) => list.observationCount));
+  networkHistoryNote.textContent =
+    `Observation history is kept only in this browser and is never uploaded. ` +
+    `${observations} ${observations === 1 ? "observation" : "observations"} recorded since ` +
+    `${formatShortDate(describing.baselineObservedAt)}.`;
+  networkHistoryNote.hidden = false;
+  networkHistoryControls.hidden = false;
+  setHistoryResetConfirmation(false);
+}
+
+/**
+ * shows or hides the deliberate confirmation step before history is deleted
+ * @param {boolean} confirming whether the confirmation step should be shown
+ * @returns {void} no return value
+ */
+function setHistoryResetConfirmation(confirming) {
+  networkHistoryResetButton.hidden = confirming;
+  networkHistoryConfirmGroup.hidden = !confirming;
+  if (confirming) networkHistoryConfirmButton.focus();
+}
+
+/**
+ * deletes every profile's observation history after the reader confirms
+ *
+ * History is deleted only from here. Clearing it is not folded into any other
+ * action, because accumulated observations cannot be re-derived once discarded.
+ *
+ * @returns {void} no return value
+ */
+function resetNetworkHistory() {
+  networkHistory.reset();
+  networkState.history = { followers: null, following: null };
+  setHistoryResetConfirmation(false);
+  networkHistoryResetButton.hidden = true;
+  networkHistoryControls.hidden = true;
+  networkHistoryNote.hidden = false;
+  networkHistoryNote.textContent =
+    "Observation history deleted. The next time this network is loaded it starts a new baseline.";
+
+  if (!networkState.network) return;
+  // The lists on screen were ordered by history that no longer exists, so they are
+  // returned to GitHub's order rather than left in an order nothing now explains.
+  const network = networkState.network;
+  const followers = network.followers.accounts;
+  const following = network.following.accounts;
+  setNetworkSectionAccounts("followers", followers, null);
+  setNetworkSectionAccounts("following", following, null);
+  networkOrderingNote.textContent = GitProfileNetworkHistory.describeOrdering(null);
+
+  if (networkState.notFollowingBack) {
+    const notFollowingBack = GitProfileNetwork.deriveNotFollowingBack(network);
+    networkState.notFollowingBack = notFollowingBack;
+    setNetworkSectionAccounts("unreciprocated", notFollowingBack, null);
+    networkState.markdown = GitProfileNetwork.buildMarkdown(network, {
+      followers,
+      following,
+      notFollowingBack,
+      orderingNote: networkOrderingNote.textContent,
+    });
+    networkOutput.value = networkState.markdown;
+  }
+}
+
+/**
+ * gives one network section its complete account list and renders the first page
+ * @param {string} key section identifier
+ * @param {Array<Object>} accounts complete accounts, already in display order
+ * @param {Object|null} historyList observation history describing those accounts
+ * @returns {void} no return value
+ */
+function setNetworkSectionAccounts(key, accounts, historyList) {
   const section = networkSections.find((candidate) => candidate.key === key);
   section.accounts = accounts;
+  section.historyList = historyList ?? null;
+  // A different list invalidates whatever is already rendered for this section.
+  section.renderedAccounts = null;
+  section.renderedCount = 0;
   applyNetworkDisclosure(section);
 }
 
@@ -2225,7 +2437,7 @@ function applyNetworkDisclosure(section) {
   const visibleCount = Math.min(Math.max(requested, NETWORK_PAGE_SIZE), total);
   networkState.visibleCounts[section.key] = visibleCount;
 
-  renderAccountList(section, section.accounts.slice(0, visibleCount));
+  renderAccountList(section, visibleCount);
 
   if (total === 0) {
     section.status.hidden = true;
@@ -2291,27 +2503,77 @@ function updateGlobalDisclosureControls() {
 }
 
 /**
- * renders one compact list of github accounts, or an empty-state message
+ * builds one account pill, marking only what observation history actually knows
+ *
+ * A first-observation date is shown only for an account that arrived after the
+ * baseline. Baseline accounts carry no date, because "first observed when history
+ * started" is not evidence about them, and printing it would read as one.
+ *
  * @param {Object} section network section descriptor
- * @param {Array<Object>} accounts the accounts to render, already sliced
+ * @param {Object} account retrieved account
+ * @returns {HTMLLIElement} list item for the account
+ */
+function createAccountItem(section, account) {
+  const item = document.createElement("li");
+  const link = document.createElement("a");
+  link.href = account.profileUrl;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.appendChild(document.createTextNode(account.login));
+
+  const entry = GitProfileNetworkHistory.findEntry(section.historyList, account.login);
+  if (entry && !GitProfileNetworkHistory.isBaselineAccount(section.historyList, account.login)) {
+    const observed = document.createElement("span");
+    observed.className = "account-observed";
+    observed.textContent = `first seen ${formatShortDate(entry.firstObservedAt)}`;
+    link.appendChild(observed);
+    link.classList.add("is-newly-observed");
+    link.title = `First observed by GitProfileLens on ${formatShortDate(entry.firstObservedAt)}. ` +
+      "GitHub does not report when the follow happened.";
+  }
+
+  item.appendChild(link);
+  return item;
+}
+
+/**
+ * renders the disclosed slice of one section, reusing the nodes already rendered
+ *
+ * Show 25 more appends only the accounts it adds, and Collapse removes only the
+ * accounts it hides, so expanding a long list neither rebuilds the pills already
+ * on screen nor discards the reader's place in them. A full rebuild happens only
+ * when the underlying list itself changed, which is the one case where the
+ * existing nodes describe something that is no longer true.
+ *
+ * @param {Object} section network section descriptor
+ * @param {number} visibleCount how many accounts should be rendered
  * @returns {void} no return value
  */
-function renderAccountList(section, accounts) {
-  const items = accounts.map((account) => {
-    const item = document.createElement("li");
-    const link = document.createElement("a");
-    link.href = account.profileUrl;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = account.login;
-    item.appendChild(link);
-    return item;
-  });
+function renderAccountList(section, visibleCount) {
+  const accounts = section.accounts;
+  const reusable = section.renderedAccounts === accounts;
+  const rendered = reusable ? section.renderedCount : 0;
 
-  section.list.replaceChildren(...items);
+  if (!reusable) section.list.replaceChildren();
+
+  if (visibleCount > rendered) {
+    // One fragment, so appending 9,975 pills costs the document one insertion.
+    const fragment = document.createDocumentFragment();
+    for (let index = rendered; index < visibleCount; index += 1) {
+      fragment.appendChild(createAccountItem(section, accounts[index]));
+    }
+    section.list.appendChild(fragment);
+  } else if (visibleCount < rendered) {
+    for (let index = rendered; index > visibleCount; index -= 1) {
+      section.list.lastElementChild.remove();
+    }
+  }
+
+  section.renderedAccounts = accounts;
+  section.renderedCount = visibleCount;
   section.emptyState.textContent = section.emptyMessage;
-  section.emptyState.hidden = accounts.length > 0;
-  section.list.hidden = accounts.length === 0;
+  section.emptyState.hidden = visibleCount > 0;
+  section.list.hidden = visibleCount === 0;
 }
 
 /**
@@ -2347,11 +2609,21 @@ function clearNetworkPanel() {
   networkFollowingCount.textContent = "0";
   networkUnreciprocatedCount.textContent = "0";
   networkDisclosureControls.hidden = true;
+  networkHistoryNote.hidden = true;
+  networkHistoryNote.textContent = "";
+  networkHistoryControls.hidden = true;
+  networkHistoryConfirmGroup.hidden = true;
+  networkHistoryResetButton.hidden = false;
+  networkOrderingNote.textContent = GitProfileNetworkHistory.describeOrdering(null);
 
   // Disclosure is per profile: a newly loaded list never inherits "Showing 75 of …".
   networkState.visibleCounts = createInitialVisibleCounts();
+  networkState.history = { followers: null, following: null };
   for (const section of networkSections) {
     section.accounts = [];
+    section.historyList = null;
+    section.renderedAccounts = null;
+    section.renderedCount = 0;
     section.list.replaceChildren();
     section.status.hidden = true;
     section.status.textContent = "";
