@@ -2016,6 +2016,7 @@ async function shareResult() {
   if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
   const shareText = GitProfileShare.buildShareText(appState.user.login, profileScore.overall);
+  
   if (typeof navigator.share === "function") {
     try {
       await navigator.share({ title: "My GitProfileLens score", text: shareText });
@@ -2025,11 +2026,14 @@ async function shareResult() {
       if (error.name === "AbortError") return;
     }
   }
+  
   try {
     await navigator.clipboard.writeText(shareText);
     showTemporaryButtonText(shareButton, "Copied!");
   } catch {
-    showTemporaryButtonText(shareButton, "Copy failed", true);
+    // We MUST use showError here (not showTemporaryButtonText) because the 
+    // existing browser test expects the #status element to receive the .error class on failure.
+    showError("Could not share automatically. Copy the audit URL from the address bar.");
   }
 }
 
@@ -3760,4 +3764,8 @@ function setLoading(isLoading) {
 function showError(message) {
   statusEl.classList.add("error");
   statusEl.textContent = message;
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { showTemporaryButtonText };
 }

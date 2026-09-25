@@ -1,152 +1,195 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-// Minimal DOM mock to test the accessibility function without a full browser environment
-const mockLiveRegion = {
-  id: "",
-  attributes: {},
-  style: {},
-  textContent: "",
-  setAttribute: function (key, value) {
-    this.attributes[key] = value;
-  },
+// ---- Minimal browser environment so the real script.js can load under Node ----
+
+function createMockElement(tag = "div") {
+  return {
+    tagName: tag.toUpperCase(),
+    textContent: "",
+    value: "",
+    hidden: false,
+    disabled: false,
+    id: "",
+    className: "",
+    dataset: {},
+    attributes: {},
+    children: [],
+    listeners: {},
+    style: { setProperty: function () {} },
+    classList: {
+      add: function () {},
+      remove: function () {},
+      toggle: function () {},
+      contains: function () { return false; },
+    },
+    setAttribute: function (key, value) { this.attributes[key] = String(value); },
+    getAttribute: function (key) { return key in this.attributes ? this.attributes[key] : null; },
+    removeAttribute: function (key) { delete this.attributes[key]; },
+    addEventListener: function (type, handler) { this.listeners[type] = handler; },
+    removeEventListener: function () {},
+    appendChild: function (child) { this.children.push(child); return child; },
+    replaceChildren: function () { this.children = []; },
+    querySelector: function () { return null; },
+    querySelectorAll: function () { return []; },
+    closest: function () { return null; },
+    focus: function () { global.document.activeElement = this; },
+    click: function () { if (this.listeners.click) return this.listeners.click(); },
+    scrollIntoView: function () {},
+    toggleAttribute: function () {},
+    insertBefore: function (node) { this.children.push(node); return node; },
+    remove: function () {},
+  };
+}
+
+const elementsById = new Map();
+const selectorRegistry = new Map();
+const body = createMockElement("body");
+body.appendChild = function (child) {
+  this.children.push(child);
+  if (child.id) elementsById.set(child.id, child);
+  return child;
 };
 
-const mockBody = {
-  children: [],
-  appendChild: function (child) {
-    this.children.push(child);
+global.document = {
+  activeElement: null,
+  body,
+  documentElement: createMockElement("html"),
+  getElementById: (id) => elementsById.get(id) || null,
+  createElement: (tag) => createMockElement(tag),
+  createDocumentFragment: () => createMockElement("fragment"),
+  querySelector: (selector) => {
+    if (!selectorRegistry.has(selector)) selectorRegistry.set(selector, createMockElement());
+    return selectorRegistry.get(selector);
   },
+  querySelectorAll: () => [],
 };
 
-const mockDocument = {
-  elements: {},
-  getElementById: function (id) {
-    return this.elements[id] || null;
-  },
-  createElement: function (tag) {
-    if (tag === "div") return mockLiveRegion;
-    return {};
-  },
-  body: mockBody,
-};
-
-// Inject mocks into global scope
-global.document = mockDocument;
-
-// Mock setTimeout to NOT execute immediately, so we can test the intermediate state
-let timeoutCallbacks = [];
+// window.setTimeout queues instead of running, so tests control when restore happens
+let pendingTimeouts = [];
 global.window = {
-  setTimeout: (fn, delay) => {
-    const id = timeoutCallbacks.length + 1;
-    timeoutCallbacks.push({ fn, id });
-    return id;
-  },
-  clearTimeout: (id) => {
-    timeoutCallbacks = timeoutCallbacks.filter((cb) => cb.id !== id);
-  },
+  setTimeout: (fn) => { pendingTimeouts.push(fn); return pendingTimeouts.length; },
+  clearTimeout: () => {},
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  scrollTo: () => {},
+  location: { href: "http://localhost/", search: "" },
+};
+global.history = { replaceState: () => {} };
+global.CSS = { escape: (value) => value };
+global.Image = class { set src(value) {} };
+
+let clipboardWriteText = async () => {};
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: { clipboard: { writeText: (text) => clipboardWriteText(text) } },
+});
+
+global.fetch = async () => ({ ok: false, json: async () => ({}) });
+
+// Stubs for the sibling browser scripts script.js expects as globals
+global.GitProfileNetworkHistory = {
+  createStore: () => ({}),
+  orderAccounts: (accounts) => ({ accounts }),
+  listCohorts: () => [],
+  describeOrdering: () => "",
+  findEntry: () => null,
+  isBaselineAccount: () => false,
+};
+global.GitHubAudit = {
+  parseUsernameFromSearch: () => null,
+  transformRepository: (repository) => repository,
+  scoreRepository: () => ({}),
+  scoreProfile: () => ({ overall: 0, categories: {} }),
+  generateRecommendations: () => [],
+  formatReadmeStatus: () => "unknown",
+};
+global.GitProfileShare = { buildShareText: () => "", buildScoreCardData: () => ({}) };
+global.GitProfilePinnedOptimizer = { optimizePinnedSet: () => ({ recommended: [], excluded: [], privateCandidates: [], currentPinned: [], changes: [] }) };
+global.GitProfileNetwork = {
+  validateUsername: () => ({ ok: true }),
+  fetchNetwork: async () => ({}),
+  describeIncompleteRetrieval: () => null,
+  deriveNotFollowingBack: () => [],
+  buildMarkdown: () => "",
+  describeCountDifference: () => null,
+  withAccountRemoved: () => ({ removed: false }),
+  buildFilename: () => "network.md",
 };
 
-// Helper to flush all pending timeouts
-function flushTimeouts() {
-  const callbacks = [...timeoutCallbacks];
-  timeoutCallbacks = [];
-  for (const { fn } of callbacks) {
-    fn();
-  }
+// ---- Load the REAL production script (wires real listeners onto the mock DOM) ----
+require("../script.js");
+
+function resetState() {
+  elementsById.clear();
+  body.children = [];
+  pendingTimeouts = [];
+  const copyButton = document.querySelector("#copy-button");
+  copyButton.textContent = "Copy";
+  return copyButton;
 }
 
-// Define the function exactly as it appears in script.js to test its logic in isolation
-function showTemporaryButtonText(button, temporaryText, isError = false) {
-  const originalText = button.textContent;
-  button.textContent = temporaryText;
+test("copy button gives accessible success feedback on keyboard activation", async () => {
+  const copyButton = resetState();
+  const output = document.querySelector("#output");
+  output.value = "markdown content that must not change";
 
-  let liveRegion = document.getElementById("copy-status-live");
-  if (!liveRegion) {
-    liveRegion = document.createElement("div");
-    liveRegion.id = "copy-status-live";
-    liveRegion.setAttribute("aria-live", "polite");
-    liveRegion.setAttribute("aria-atomic", "true");
-    Object.assign(liveRegion.style, {
-      position: "absolute",
-      width: "1px",
-      height: "1px",
-      padding: "0",
-      margin: "-1px",
-      overflow: "hidden",
-      clip: "rect(0, 0, 0, 0)",
-      whiteSpace: "nowrap",
-      border: "0",
-    });
-    document.body.appendChild(liveRegion);
-    document.elements["copy-status-live"] = liveRegion;
-  }
+  let captured = null;
+  clipboardWriteText = async (text) => { captured = text; };
 
-  liveRegion.textContent = isError ? `Failed to copy: ${temporaryText}` : temporaryText;
+  // A keyboard user tabs to the button (focus) and activates it. On a native
+  // <button>, Enter/Space fires the click handler, which is what we invoke here.
+  copyButton.focus();
+  assert.equal(typeof copyButton.listeners.click, "function", "copy button must have a click handler");
+  await copyButton.listeners.click();
 
-  window.setTimeout(function restoreButtonText() {
-    button.textContent = originalText;
-    window.setTimeout(() => {
-      liveRegion.textContent = "";
-    }, 500);
-  }, 1200);
-}
+  assert.equal(captured, "markdown content that must not change", "clipboard receives the export");
+  assert.equal(copyButton.textContent, "Copied!", "visible success text");
+  assert.equal(global.document.activeElement, copyButton, "focus stays on the copy button");
+  assert.equal(output.value, "markdown content that must not change", "Markdown output unchanged");
 
-test("showTemporaryButtonText creates aria-live region and announces success", () => {
-  // Reset mock state
-  document.elements = {};
-  document.body.children = [];
-  timeoutCallbacks = [];
-  const mockButton = { textContent: "Copy" };
-  
-  showTemporaryButtonText(mockButton, "Copied!", false);
-
-  assert.equal(mockButton.textContent, "Copied!");
-  
   const liveRegion = document.getElementById("copy-status-live");
-  assert.ok(liveRegion, "aria-live region should be created");
-  assert.equal(liveRegion.attributes["aria-live"], "polite");
-  assert.equal(liveRegion.attributes["aria-atomic"], "true");
-  assert.equal(liveRegion.textContent, "Copied!");
+  assert.ok(liveRegion, "aria-live region created");
+  assert.equal(liveRegion.getAttribute("aria-live"), "polite");
+  assert.equal(liveRegion.getAttribute("aria-atomic"), "true");
+  assert.equal(liveRegion.textContent, "Copied!", "screen reader announcement");
 });
 
-test("showTemporaryButtonText announces error state correctly", () => {
-  // Reset mock state
-  document.elements = {};
-  document.body.children = [];
-  timeoutCallbacks = [];
-  const mockButton = { textContent: "Copy" };
+test("copy button gives accessible error feedback on clipboard rejection", async () => {
+  const copyButton = resetState();
+  const output = document.querySelector("#output");
+  output.value = "markdown content that must not change";
 
-  showTemporaryButtonText(mockButton, "Copy failed", true);
+  clipboardWriteText = async () => { throw new Error("Clipboard access denied"); };
 
-  assert.equal(mockButton.textContent, "Copy failed");
-  
+  copyButton.focus();
+  await copyButton.listeners.click();
+
+  assert.equal(copyButton.textContent, "Copy failed", "visible error text, not color alone");
+  assert.equal(global.document.activeElement, copyButton, "focus stays on the copy button");
+  assert.equal(output.value, "markdown content that must not change", "Markdown output unchanged");
+
   const liveRegion = document.getElementById("copy-status-live");
-  assert.ok(liveRegion, "aria-live region should be created");
-  assert.equal(liveRegion.textContent, "Failed to copy: Copy failed");
+  assert.ok(liveRegion, "aria-live region created");
+  assert.equal(liveRegion.textContent, "Failed to copy: Copy failed", "screen reader error announcement");
 });
 
-test("showTemporaryButtonText restores original text after timeout", () => {
-  // Reset mock state
-  document.elements = {};
-  document.body.children = [];
-  timeoutCallbacks = [];
-  const mockButton = { textContent: "Copy Markdown" };
+test("button text restores and the live region clears after the timeout", async () => {
+  const copyButton = resetState();
+  document.querySelector("#output").value = "x";
+  clipboardWriteText = async () => {};
 
-  showTemporaryButtonText(mockButton, "Copied!", false);
+  copyButton.focus();
+  await copyButton.listeners.click();
+  assert.equal(copyButton.textContent, "Copied!");
 
-  // Verify intermediate state
-  assert.equal(mockButton.textContent, "Copied!");
-  
-  // Flush the 1200ms timeout
-  flushTimeouts();
-  
-  // Verify restoration
-  assert.equal(mockButton.textContent, "Copy Markdown");
-  
-  // Flush the nested 500ms timeout that clears the live region
-  flushTimeouts();
-  
-  const liveRegion = document.getElementById("copy-status-live");
-  assert.equal(liveRegion.textContent, "");
+  // Simulate the 1200ms restore timeout elapsing
+  const pending = pendingTimeouts;
+  pendingTimeouts = [];
+  for (const fn of pending) fn();
+
+  assert.equal(copyButton.textContent, "Copy", "button text restores");
+
+  // The nested 500ms clear runs on the real timer
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(document.getElementById("copy-status-live").textContent, "", "live region clears");
 });
