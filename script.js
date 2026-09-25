@@ -2033,14 +2033,6 @@ async function shareResult() {
   }
 }
 
-  try {
-    await navigator.clipboard.writeText(shareText);
-    showTemporaryButtonText(shareButton, "Copied!");
-  } catch {
-    showError("Could not share automatically. Copy the audit URL from the address bar.");
-  }
-}
-
 /**
  * downloads a social-friendly PNG score card generated entirely in the browser
  * @returns {Promise<void>} resolves after the card image has been prepared
