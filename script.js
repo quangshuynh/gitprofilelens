@@ -2016,7 +2016,6 @@ async function shareResult() {
   if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
   const shareText = GitProfileShare.buildShareText(appState.user.login, profileScore.overall);
-
   if (typeof navigator.share === "function") {
     try {
       await navigator.share({ title: "My GitProfileLens score", text: shareText });
@@ -2026,6 +2025,13 @@ async function shareResult() {
       if (error.name === "AbortError") return;
     }
   }
+  try {
+    await navigator.clipboard.writeText(shareText);
+    showTemporaryButtonText(shareButton, "Copied!");
+  } catch {
+    showTemporaryButtonText(shareButton, "Copy failed", true);
+  }
+}
 
   try {
     await navigator.clipboard.writeText(shareText);
@@ -2209,9 +2215,9 @@ async function copyMarkdown() {
   if (!output.value) return;
   try {
     await navigator.clipboard.writeText(output.value);
-    showTemporaryButtonText(copyButton, "Copied");
+    showTemporaryButtonText(copyButton, "Copied!");
   } catch {
-    showError("Could not copy automatically. Select the Markdown and copy it manually.");
+    showTemporaryButtonText(copyButton, "Copy failed", true);
   }
 }
 
@@ -3618,9 +3624,9 @@ async function copyNetworkMarkdown() {
   if (!networkState.markdown) return;
   try {
     await navigator.clipboard.writeText(networkState.markdown);
-    showTemporaryButtonText(networkCopyButton, "Copied");
+    showTemporaryButtonText(networkCopyButton, "Copied!");
   } catch {
-    showNetworkError("Could not copy automatically. Select the Markdown and copy it manually.");
+    showTemporaryButtonText(networkCopyButton, "Copy failed", true);
   }
 }
 
@@ -3642,16 +3648,49 @@ function downloadNetworkMarkdown() {
 }
 
 /**
- * temporarily changes button text to acknowledge an action
+ * temporarily changes button text to acknowledge an action and announces it to screen readers
  * @param {HTMLButtonElement} button button to update
  * @param {string} temporaryText temporary button label
+ * @param {boolean} isError whether this is an error state
  * @returns {void} no return value
  */
-function showTemporaryButtonText(button, temporaryText) {
+function showTemporaryButtonText(button, temporaryText, isError = false) {
   const originalText = button.textContent;
   button.textContent = temporaryText;
+
+  // Ensure an aria-live region exists for screen reader announcements
+  let liveRegion = document.getElementById("copy-status-live");
+  if (!liveRegion) {
+    liveRegion = document.createElement("div");
+    liveRegion.id = "copy-status-live";
+    liveRegion.setAttribute("aria-live", "polite");
+    liveRegion.setAttribute("aria-atomic", "true");
+    // Visually hide the region but keep it fully accessible to screen readers
+    Object.assign(liveRegion.style, {
+      position: "absolute",
+      width: "1px",
+      height: "1px",
+      padding: "0",
+      margin: "-1px",
+      overflow: "hidden",
+      clip: "rect(0, 0, 0, 0)",
+      whiteSpace: "nowrap",
+      border: "0",
+    });
+    document.body.appendChild(liveRegion);
+  }
+
+  // Announce the status to screen readers
+  liveRegion.textContent = isError
+    ? `Failed to copy: ${temporaryText}`
+    : temporaryText;
+
   window.setTimeout(function restoreButtonText() {
     button.textContent = originalText;
+    // Clear the live region after a short delay so it doesn't persist in the accessibility tree
+    setTimeout(() => {
+      liveRegion.textContent = "";
+    }, 500);
   }, 1200);
 }
 
