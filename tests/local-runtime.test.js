@@ -25,7 +25,7 @@ const projectRoot = path.resolve(__dirname, "..");
 const clientSource = fs.readFileSync(path.join(projectRoot, "script.js"), "utf8");
 const graphqlResponse = {
   data: {
-    user: {
+    repositoryOwner: { __typename: "User",
       pinnedItems: { nodes: [{ name: "portfolio" }] },
       repositories: {
         pageInfo: { hasNextPage: false, endCursor: null },

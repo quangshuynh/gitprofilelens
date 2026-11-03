@@ -68,7 +68,7 @@ function jsonResponse(status, body, headers = {}) {
 function graphqlPage(nodes, pageInfo = { hasNextPage: false, endCursor: null }, pinned = []) {
   return {
     data: {
-      user: {
+      repositoryOwner: { __typename: "User",
         pinnedItems: { nodes: pinned },
         repositories: { pageInfo, nodes },
       },
@@ -257,9 +257,9 @@ test("a GraphQL rate limit reported with HTTP 200 is still a rate limit", async 
 
 test("a malformed GraphQL connection is a safe upstream error, not a crash", async () => {
   for (const body of [
-    { data: { user: { pinnedItems: { nodes: [] }, repositories: null } } },
-    { data: { user: { pinnedItems: { nodes: [] }, repositories: { pageInfo: { hasNextPage: false }, nodes: "nope" } } } },
-    { data: { user: { pinnedItems: null, repositories: { pageInfo: { hasNextPage: false }, nodes: [] } } } },
+    { data: { repositoryOwner: { __typename: "User", pinnedItems: { nodes: [] }, repositories: null } } },
+    { data: { repositoryOwner: { __typename: "User", pinnedItems: { nodes: [] }, repositories: { pageInfo: { hasNextPage: false }, nodes: "nope" } } } },
+    { data: { repositoryOwner: { __typename: "User", pinnedItems: null, repositories: { pageInfo: { hasNextPage: false }, nodes: [] } } } },
   ]) {
     await assert.rejects(
       fetchGitHubMetadata("example", "token", async () => jsonResponse(200, body)),
@@ -305,12 +305,12 @@ test("report audits a zero-repository account and reports it as empty", async ()
   assert.deepEqual(result.body.coverage, { state: "empty", reported_repositories: 0, retrieved_repositories: 0 });
 });
 
-test("an organization GraphQL cannot resolve as a user fails safely instead of reporting an empty account", async () => {
-  // GitHub's GraphQL user field does not resolve organizations. The report must
-  // not turn that into a successful response claiming the account is empty.
+test("an account GraphQL cannot resolve fails safely instead of reporting an empty account", async () => {
+  // A failed account lookup must not turn into a successful response claiming
+  // the account is empty. Organization support is covered in organization-audit.
   const result = await runReport(reportFetch({
     profile: { login: "example", type: "Organization", public_repos: 0 },
-    graphql: { data: { user: null }, errors: [{ type: "NOT_FOUND", path: ["user"], message: "Could not resolve to a User with the login of 'example'." }] },
+    graphql: { data: { repositoryOwner: null }, errors: [{ type: "NOT_FOUND", path: ["repositoryOwner"], message: "Could not resolve to a RepositoryOwner with the login of 'example'." }] },
   }));
   assert.equal(result.status, 502);
   assert.equal(result.body.repositories, undefined);

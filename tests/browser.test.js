@@ -3084,13 +3084,134 @@ test("an empty organization is audited as empty even without README metadata", {
     const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
     await mockGithubRequests(page, [], { profile: { type: "Organization", public_repos: 0 } });
     await page.route("**/api/pinned-repositories?username=example", (route) => route.fulfill({ status: 502, json: { error: "GitHub could not return repository metadata." } }));
-    await page.route("**/api/report?user=example", (route) => route.fulfill({ status: 502, json: { error: "GitHub could not generate the report." } }));
+    let reportRequests = 0;
+    await page.route("**/api/report?user=example", (route) => {
+      reportRequests += 1;
+      route.fulfill({ status: 502, json: { error: "GitHub could not generate the report." } });
+    });
     await page.goto(`${baseUrl}/?user=example`);
     await page.locator("#result-section").waitFor({ state: "visible" });
-    assert.match(await page.locator("#status").innerText(), /no public repositories to audit/i);
+    assert.match(await page.locator("#status").innerText(), /This organization has no public repositories to audit/i);
     assert.equal(await page.locator("#overall-score").innerText(), "Not scored");
+    // An empty organization has no score, so nothing is labelled partial.
+    assert.equal(await page.locator("#score-completeness").isHidden(), true);
+    assert.equal(await page.locator("#profile-type").innerText(), "Organization");
     await page.getByRole("tab", { name: "Repositories" }).click();
-    assert.match(await page.locator("#contributions-section").innerText(), /could not be retrieved/i);
+    // Organizations cannot author pull requests: contributions are not applicable,
+    // and the report request that would look for them is never made.
+    assert.match(await page.locator("#contributions-section").innerText(), /not applicable to organizations/i);
+    assert.doesNotMatch(await page.locator("#contributions-section").innerText(), /could not be retrieved/i);
+    assert.equal(reportRequests, 0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an organization audit is identified as an organization with its public description", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const browserErrors = [];
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+    await mockGithubRequests(page, [repository, secondRepository], { profile: { type: "Organization", name: "Example Labs", public_repos: 2 } });
+    await page.route("**/api/pinned-repositories?username=example", (route) => route.fulfill({
+      json: {
+        repositories: [repository.name],
+        readmes: { [repository.name]: readme, [secondRepository.name]: readme },
+        account: { type: "Organization", name: "Example Labs", description: "Open tools for portfolio review.", profileReadme: true },
+      },
+    }));
+    let reportRequests = 0;
+    await page.route("**/api/report?user=example", (route) => {
+      reportRequests += 1;
+      route.fulfill({ json: { contributed_repositories: [] } });
+    });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+
+    assert.equal(await page.locator("#profile-name").innerText(), "Example Labs");
+    assert.equal(await page.locator("#profile-type").innerText(), "Organization");
+    assert.equal(await page.locator("#profile-description").innerText(), "Open tools for portfolio review.");
+    // The whole organization name is used, never shortened to a "first name".
+    assert.match(await page.locator("#profile-insight").innerText(), /^Example Labs's portfolio snapshot: 2 public projects/);
+    assert.match(await page.locator("#overall-score").innerText(), /^\d+$/);
+    assert.equal(await page.locator("#score-completeness").isHidden(), true);
+    assert.equal(await page.locator("#share-button").isVisible(), true);
+    assert.equal(reportRequests, 0);
+    assert.deepEqual(browserErrors, []);
+
+    // A user audit afterwards drops every organization-only detail.
+    await mockGithubRequests(page, [repository], { login: "second", profile: { type: "User", name: "Second Person" } });
+    await page.evaluate(() => loadProfile("second"));
+    await page.locator("#profile-type").filter({ hasText: /^User$/ }).waitFor();
+    assert.equal(await page.locator("#profile-description").isHidden(), true);
+    assert.match(await page.locator("#profile-insight").innerText(), /^Second's portfolio snapshot/);
+    await page.getByRole("tab", { name: "Repositories" }).click();
+    assert.doesNotMatch(await page.locator("#contributions-section").innerText(), /not applicable/i);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a partial audit labels its score as partial everywhere the score appears", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1000, height: 800 } });
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
+    const page = await context.newPage();
+    await page.addInitScript(() => { Object.defineProperty(navigator, "share", { value: undefined, configurable: true }); });
+    // GitHub reports more repositories than it returned, and README metadata failed.
+    await mockGithubRequests(page, [repository, secondRepository], { profile: { public_repos: 5 } });
+    await page.route("**/api/pinned-repositories?username=example", (route) => route.fulfill({ status: 502, json: { error: "GitHub could not return repository metadata." } }));
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+
+    const note = page.locator("#score-completeness");
+    assert.equal(await note.isVisible(), true);
+    assert.equal(await note.getAttribute("role"), "note");
+    const text = await note.innerText();
+    assert.match(text, /^Partial audit: it covers 2 of 5 public repositories/);
+    assert.match(text, /README and pinned data could not be verified/);
+    assert.match(text, /should not be compared with complete audits/);
+    assert.match(await page.locator("#overall-score").getAttribute("aria-label"), /out of 100, partial audit$/);
+
+    await page.locator("#share-button").click();
+    const shared = await page.evaluate(() => navigator.clipboard.readText());
+    assert.match(shared, /on a partial GitProfileLens audit/);
+    assert.doesNotMatch(shared, /What's your score/);
+
+    // A complete audit afterwards removes the label.
+    await mockGithubRequests(page, [repository, secondRepository], { login: "second", profile: { public_repos: 2 } });
+    await page.evaluate(() => loadProfile("second"));
+    await page.locator("#status").filter({ hasText: /including 1 profile pins/ }).waitFor();
+    assert.equal(await note.isHidden(), true);
+    assert.equal(await page.locator("#overall-score").getAttribute("aria-label"), null);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("organization identity and partial-score notes fit a mobile viewport", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 375, height: 740 } });
+    await mockGithubRequests(page, [repository, secondRepository], { profile: { type: "Organization", name: "Example Laboratories International", public_repos: 9 } });
+    await page.route("**/api/pinned-repositories?username=example", (route) => route.fulfill({
+      json: {
+        repositories: [],
+        readmes: { [repository.name]: readme, [secondRepository.name]: readme },
+        account: { type: "Organization", name: "Example Laboratories International", description: "A deliberately long organization description that has to wrap cleanly on a narrow phone screen without overflowing.", profileReadme: null },
+      },
+    }));
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#score-completeness").isVisible(), true);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert.equal(overflow, 0);
+    for (const selector of ["#profile-description", "#profile-type", "#score-completeness"]) {
+      const box = await page.locator(selector).boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= 375, `${selector} stays inside the viewport`);
+    }
   } finally {
     await browser.close();
   }
