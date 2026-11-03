@@ -150,6 +150,17 @@
       },
       "recommendations": [
         {
+          "key": "descriptions:add-the-problem-solved-6a49",
+          "severity": "high",
+          "category": "Descriptions",
+          "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
+          "reason": "Description is too generic to distinguish the project.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "notes-app"
+          ]
+        },
+        {
           "key": "descriptions:add-one-sentence-stating-a56d",
           "severity": "high",
           "category": "Descriptions",
@@ -169,17 +180,6 @@
           "repositoryCount": 1,
           "repositorySample": [
             "scripts"
-          ]
-        },
-        {
-          "key": "descriptions:add-the-problem-solved-6a49",
-          "severity": "high",
-          "category": "Descriptions",
-          "action": "Add the problem solved, key behavior, and relevant stack instead of only naming the project type.",
-          "reason": "Description is too generic to distinguish the project.",
-          "repositoryCount": 1,
-          "repositorySample": [
-            "notes-app"
           ]
         },
         {
@@ -366,8 +366,8 @@
           "repositoryCount": 3,
           "repositorySample": [
             "hookshot",
-            "dotpath",
-            "chronograph"
+            "chronograph",
+            "dotpath"
           ]
         }
       ]
@@ -509,14 +509,14 @@
           ]
         },
         {
-          "key": "discoverability:add-an-appropriate-license-80a4",
+          "key": "descriptions:add-concrete-context-so-04e6",
           "severity": "medium",
-          "category": "Discoverability",
-          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
-          "reason": "Repository has no detected license.",
+          "category": "Descriptions",
+          "action": "Add concrete context so the purpose is clear without opening the repository.",
+          "reason": "Descriptions are shorter than 30 characters.",
           "repositoryCount": 3,
           "repositorySample": [
-            "pytorch-experiments",
+            "fastcache",
             "tokenizer_rs",
             "vector-index"
           ]
@@ -713,28 +713,6 @@
           ]
         },
         {
-          "key": "repository-presentation:shorten-the-name-so-fc8b",
-          "severity": "medium",
-          "category": "Repository presentation",
-          "action": "Shorten the name so it is easier to scan, remember, and type.",
-          "reason": "Repository name exceeds 50 characters.",
-          "repositoryCount": 1,
-          "repositorySample": [
-            "tiling-algorithms-reference-implementations-and-notes"
-          ]
-        },
-        {
-          "key": "readme-quality:add-clearly-labeled-sections-526b",
-          "severity": "medium",
-          "category": "README quality",
-          "action": "Add clearly labeled sections so visitors can understand, install, and use the project quickly.",
-          "reason": "README is missing clear installation or setup, usage guidance.",
-          "repositoryCount": 1,
-          "repositorySample": [
-            "tiling-algorithms-reference-implementations-and-notes"
-          ]
-        },
-        {
           "key": "discoverability:add-three-to-five-4891",
           "severity": "medium",
           "category": "Discoverability",
@@ -743,6 +721,28 @@
           "repositoryCount": 1,
           "repositorySample": [
             "tessellate-web"
+          ]
+        },
+        {
+          "key": "discoverability:add-an-appropriate-license-80a4",
+          "severity": "medium",
+          "category": "Discoverability",
+          "action": "Add an appropriate license if you intend others to use or contribute to the project.",
+          "reason": "Repository has no detected license.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "tessellate-web"
+          ]
+        },
+        {
+          "key": "repository-presentation:shorten-the-name-so-fc8b",
+          "severity": "medium",
+          "category": "Repository presentation",
+          "action": "Shorten the name so it is easier to scan, remember, and type.",
+          "reason": "Repository name exceeds 50 characters.",
+          "repositoryCount": 1,
+          "repositorySample": [
+            "tiling-algorithms-reference-implementations-and-notes"
           ]
         }
       ]

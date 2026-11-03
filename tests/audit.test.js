@@ -339,7 +339,7 @@ test("profile scoring is deterministic, order-independent, finite, and bounded",
   }
 });
 
-test("empty profiles return a zero presentation score without throwing", () => {
+test("empty profiles return placeholder zeros marked as not evaluated", () => {
   assert.deepEqual(scoreProfile([]), {
     overall: 0,
     categories: {
@@ -350,6 +350,7 @@ test("empty profiles return a zero presentation score without throwing", () => {
       maintenance: 0,
       focus: 0,
     },
+    evaluated: false,
   });
 });
 

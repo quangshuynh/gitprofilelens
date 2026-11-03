@@ -204,6 +204,7 @@ test("one README failure returns neutral unknown metadata and retries transient 
     });
     assert.deepEqual(result.body.metadata, {
       complete: false,
+      repositories_complete: true,
       unavailable_readmes: 1,
       issues: { github_5xx: 1 },
     });

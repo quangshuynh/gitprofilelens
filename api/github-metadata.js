@@ -1,4 +1,7 @@
 const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
+// 100 pages of 100 repositories. A cursor GitHub never stops returning must not
+// spend the server token's budget forever.
+const MAX_METADATA_PAGES = 100;
 
 class GitHubRequestError extends Error {
   constructor(message, status = 502) {
@@ -13,8 +16,15 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
   let pinnedRepositories;
   let cursor = null;
   let firstPage = true;
+  const seenCursors = new Set();
 
-  while (true) {
+  for (let page = 1; ; page += 1) {
+    if (page > MAX_METADATA_PAGES) {
+      throw new GitHubRequestError(
+        "GitHub returned more repository metadata pages than GitProfileLens can retrieve."
+      );
+    }
+
     let githubResponse;
 
     try {
@@ -73,7 +83,21 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
       );
     }
 
-    if (!githubResponse.ok || data.errors) {
+    // GraphQL reports its own rate limit inside a 200 response.
+    if (Array.isArray(data?.errors) && data.errors.some((error) => error?.type === "RATE_LIMITED")) {
+      console.error("GitHub GraphQL rate limit reached", {
+        username,
+        status: githubResponse.status,
+        errors: data.errors,
+      });
+
+      throw new GitHubRequestError(
+        "GitHub API rate limit reached.",
+        429
+      );
+    }
+
+    if (!githubResponse.ok || data?.errors) {
       console.error("GitHub GraphQL metadata request failed", {
         username,
         status: githubResponse.status,
@@ -86,7 +110,7 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
       );
     }
 
-    if (!data.data?.user) {
+    if (!data?.data?.user) {
       throw new GitHubRequestError(
         "GitHub user not found.",
         404
@@ -94,14 +118,25 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
     }
 
     const repositoryConnection = data.data.user.repositories;
+    const pinnedNodes = data.data.user.pinnedItems?.nodes;
 
-    if (firstPage) {
-      pinnedRepositories = data.data.user.pinnedItems.nodes.map(
-        (repository) => repository.name
+    if (!Array.isArray(repositoryConnection?.nodes) || (firstPage && !Array.isArray(pinnedNodes))) {
+      throw new GitHubRequestError(
+        "GitHub returned an invalid metadata response."
       );
     }
 
-    readmes.push(...repositoryConnection.nodes);
+    if (firstPage) {
+      pinnedRepositories = pinnedNodes
+        .filter((repository) => isPublicOwnedPin(repository, username))
+        .map((repository) => repository.name);
+    }
+
+    // A node GitHub could not resolve is null. It carries no README evidence, and
+    // the repository it stood for is then scored as unverified, not as missing.
+    readmes.push(...repositoryConnection.nodes.filter(
+      (repository) => typeof repository?.name === "string"
+    ));
     firstPage = false;
 
     const pageInfo = repositoryConnection.pageInfo;
@@ -110,12 +145,13 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
       break;
     }
 
-    if (!pageInfo.endCursor) {
+    if (!pageInfo.endCursor || seenCursors.has(pageInfo.endCursor)) {
       throw new GitHubRequestError(
         "GitHub returned invalid repository pagination metadata."
       );
     }
 
+    seenCursors.add(pageInfo.endCursor);
     cursor = pageInfo.endCursor;
   }
 
@@ -123,6 +159,25 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
     pinnedRepositories,
     readmes: Object.fromEntries(readmes.map(getReadmeEntry)),
   };
+}
+
+/**
+ * keeps a pinned item only when it is a public repository this account owns
+ *
+ * Pins are matched to owned repositories by name. A pin of someone else's
+ * repository would otherwise mark an unrelated owned repository of the same name
+ * as pinned, and a private pin must never reach a public, cacheable response.
+ * Fields GitHub did not return are not treated as disqualifying.
+ *
+ * @param {Object|null} repository pinned item node
+ * @param {string} username audited login
+ * @returns {boolean} true when the pin belongs in public metadata
+ */
+function isPublicOwnedPin(repository, username) {
+  if (typeof repository?.name !== "string" || !repository.name) return false;
+  if (repository.isPrivate === true) return false;
+  const owner = repository.owner?.login;
+  return typeof owner !== "string" || owner.toLowerCase() === username.toLowerCase();
 }
 
 function getReadmeEntry(repository) {
@@ -189,6 +244,10 @@ const METADATA_QUERY = `
         nodes {
           ... on Repository {
             name
+            isPrivate
+            owner {
+              login
+            }
           }
         }
       }

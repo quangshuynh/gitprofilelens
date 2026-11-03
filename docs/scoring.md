@@ -196,7 +196,7 @@ curationBonus    = min(15, (total - active) * 2)
 focus            = 55 + concentration * 30 + curationBonus
 ```
 
-The floor is 55 and the ceiling is 100, except that a profile with no repositories scores 0.
+The floor is 55 and the ceiling is 100, except that a profile with no repositories scores 0. That 0 is a placeholder: `scoreProfile` marks it `evaluated: false`. See [F5](#f5-nothing-and-nothing-good-score-alike-fixed).
 
 Language concentration is a proxy for a portfolio that reads as being *about* something. The curation bonus rewards moving finished or borrowed work out of the active set, which is what archiving is for.
 
@@ -211,7 +211,7 @@ The curation bonus counts archived **and** forked repositories, which means fork
 1. **Drop `info` findings.** Anything the tool could not verify produces no advice.
 2. **Group by `category|action`.** Findings that recommend the same action merge into one recommendation carrying the list of affected repository names. The group keeps the first finding's `reason`, so a finding whose reason quotes its own measurements declares a plural-safe `groupReason` that is substituted once the group covers more than one repository.
 3. **Append pin advice** after grouping, so portfolio advice never merges with per-repository advice.
-4. **Rank** by `severityWeight * 100 + repositoryCount`, where high = 3, medium = 2, low = 1.
+4. **Rank** by `severityWeight * 100 + repositoryCount`, where high = 3, medium = 2, low = 1. Ties keep the order their findings first appear in when audits are read in repository-name order, with pin advice after per-repository advice, so the result never depends on the order GitHub returned repositories in. See [F3](#f3-recommendation-order-depends-on-audit-order-fixed).
 5. **Truncate to five.**
 
 The cap is a hard limit, not a relevance threshold. Advice ranked sixth is discarded, however severe. See [F7](#f7-the-five-item-cap-can-hide-portfolio-advice).
@@ -631,17 +631,23 @@ Each finding names the corpus profile or test surface that exposed it.
 
 Portfolio candidacy reads the same two flags in the opposite direction, which is documented and deliberate rather than a contradiction. See [Tension with portfolio focus](#tension-with-portfolio-focus). The focus formula is unchanged.
 
-### F3: Recommendation order depends on audit order
+### F3: Recommendation order depends on audit order [FIXED]
 
-`generateRecommendations` is order-dependent on ties: reversing the audit array swaps tied recommendations because grouping preserves first-encountered order. `scoreProfile` is explicitly order-independent. Unit-level; no persona depends on it.
+`generateRecommendations` was order-dependent on ties: reversing the audit array swapped tied recommendations because grouping preserved first-encountered order, and at the five-item cut that decided which advice was shown at all. The strong-unpinned pin suggestion had the same problem when scores tied at its top-three cut.
+
+Resolved: ties are broken by first appearance with audits read in repository-name order, and equal pin-candidate scores by name. Each repository's own finding order is unchanged, as are severity, breadth, and the cap. The affected repository list inside a recommendation keeps GitHub's order. Asserted across permutations in `tests/audit-reliability.test.js`.
 
 ### F4: README scoring cliff
 
 `{present: true, size: 600}` scores 100 through the legacy no-`sections` path, but 35 once analyzed with no recognized sections. Better metadata can lower the score by 65 points. Unit-level.
 
-### F5: Nothing and nothing-good score alike
+### F5: Nothing and nothing-good score alike [FIXED]
 
-`scoreProfile([])` returns overall 0, so an account with nothing to present reads identically to one presenting badly. Separately, profile READMEs are unmodeled: `username/username` is scored as an ordinary repository. Exposed by `empty-account`.
+`scoreProfile([])` returned overall 0, so an account with nothing to present read identically to one presenting badly.
+
+Resolved without changing any weight: `scoreProfile` now returns `evaluated: false` for an empty profile, keeping the zeros only for shape compatibility. The interface shows the score as *Not scored*, withholds category scores, recommendations, sharing, and the score card, and says why. `assessRepositoryCoverage` separately distinguishes an account that has no public repositories (`empty`) from one whose repositories GitHub reports but did not return (`unavailable`) or returned only partly (`incomplete`).
+
+Still open: profile READMEs are unmodeled, so `username/username` is scored as an ordinary repository. Exposed by `empty-account`.
 
 ### F6: Pin candidates can be other people's work [FIXED]
 

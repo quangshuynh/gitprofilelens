@@ -1,4 +1,5 @@
 const { analyzeReadme } = require("./github-metadata.js");
+const { appendUniqueRepositories } = require("../audit.js");
 const { randomUUID } = require("node:crypto");
 const { getAuthenticatedSession } = require("./auth/authenticated-session.js");
 const {
@@ -12,6 +13,8 @@ const GITHUB_REQUEST_TIMEOUT_MS = 5_000;
 const GITHUB_MAX_ATTEMPTS = 3;
 const README_CONCURRENCY = 5;
 const README_BUDGET_MS = 40_000;
+// Per paginated list: 5,000 entries. Past this, retrieval stops and says so.
+const MAX_PAGES = 50;
 
 class PrivateRepositoryError extends Error {
   constructor(message, status = 502, clearSession = false) {
@@ -48,13 +51,16 @@ async function privateRepositoriesHandler(request, response) {
   }
 
   try {
-    const installations = await fetchAllPages("/user/installations", "installations", session.accessToken);
+    const listing = { complete: true };
+    const installations = await fetchAllPages("/user/installations", "installations", session.accessToken, fetch, listing);
     const repositoriesById = new Map();
     for (const installation of installations) {
       const repositories = await fetchAllPages(
         `/user/installations/${encodeURIComponent(installation.id)}/repositories`,
         "repositories",
-        session.accessToken
+        session.accessToken,
+        fetch,
+        listing
       );
       for (const repository of repositories) {
         if (repository.owner?.login?.toLowerCase() === session.user.login.toLowerCase()) {
@@ -67,7 +73,9 @@ async function privateRepositoriesHandler(request, response) {
     const publicRepositories = await fetchAllPages(
       `/users/${encodeURIComponent(session.user.login)}/repos?type=owner&sort=updated&direction=desc`,
       null,
-      session.accessToken
+      session.accessToken,
+      fetch,
+      listing
     );
     const readmeDeadline = Date.now() + README_BUDGET_MS;
     const readmeResults = await mapWithConcurrency(repositories, README_CONCURRENCY, async (repository) => {
@@ -103,6 +111,7 @@ async function privateRepositoriesHandler(request, response) {
       public_repository_count: publicRepositories.length,
       readme_unavailable_count: unavailable.length,
       readme_issue_counts: issueCounts,
+      repositories_complete: listing.complete,
       elapsed_ms: Date.now() - startedAt,
       timeout_risk: Date.now() >= readmeDeadline,
     });
@@ -115,6 +124,7 @@ async function privateRepositoriesHandler(request, response) {
       readmes,
       metadata: {
         complete: unavailable.length === 0,
+        repositories_complete: listing.complete,
         unavailable_readmes: unavailable.length,
         issues: issueCounts,
       },
@@ -137,9 +147,25 @@ async function privateRepositoriesHandler(request, response) {
   }
 }
 
-async function fetchAllPages(path, collectionName, token, fetchImplementation = fetch) {
+/**
+ * retrieves every entry of a paginated GitHub list without duplicates
+ *
+ * Lists that report total_count stop once that many entries arrived, which saves
+ * the empty trailing request when the total is a multiple of the page size. A
+ * full page that adds nothing new, or reaching the page bound, stops retrieval
+ * and marks the listing incomplete instead of looping or claiming completeness.
+ *
+ * @param {string} path GitHub API path
+ * @param {string|null} collectionName response property holding the list, or null for an array body
+ * @param {string} token user access token
+ * @param {Function} fetchImplementation fetch implementation
+ * @param {{complete: boolean}} listing receives complete: false when retrieval stopped early
+ * @returns {Promise<Array<Object>>} retrieved entries
+ */
+async function fetchAllPages(path, collectionName, token, fetchImplementation = fetch, listing = { complete: true }) {
   const values = [];
-  for (let page = 1; ; page += 1) {
+  const seen = new Set();
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
     const separator = path.includes("?") ? "&" : "?";
     const data = await fetchGitHubJson(
       `${path}${separator}per_page=100&page=${page}`,
@@ -150,9 +176,14 @@ async function fetchAllPages(path, collectionName, token, fetchImplementation = 
     if (!Array.isArray(pageValues)) {
       throw new PrivateRepositoryError("GitHub returned an invalid repository response.");
     }
-    values.push(...pageValues);
+    const added = appendUniqueRepositories(values, seen, pageValues);
     if (pageValues.length < 100) return values;
+    const total = collectionName === null ? null : data.total_count;
+    if (Number.isInteger(total) && values.length >= total) return values;
+    if (added === 0) break;
   }
+  listing.complete = false;
+  return values;
 }
 
 async function fetchReadme(fullName, token, fetchImplementation = fetch) {
