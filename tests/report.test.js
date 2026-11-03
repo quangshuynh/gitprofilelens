@@ -39,7 +39,7 @@ function createRepository(overrides = {}) {
 function createMetadata(repositoryNames = ["portfolio-lens", "minimal-project"]) {
   return {
     data: {
-      user: {
+      repositoryOwner: { __typename: "User",
         pinnedItems: { nodes: [{ name: "minimal-project" }, { name: "portfolio-lens" }] },
         repositories: {
           nodes: repositoryNames.map((name) => ({

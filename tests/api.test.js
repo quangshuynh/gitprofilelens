@@ -60,7 +60,7 @@ test("serverless metadata endpoint transforms pins and README blobs", async () =
     ok: true,
     json: async () => ({
       data: {
-        user: {
+        repositoryOwner: { __typename: "User",
           pinnedItems: { nodes: [{ name: "portfolio" }] },
           repositories: {
             nodes: [
@@ -119,7 +119,7 @@ test("serverless metadata endpoint paginates README repositories", async () => {
     const laterPage = variables.cursor === "cursor-1";
     return {
       ok: true,
-      json: async () => ({ data: { user: {
+      json: async () => ({ data: { repositoryOwner: { __typename: "User",
         pinnedItems: { nodes: [{ name: "first" }] },
         repositories: {
           pageInfo: laterPage ? { hasNextPage: false, endCursor: null } : { hasNextPage: true, endCursor: "cursor-1" },
@@ -152,7 +152,7 @@ test("serverless metadata endpoint preserves errors from later pages", async () 
     if (requestCount === 2) return { ok: false, status: 403, json: async () => ({ message: "rate limit" }) };
     return {
       ok: true,
-      json: async () => ({ data: { user: {
+      json: async () => ({ data: { repositoryOwner: { __typename: "User",
         pinnedItems: { nodes: [] },
         repositories: { pageInfo: { hasNextPage: true, endCursor: "cursor-1" }, nodes: [] },
       } } }),

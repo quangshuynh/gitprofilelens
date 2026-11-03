@@ -36,11 +36,22 @@ async function reportHandler(request, response) {
 
   try {
     const { data: profile } = await fetchGitHubRest(`/users/${encodeURIComponent(username)}`, process.env.GITHUB_TOKEN);
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+      throw new GitHubRequestError("GitHub returned an invalid response.");
+    }
+    const isOrganization = profile.type === "Organization";
     const [retrieval, supplemental, contributions] = await Promise.all([
       fetchPublicRepositories(username, process.env.GITHUB_TOKEN),
       fetchGitHubMetadata(username, process.env.GITHUB_TOKEN),
-      fetchContributionsGracefully(username, process.env.GITHUB_TOKEN),
+      // Organizations cannot author pull requests, so searching for theirs would
+      // spend a request to learn nothing.
+      isOrganization
+        ? { repositories: [], available: false, applicable: false }
+        : fetchContributionsGracefully(username, process.env.GITHUB_TOKEN),
     ]);
+    if (profile.type && supplemental.account && profile.type !== supplemental.account.type) {
+      throw new GitHubRequestError("GitHub returned inconsistent account metadata.");
+    }
     const repositories = retrieval.repositories
       .filter((repository) => !repository.private)
       .map((repository) => transformRepository(repository, supplemental));
@@ -53,6 +64,8 @@ async function reportHandler(request, response) {
     response.status(200).json({
       ...createReport(username, repositories, contributions.repositories),
       contributed_repositories_available: contributions.available,
+      contributed_repositories_applicable: contributions.applicable !== false,
+      account: describeAccount(profile, supplemental.account),
       coverage: {
         state: coverage.state,
         reported_repositories: coverage.reported,
@@ -67,9 +80,26 @@ async function reportHandler(request, response) {
   }
 }
 
+/**
+ * describes the audited account using only fields its type actually has
+ * @param {Object} profile REST profile
+ * @param {Object|undefined} account GraphQL account metadata
+ * @returns {Object} public account description
+ */
+function describeAccount(profile, account) {
+  const type = account?.type || (profile.type === "Organization" ? "Organization" : "User");
+  if (type !== "Organization") return { type };
+  return {
+    type,
+    name: account?.name ?? (typeof profile.name === "string" && profile.name.trim() ? profile.name.trim() : null),
+    description: account?.description ?? null,
+    profile_readme: account?.profileReadme ?? null,
+  };
+}
+
 async function fetchContributionsGracefully(username, token) {
   try {
-    return { repositories: await fetchGitHubContributions(username, token), available: true };
+    return { repositories: await fetchGitHubContributions(username, token), available: true, applicable: true };
   } catch (error) {
     // Contributions are supplemental. A safe diagnostic is logged, while the
     // owned-repository report remains available even for contribution rate limits.
@@ -79,7 +109,7 @@ async function fetchContributionsGracefully(username, token) {
       message: error instanceof GitHubRequestError ? error.message : "Unexpected contribution error",
     });
     // An empty list here means "not known", which the response states separately.
-    return { repositories: [], available: false };
+    return { repositories: [], available: false, applicable: true };
   }
 }
 
