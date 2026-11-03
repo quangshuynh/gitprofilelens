@@ -288,7 +288,8 @@ test("empty and nonexistent profiles show useful states", { skip: !chromePath },
   await emptyPage.goto(`${baseUrl}/?user=example`);
   await emptyPage.locator("#result-section").waitFor({ state: "visible" });
   assert.match(await emptyPage.locator("#status").innerText(), /no public repositories/i);
-  assert.equal(await emptyPage.locator("#overall-score").innerText(), "0");
+  // An account with nothing to evaluate is not presented as scoring zero.
+  assert.equal(await emptyPage.locator("#overall-score").innerText(), "Not scored");
 
   const missingPage = await browser.newPage({ viewport: { width: 900, height: 700 } });
   await missingPage.route("https://api.github.com/users/missing", (route) => route.fulfill({ status: 404, json: { message: "Not Found" } }));
@@ -2954,7 +2955,7 @@ async function mockGithubRequests(page, repositories = [repository, secondReposi
     if (options.profileDelay) {
       await new Promise((resolve) => setTimeout(resolve, options.profileDelay));
     }
-    await route.fulfill({ json: { login, name: "Example User", avatar_url: avatar, html_url: `https://github.com/${login}` } });
+    await route.fulfill({ json: { login, name: "Example User", avatar_url: avatar, html_url: `https://github.com/${login}`, ...options.profile } });
   });
   await page.route(`https://api.github.com/users/${login}/repos**`, (route) =>
     route.fulfill({ json: repositories })
@@ -2994,3 +2995,274 @@ function serveProjectFile(request, response) {
     response.end(content);
   });
 }
+
+/* --------------------------------------------------------------------------
+ * Audit reliability: empty, unavailable, incomplete, and failed data
+ * ------------------------------------------------------------------------ */
+
+/**
+ * creates a numbered public repository fixture
+ * @param {number} index repository number
+ * @returns {Object} GitHub REST repository payload
+ */
+function numberedRepository(index) {
+  return {
+    ...repository,
+    id: index,
+    name: `project-${index}`,
+    full_name: `example/project-${index}`,
+    html_url: `https://github.com/example/project-${index}`,
+  };
+}
+
+test("a zero-repository profile explains why nothing was scored or recommended", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const browserErrors = [];
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+    await mockGithubRequests(page, [], { profile: { public_repos: 0 } });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+
+    assert.match(await page.locator("#status").innerText(), /no public repositories to audit\. No score was calculated/i);
+    assert.equal(await page.locator("#overall-score").innerText(), "Not scored");
+    assert.doesNotMatch(await page.locator(".overall-score").innerText(), /\/100/);
+    assert.match(await page.locator("#category-scores").innerText(), /were not calculated/i);
+    assert.equal(await page.locator("#category-scores .category-score").count(), 0);
+    const recommendations = await page.locator("#recommendation-list").innerText();
+    assert.match(recommendations, /no public repository evidence/i);
+    assert.doesNotMatch(recommendations, /No high-impact issues were detected/i);
+    assert.match(await page.locator("#profile-insight").innerText(), /no public repositories are available to analyze/i);
+    assert.doesNotMatch(await page.locator("#profile-insight").innerText(), /strongest signal/i);
+    // Sharing and the score card state a score, so neither is offered.
+    assert.equal(await page.locator("#share-button").isHidden(), true);
+    assert.equal(await page.locator("#score-card-button").isHidden(), true);
+
+    await page.getByRole("tab", { name: "Audit" }).click();
+    assert.match(await page.locator("#audit-list").innerText(), /no public repositories/i);
+    await page.getByRole("tab", { name: "Repositories" }).click();
+    assert.match(await page.locator("#repository-list").innerText(), /no public repositories/i);
+    await page.getByRole("tab", { name: "Pinned optimizer" }).click();
+    assert.match(await page.locator("#pinned-panel").innerText(), /no audited repositories/i);
+    assert.deepEqual(browserErrors, []);
+
+    // A profile with repositories afterwards restores the score and its actions.
+    await mockGithubRequests(page, [repository, secondRepository], { login: "second" });
+    await page.evaluate(() => loadProfile("second"));
+    await page.locator("#status").filter({ hasText: /Analyzed 2 repositories/ }).waitFor();
+    assert.match(await page.locator("#overall-score").innerText(), /^\d+$/);
+    assert.equal(await page.locator("#share-button").isVisible(), true);
+    assert.equal(await page.locator("#score-card-button").isVisible(), true);
+    assert.equal(await page.locator("#category-scores .category-score").count(), 6);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("repositories GitHub reports but did not return are never called an empty profile", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    await mockGithubRequests(page, [], { profile: { public_repos: 3 } });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    const status = await page.locator("#status").innerText();
+    assert.match(status, /GitHub reports 3 public repositories for this account, but returned none/i);
+    assert.doesNotMatch(status, /has no public repositories/i);
+    assert.equal(await page.locator("#overall-score").innerText(), "Not scored");
+    await page.getByRole("tab", { name: "Repositories" }).click();
+    assert.match(await page.locator("#repository-list").innerText(), /did not return/i);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an empty organization is audited as empty even without README metadata", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    await mockGithubRequests(page, [], { profile: { type: "Organization", public_repos: 0 } });
+    await page.route("**/api/pinned-repositories?username=example", (route) => route.fulfill({ status: 502, json: { error: "GitHub could not return repository metadata." } }));
+    await page.route("**/api/report?user=example", (route) => route.fulfill({ status: 502, json: { error: "GitHub could not generate the report." } }));
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    assert.match(await page.locator("#status").innerText(), /no public repositories to audit/i);
+    assert.equal(await page.locator("#overall-score").innerText(), "Not scored");
+    await page.getByRole("tab", { name: "Repositories" }).click();
+    assert.match(await page.locator("#contributions-section").innerText(), /could not be retrieved/i);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("duplicated pages are merged and a shortfall is reported as incomplete", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const firstPage = Array.from({ length: 100 }, (_, index) => numberedRepository(index + 1));
+    // Repository 100 shifted onto page two while the list was being read.
+    const secondPage = [numberedRepository(100), numberedRepository(101)];
+    await mockGithubRequests(page, [], { profile: { public_repos: 103 } });
+    const repositoryRequests = [];
+    await page.route("https://api.github.com/users/example/repos**", (route) => {
+      const pageNumber = Number(new URL(route.request().url()).searchParams.get("page"));
+      repositoryRequests.push(pageNumber);
+      route.fulfill({ json: pageNumber === 1 ? firstPage : pageNumber === 2 ? secondPage : [] });
+    });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    const status = await page.locator("#status").innerText();
+    assert.match(status, /Analyzed 101 repositories/);
+    assert.match(status, /GitHub reports 103 public repositories, but returned 101, so results cover only the repositories returned/i);
+    assert.deepEqual(repositoryRequests, [1, 2]);
+    assert.equal(await page.evaluate(() => new Set(appState.repositories.map((item) => item.name)).size), 101);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a Link header without a next page avoids the empty trailing request", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const pages = [
+      Array.from({ length: 100 }, (_, index) => numberedRepository(index + 1)),
+      Array.from({ length: 100 }, (_, index) => numberedRepository(index + 101)),
+    ];
+    await mockGithubRequests(page, [], { profile: { public_repos: 200 } });
+    const repositoryRequests = [];
+    await page.route("https://api.github.com/users/example/repos**", (route) => {
+      const pageNumber = Number(new URL(route.request().url()).searchParams.get("page"));
+      repositoryRequests.push(pageNumber);
+      route.fulfill({
+        json: pages[pageNumber - 1] || [],
+        headers: {
+          "Access-Control-Expose-Headers": "Link",
+          Link: pageNumber === 1
+            ? '<https://api.github.com/user/1/repos?page=2>; rel="next", <https://api.github.com/user/1/repos?page=2>; rel="last"'
+            : '<https://api.github.com/user/1/repos?page=1>; rel="prev", <https://api.github.com/user/1/repos?page=1>; rel="first"',
+        },
+      });
+    });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    assert.match(await page.locator("#status").innerText(), /Analyzed 200 repositories/);
+    assert.deepEqual(repositoryRequests, [1, 2]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a repeating full page stops pagination instead of looping", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const fullPage = Array.from({ length: 100 }, (_, index) => numberedRepository(index + 1));
+    await mockGithubRequests(page, [], { profile: { public_repos: 500 } });
+    let repositoryRequests = 0;
+    await page.route("https://api.github.com/users/example/repos**", (route) => {
+      repositoryRequests += 1;
+      route.fulfill({ json: fullPage });
+    });
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    assert.equal(repositoryRequests, 2);
+    assert.match(await page.locator("#status").innerText(), /returned 100, so results cover only the repositories returned/i);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("rate limits, refusals, network failures, and unreadable responses stay distinct", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const cases = [
+      { name: "rate limit", fulfill: (route) => route.fulfill({ status: 403, json: { message: "API rate limit exceeded" }, headers: { "Access-Control-Expose-Headers": "X-RateLimit-Remaining", "X-RateLimit-Remaining": "0" } }), expect: /rate limit was reached/i },
+      { name: "secondary rate limit", fulfill: (route) => route.fulfill({ status: 403, json: { message: "You have exceeded a secondary rate limit." }, headers: { "Access-Control-Expose-Headers": "X-RateLimit-Remaining", "X-RateLimit-Remaining": "41" } }), expect: /rate limit was reached/i },
+      { name: "refusal", fulfill: (route) => route.fulfill({ status: 403, json: { message: "Repository access blocked" }, headers: { "Access-Control-Expose-Headers": "X-RateLimit-Remaining", "X-RateLimit-Remaining": "41" } }), expect: /denied access/i },
+      { name: "network", fulfill: (route) => route.abort("internetdisconnected"), expect: /could not reach github/i },
+      { name: "unreadable", fulfill: (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{not json" }), expect: /could not be read/i },
+      { name: "malformed", fulfill: (route) => route.fulfill({ status: 200, json: { message: "not a list" } }), expect: /could not be read/i },
+    ];
+    for (const testCase of cases) {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+      await mockGithubRequests(page);
+      await page.route("https://api.github.com/users/example/repos**", testCase.fulfill);
+      await page.goto(`${baseUrl}/?user=example`);
+      await page.locator("#status.error").waitFor();
+      const status = await page.locator("#status").innerText();
+      assert.match(status, testCase.expect, `${testCase.name}: ${status}`);
+      // A failed retrieval is never shown as an audit, empty or otherwise.
+      assert.equal(await page.locator("#result-section").isHidden(), true, testCase.name);
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an unavailable contribution lookup is not reported as no contributions", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    for (const report of [
+      (route) => route.fulfill({ status: 502, json: { error: "GitHub could not generate the report." } }),
+      (route) => route.fulfill({ json: { contributed_repositories: [], contributed_repositories_available: false } }),
+    ]) {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+      await mockGithubRequests(page);
+      await page.route("**/api/report?user=example", report);
+      await page.goto(`${baseUrl}/?user=example`);
+      await page.locator("#result-section").waitFor({ state: "visible" });
+      await page.getByRole("tab", { name: "Repositories" }).click();
+      const contributions = await page.locator("#contributions-section").innerText();
+      assert.match(contributions, /could not be retrieved/i);
+      assert.doesNotMatch(contributions, /No public external repositories/i);
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a public audit after a private audit keeps no private data in page state", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+    await mockGithubRequests(page);
+    await page.route("**/api/auth/session", (route) => route.fulfill({
+      json: { authenticated: true, user: { login: "example", avatar_url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" } },
+    }));
+    await page.route("**/api/private-repositories", (route) => route.fulfill({
+      json: {
+        installation: true,
+        configure_url: null,
+        repositories: [{ ...repository, id: 900, name: "secret-only", full_name: "example/secret-only", html_url: "https://github.com/example/secret-only", private: true, visibility: "private" }],
+        public_repositories: [],
+        readmes: { "secret-only": readme },
+        metadata: { complete: true, repositories_complete: false, unavailable_readmes: 0, issues: {} },
+      },
+    }));
+    await page.goto(baseUrl);
+    await page.locator("#home-signed-in-auth").waitFor({ state: "visible" });
+    await page.locator("#home-private-audit-button").click();
+    await page.locator("#audit-title").filter({ hasText: "Private Repository Audit" }).waitFor();
+    // A private-only account still audits its authorized repositories.
+    assert.equal(await page.locator(".audit-card").count(), 1);
+    assert.match(await page.locator("#status").innerText(), /did not return the complete repository list/i);
+
+    await page.evaluate(() => loadProfile("example"));
+    await page.locator("#status").filter({ hasText: /Analyzed 2 repositories/ }).waitFor();
+    const state = await page.evaluate(() => JSON.stringify({
+      privateExports: appState.privateExports,
+      repositories: appState.repositories.map((item) => item.name),
+      audits: appState.audits.map((audit) => audit.repository.name),
+    }));
+    assert.doesNotMatch(state, /secret-only/);
+    assert.doesNotMatch(await page.locator("#result-section").innerText(), /secret-only/);
+    await page.getByRole("tab", { name: "Markdown export" }).click();
+    assert.doesNotMatch(await page.locator("#output").inputValue(), /secret-only/);
+  } finally {
+    await browser.close();
+  }
+});

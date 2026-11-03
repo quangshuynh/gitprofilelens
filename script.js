@@ -132,7 +132,19 @@ const appState = {
   canManageFollows: false,
   privateInstallation: false,
   privateExports: { public: [], private: [], combined: [], publicSupplemental: null },
+  // How completely the public repository list covers what GitHub reports. An
+  // empty account and an account whose repositories never arrived both have no
+  // audits, and only this tells them apart.
+  coverage: { state: "complete", reported: null, retrieved: 0 },
+  // False when the supplemental contribution lookup failed, so an empty list is
+  // never presented as "none found".
+  contributionsAvailable: true,
 };
+
+/** Repositories requested per page of GitHub's public repository list. */
+const REPOSITORIES_PER_PAGE = 100;
+/** Pages of repositories retrieved before an audit says its list is incomplete. */
+const MAX_REPOSITORY_PAGES = 100;
 
 /**
  * how many accounts each network list shows before it is expanded
@@ -424,20 +436,34 @@ async function loadProfile(username) {
     const user = await fetchJson(
       `https://api.github.com/users/${encodeURIComponent(username)}`
     );
-    const [rawRepositories, supplemental, contributedRepositories] = await Promise.all([
+    if (!user || typeof user.login !== "string" || !GitHubAudit.isValidUsername(user.login)) {
+      throw new Error("GitHub returned a profile response that could not be read. Try again shortly.");
+    }
+    const [retrieval, supplemental, contributedRepositories] = await Promise.all([
       fetchAllRepositories(user.login),
       fetchSupplementalMetadata(user.login),
       fetchContributedRepositories(user.login),
     ]);
-    const repositories = transformRepositories(rawRepositories, supplemental);
+    // The public audit only ever holds public repositories.
+    const repositories = transformRepositories(retrieval.repositories, supplemental)
+      .filter((repository) => !repository.private);
     const audits = repositories.map(scoreTransformedRepository);
 
     appState.user = user;
     appState.repositories = repositories;
-    appState.contributedRepositories = contributedRepositories;
+    appState.contributedRepositories = contributedRepositories || [];
+    appState.contributionsAvailable = contributedRepositories !== null;
     appState.audits = audits;
     appState.supplemental = supplemental;
+    appState.coverage = GitHubAudit.assessRepositoryCoverage({
+      reported: user.public_repos,
+      retrieved: repositories.length,
+      truncated: retrieval.truncated,
+    });
     appState.mode = "public";
+    // A public audit holds no private audit data, even in memory.
+    appState.privateInstallation = false;
+    clearPrivateExportState();
 
     // A newly audited profile must never inherit the previous profile's network.
     resetNetworkState();
@@ -448,7 +474,7 @@ async function loadProfile(username) {
     // A ?view=network deep link activates the tab before any profile exists, so the
     // lazy load is triggered here once the audited profile is actually available.
     if (isNetworkTabActive()) ensureNetworkLoaded();
-    statusEl.textContent = createSuccessStatus(repositories.length, supplemental);
+    statusEl.textContent = createSuccessStatus(appState.coverage, supplemental);
   } catch (error) {
     showHomeView();
     showError(error.message);
@@ -582,6 +608,8 @@ async function loadPrivateRepositories() {
     appState.user = appState.authUser;
     appState.repositories = repositories;
     appState.contributedRepositories = [];
+    appState.contributionsAvailable = true;
+    appState.coverage = { state: "complete", reported: null, retrieved: repositories.length };
     appState.audits = repositories.map(scoreTransformedRepository);
     appState.supplemental = supplemental;
     appState.mode = "private";
@@ -602,6 +630,8 @@ async function loadPrivateRepositories() {
     showResultView();
     if (!data.installation) {
       statusEl.textContent = "GitProfileLens is connected, but no GitHub App installation is available.";
+    } else if (data.metadata?.repositories_complete === false) {
+      statusEl.textContent = `Analyzed ${repositories.length} authorized ${repositories.length === 1 ? "repository" : "repositories"}. GitHub did not return the complete repository list, so some authorized repositories may be missing. Private repositories remain separate from your public score.`;
     } else if (data.metadata?.complete === false) {
       const unavailable = Number(data.metadata.unavailable_readmes) || 0;
       statusEl.textContent = `Analyzed ${repositories.length} authorized ${repositories.length === 1 ? "repository" : "repositories"}. ${unavailable} ${unavailable === 1 ? "README was" : "READMEs were"} unavailable and scored neutrally as unverified. Private repositories remain separate from your public score.`;
@@ -690,20 +720,44 @@ function scoreTransformedRepository(repository) {
 
 /**
  * creates the status message shown after a successful profile fetch
- * @param {number} repositoryCount number of public repositories fetched
+ * @param {Object} coverage repository coverage from assessRepositoryCoverage
  * @param {Object|null} supplemental supplemental github metadata
  * @returns {string} success status message
  */
-function createSuccessStatus(repositoryCount, supplemental) {
-  if (repositoryCount === 0) {
-    return "This account has no public repositories to audit.";
+function createSuccessStatus(coverage, supplemental) {
+  const repositoryCount = coverage.retrieved;
+  if (coverage.state === "empty") {
+    return "This account has no public repositories to audit. No score was calculated.";
   }
 
-  if (supplemental === null) {
-    return `Analyzed ${repositoryCount} repositories. README and pinned data could not be verified.`;
+  if (coverage.state === "unavailable") {
+    return coverage.reported
+      ? `GitHub reports ${coverage.reported} public ${coverage.reported === 1 ? "repository" : "repositories"} for this account, but returned none. No score was calculated. Try again shortly.`
+      : "GitHub did not return this account's public repositories. No score was calculated. Try again shortly.";
   }
 
-  return `Analyzed ${repositoryCount} repositories, including ${supplemental.pinnedRepositories.length} profile pins.`;
+  const status = supplemental === null
+    ? `Analyzed ${repositoryCount} repositories. README and pinned data could not be verified.`
+    : `Analyzed ${repositoryCount} repositories, including ${supplemental.pinnedRepositories.length} profile pins.`;
+
+  if (coverage.state === "incomplete") {
+    const expected = coverage.reported !== null && coverage.reported > repositoryCount
+      ? `GitHub reports ${coverage.reported} public repositories, but returned ${repositoryCount}`
+      : "GitHub did not return the complete repository list";
+    return `${status} ${expected}, so results cover only the repositories returned.`;
+  }
+
+  return status;
+}
+
+/**
+ * describes why there are no public repositories to show
+ * @returns {string} empty-state message for the current coverage
+ */
+function describeMissingRepositories() {
+  return appState.coverage.state === "unavailable"
+    ? "GitHub did not return this account's public repositories, so none could be analyzed."
+    : "This account has no public repositories.";
 }
 
 /**
@@ -713,21 +767,28 @@ function createSuccessStatus(repositoryCount, supplemental) {
  */
 async function fetchAllRepositories(username) {
   const allRepositories = [];
-  let page = 1;
-  const perPage = 100;
+  const seen = new Set();
 
-  while (true) {
+  // A Link header without rel="next" ends retrieval without requesting an empty
+  // trailing page; without one, a short page does. A full page that adds nothing
+  // new means GitHub is repeating itself, which stops retrieval as truncated
+  // instead of looping or presenting the list as complete.
+  for (let page = 1; page <= MAX_REPOSITORY_PAGES; page += 1) {
     const url =
       `https://api.github.com/users/${encodeURIComponent(username)}/repos` +
-      `?type=owner&sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
-    const repositories = await fetchJson(url);
-    allRepositories.push(...repositories);
+      `?type=owner&sort=updated&direction=desc&per_page=${REPOSITORIES_PER_PAGE}&page=${page}`;
+    const { data: repositories, link } = await fetchJsonWithLink(url);
+    if (!Array.isArray(repositories)) {
+      throw new Error("GitHub returned a repository response that could not be read. Try again shortly.");
+    }
+    const added = GitHubAudit.appendUniqueRepositories(allRepositories, seen, repositories);
 
-    if (repositories.length < perPage) break;
-    page += 1;
+    if (repositories.length < REPOSITORIES_PER_PAGE) return { repositories: allRepositories, truncated: false };
+    if (typeof link === "string" && !/rel="next"/.test(link)) return { repositories: allRepositories, truncated: false };
+    if (added === 0) return { repositories: allRepositories, truncated: true };
   }
 
-  return allRepositories;
+  return { repositories: allRepositories, truncated: true };
 }
 
 /**
@@ -758,7 +819,7 @@ async function fetchSupplementalMetadata(username) {
 /**
  * fetches informational external contributions from the public report endpoint
  * @param {string} username github username
- * @returns {Promise<Array<Object>>} normalized public contributed repositories
+ * @returns {Promise<Array<Object>|null>} normalized public contributed repositories, or null when unavailable
  */
 async function fetchContributedRepositories(username) {
   try {
@@ -766,11 +827,13 @@ async function fetchContributedRepositories(username) {
       `/api/report?user=${encodeURIComponent(username)}`,
       { headers: { Accept: "application/json" } }
     );
-    if (!response.ok) return [];
+    if (!response.ok) return null;
     const data = await response.json();
-    return Array.isArray(data.contributed_repositories) ? data.contributed_repositories : [];
+    // The report keeps an empty list when its own lookup failed and says so.
+    if (data?.contributed_repositories_available === false) return null;
+    return Array.isArray(data?.contributed_repositories) ? data.contributed_repositories : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -780,27 +843,71 @@ async function fetchContributedRepositories(username) {
  * @returns {Promise<Object|Array>} parsed json response
  */
 async function fetchJson(url) {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
+  return (await fetchJsonWithLink(url)).data;
+}
+
+/**
+ * fetches json data along with the pagination Link header
+ * @param {string} url url to request
+ * @returns {Promise<{data: Object|Array, link: string|null}>} parsed json and Link header
+ */
+async function fetchJsonWithLink(url) {
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+  } catch {
+    throw new Error("Could not reach GitHub. Check your connection and try again.");
+  }
 
   if (response.status === 404) {
     throw new Error("GitHub user not found. Check the username and try again.");
   }
 
   if (response.status === 403 || response.status === 429) {
-    const resetTime = formatRateLimitReset(response.headers.get("X-RateLimit-Reset"));
-    throw new Error(`GitHub's public API rate limit was reached.${resetTime}`);
+    const body = await response.json().catch(() => null);
+    if (isRateLimitResponse(response, body?.message)) {
+      const resetTime = formatRateLimitReset(response.headers.get("X-RateLimit-Reset"));
+      throw new Error(`GitHub's public API rate limit was reached.${resetTime}`);
+    }
+    throw new Error("GitHub denied access to this account's public data.");
   }
 
   if (!response.ok) {
     throw new Error(`GitHub request failed (${response.status}). Try again shortly.`);
   }
 
-  return response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error("GitHub returned a response that could not be read. Try again shortly.");
+  }
+  return { data, link: response.headers.get("Link") };
+}
+
+/**
+ * decides whether a 403 or 429 is a rate limit rather than a refusal
+ *
+ * GitHub sends 403 for exhausted and secondary rate limits and for resources it
+ * refuses to serve. Without rate-limit headers the two cannot be told apart, and
+ * the long-standing rate-limit reading is kept.
+ *
+ * @param {Response} response fetch response
+ * @param {string|undefined} message GitHub error message, when readable
+ * @returns {boolean} true when the response is a rate limit
+ */
+function isRateLimitResponse(response, message) {
+  if (response.status === 429) return true;
+  const remaining = response.headers.get("X-RateLimit-Remaining");
+  if (remaining === "0") return true;
+  if (response.headers.get("Retry-After")) return true;
+  if (/rate limit/i.test(message || "")) return true;
+  return remaining === null;
 }
 
 /**
@@ -882,13 +989,22 @@ function setResultMode(mode) {
 function renderProfileHeader(profileScore) {
   const user = appState.user;
   const firstName = (user.name || user.login).trim().split(/\s+/)[0];
-  const strongestCategory = getStrongestCategory(profileScore.categories);
   profileAvatar.crossOrigin = "anonymous";
   profileAvatar.src = user.avatar_url;
   profileAvatar.alt = `${user.login}'s GitHub avatar`;
   profileName.textContent = user.name || `@${user.login}`;
   profileLink.href = user.html_url;
   profileLink.textContent = `@${user.login}`;
+  // Share and the score card both state a score, so neither is offered without one.
+  shareButton.hidden = !profileScore.evaluated;
+  scoreCardButton.hidden = !profileScore.evaluated;
+  if (!profileScore.evaluated) {
+    profileInsight.textContent = appState.coverage.state === "unavailable"
+      ? `${firstName}'s portfolio snapshot: GitHub did not return any public repositories to analyze.`
+      : `${firstName}'s portfolio snapshot: no public repositories are available to analyze yet.`;
+    return;
+  }
+  const strongestCategory = getStrongestCategory(profileScore.categories);
   profileInsight.textContent = `${firstName}'s portfolio snapshot: ${appState.repositories.length} public ${appState.repositories.length === 1 ? "project" : "projects"} · strongest signal: ${strongestCategory}.`;
 }
 
@@ -920,8 +1036,25 @@ function getStrongestCategory(categories) {
 function renderOverview(profileScore) {
   if (appState.mode !== "public") return;
   const recommendations = GitHubAudit.generateRecommendations(appState.audits);
-  overallScore.textContent = profileScore.overall;
   categoryScores.replaceChildren();
+  recommendationList.replaceChildren();
+
+  // Without repositories there is nothing to measure. Zeros here would read as
+  // a measured, failing result, so the score is shown as not calculated.
+  if (!profileScore.evaluated) {
+    overallScore.textContent = "Not scored";
+    overallScore.parentElement.classList.add("is-unscored");
+    categoryScores.appendChild(createEmptyState(
+      `Category scores were not calculated. ${describeMissingRepositories()} Scores need at least one public repository to evaluate.`
+    ));
+    recommendationList.appendChild(createEmptyState(
+      "No recommendations: there is no public repository evidence to base them on. Recommendations will appear once public repositories can be analyzed."
+    ));
+    return;
+  }
+
+  overallScore.textContent = profileScore.overall;
+  overallScore.parentElement.classList.remove("is-unscored");
 
   const labels = [
     ["presentation", "Repository presentation", profileScore.categories.presentation],
@@ -936,7 +1069,6 @@ function renderOverview(profileScore) {
     categoryScores.appendChild(createCategoryScore(key, label, score));
   }
 
-  recommendationList.replaceChildren();
   if (recommendations.length === 0) {
     recommendationList.appendChild(createEmptyState("No high-impact issues were detected in the public repository data."));
   } else {
@@ -1115,7 +1247,7 @@ function renderAudits() {
       ? appState.privateInstallation
         ? "No repositories owned by this account are currently authorized for GitProfileLens. Configure the GitHub App to select repositories."
         : "Install or configure the GitHub App to choose repositories for this private audit."
-      : "No public repositories are available to audit.";
+      : `${describeMissingRepositories()} Repository audits appear once public repositories can be analyzed.`;
     auditList.appendChild(createEmptyState(message));
     return;
   }
@@ -1385,7 +1517,7 @@ function renderRepositories() {
   repositoryList.replaceChildren();
 
   if (repositories.length === 0) {
-    repositoryList.appendChild(createEmptyState("This account has no public repositories."));
+    repositoryList.appendChild(createEmptyState(describeMissingRepositories()));
     return;
   }
 
@@ -1397,8 +1529,15 @@ function renderRepositories() {
 function renderContributions() {
   const repositories = appState.contributedRepositories;
   contributionsSection.hidden = false;
-  contributionSummary.textContent = `${repositories.length} external ${repositories.length === 1 ? "project" : "projects"} found.`;
   contributionList.replaceChildren();
+
+  if (!appState.contributionsAvailable) {
+    contributionSummary.textContent = "External contributions unavailable.";
+    contributionList.appendChild(createEmptyState("External contributions could not be retrieved, so GitProfileLens cannot say whether any exist."));
+    return;
+  }
+
+  contributionSummary.textContent = `${repositories.length} external ${repositories.length === 1 ? "project" : "projects"} found.`;
 
   if (repositories.length === 0) {
     contributionList.appendChild(createEmptyState("No public external repositories with merged authored pull requests were found."));
@@ -2015,6 +2154,7 @@ function initializeFromUrl() {
 async function shareResult() {
   if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
+  if (!profileScore.evaluated) return;
   const shareText = GitProfileShare.buildShareText(appState.user.login, profileScore.overall);
   
   if (typeof navigator.share === "function") {
@@ -2044,6 +2184,7 @@ async function shareResult() {
 async function downloadScoreCard() {
   if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
+  if (!profileScore.evaluated) return;
   const cardData = GitProfileShare.buildScoreCardData(appState.user.login, profileScore);
   scoreCardButton.disabled = true;
 

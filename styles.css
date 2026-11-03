@@ -103,8 +103,11 @@ button.secondary { border-color: #30363d; background: #21262d; }
 .overall-score > p:first-child { margin-bottom: 4px; color: #9da7b3; font-weight: 700; }
 .overall-score strong { display: block; margin-bottom: 12px; font-size: 3.3rem; line-height: 1; letter-spacing: -.05em; }
 .overall-score small { margin-left: 5px; color: #8b949e; font-size: 1rem; letter-spacing: 0; }
+.overall-score strong.is-unscored { font-size: 2rem; letter-spacing: -.02em; color: #9da7b3; }
+.overall-score strong.is-unscored small { display: none; }
 .score-disclaimer { margin-bottom: 0; color: #8b949e; font-size: .78rem; line-height: 1.5; }
 .category-scores { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 24px; padding: 24px; }
+.category-scores > .empty-state { grid-column: 1 / -1; align-self: center; padding: 0; border: 0; background: none; }
 .category-score.is-open { grid-column: 1 / -1; }
 .category-score-trigger { width: 100%; padding: 0; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; }
 .category-score-trigger:hover { filter: none; }
