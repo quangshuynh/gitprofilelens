@@ -817,10 +817,14 @@
    * @returns {Object} overall and category portfolio scores
    */
   function scoreProfile(audits) {
+    // With no repositories there is no evidence to score. The zeros keep the shape
+    // stable for existing consumers, and evaluated: false tells every caller they
+    // are placeholders, not a measurement to display or share.
     if (audits.length === 0) {
       return {
         overall: 0,
         categories: { presentation: 0, descriptions: 0, readme: 0, discoverability: 0, maintenance: 0, focus: 0 },
+        evaluated: false,
       };
     }
 
@@ -842,7 +846,7 @@
       categories.focus * 0.1
     );
 
-    return { overall, categories };
+    return { overall, categories, evaluated: true };
   }
 
   /**
@@ -905,10 +909,50 @@
       }
     }
 
-    const recommendations = [...groups.values()].map(summarizeRecommendation);
-    addPinningRecommendations(recommendations, audits);
-    recommendations.sort(compareRecommendations);
-    return recommendations.slice(0, 5);
+    // Equal-impact recommendations keep the order their findings first appear in,
+    // read from audits in name order rather than response order. Each repository's
+    // own finding order is preserved, and the top-five cut no longer depends on
+    // the order GitHub happened to return repositories in.
+    const tieRanks = new Map();
+    for (const audit of [...audits].sort(compareAuditNames)) {
+      for (const finding of audit.findings) {
+        if (finding.severity === "info") continue;
+        const key = `${finding.category}|${finding.action}`;
+        if (!tieRanks.has(key)) tieRanks.set(key, tieRanks.size);
+      }
+    }
+
+    const ranked = [...groups.entries()].map(([key, group]) => ({
+      recommendation: summarizeRecommendation(group),
+      tieRank: tieRanks.get(key),
+    }));
+    const pinning = [];
+    addPinningRecommendations(pinning, audits);
+    for (const recommendation of pinning) {
+      ranked.push({ recommendation, tieRank: tieRanks.size + ranked.length });
+    }
+    ranked.sort(compareRankedRecommendations);
+    return ranked.slice(0, 5).map((entry) => entry.recommendation);
+  }
+
+  /**
+   * orders audits by repository name for order-independent tie-breaking
+   * @param {Object} auditA first repository audit
+   * @param {Object} auditB second repository audit
+   * @returns {number} sort order
+   */
+  function compareAuditNames(auditA, auditB) {
+    return compareText(auditA.repository.fullName || auditA.repository.name, auditB.repository.fullName || auditB.repository.name);
+  }
+
+  /**
+   * orders recommendations by impact, then by their order-independent tie rank
+   * @param {Object} entryA first ranked recommendation
+   * @param {Object} entryB second ranked recommendation
+   * @returns {number} sort order
+   */
+  function compareRankedRecommendations(entryA, entryB) {
+    return compareRecommendations(entryA.recommendation, entryB.recommendation) || entryA.tieRank - entryB.tieRank;
   }
 
   /**
@@ -1008,7 +1052,23 @@
    * @param {Object} auditB second repository audit
    * @returns {number} audit sort order
    */
-  function compareAuditScoresDescending(auditA, auditB) { return auditB.score - auditA.score; }
+  function compareAuditScoresDescending(auditA, auditB) {
+    // Equal scores fall back to the name, so which repositories make the top three
+    // never depends on the order GitHub happened to return them in.
+    return auditB.score - auditA.score || compareText(auditA.repository.name, auditB.repository.name);
+  }
+
+  /**
+   * compares two strings by code unit, independent of locale
+   * @param {string} textA first string
+   * @param {string} textB second string
+   * @returns {number} sort order
+   */
+  function compareText(textA, textB) {
+    const a = String(textA ?? "");
+    const b = String(textB ?? "");
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
 
   /**
    * gets a repository name from an audit
@@ -1031,6 +1091,76 @@
   }
 
   /**
+   * reads a non-negative integer count GitHub reported, or null when it did not
+   * @param {*} value reported value
+   * @returns {number|null} count or null
+   */
+  function readReportedCount(value) {
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  }
+
+  /**
+   * states how completely a repository list covers what GitHub reports
+   *
+   * "empty" is a fact about the account: GitHub returned nothing and reported
+   * nothing. "unavailable" means GitHub reports repositories that never arrived,
+   * so the account must not be described as having none. "incomplete" means some
+   * arrived. A reported count lower than the list is a lagging count, not a gap.
+   *
+   * @param {Object} counts reported and retrieved counts
+   * @param {number|null} counts.reported count from the GitHub profile, if any
+   * @param {number} counts.retrieved repositories actually retrieved
+   * @param {boolean} counts.truncated true when retrieval stopped before the end
+   * @returns {{state: string, reported: number|null, retrieved: number}} coverage
+   */
+  function assessRepositoryCoverage({ reported, retrieved, truncated = false }) {
+    const reportedCount = readReportedCount(reported);
+    const retrievedCount = readReportedCount(retrieved) ?? 0;
+    let state = "complete";
+    if (retrievedCount === 0) {
+      state = truncated || (reportedCount !== null && reportedCount > 0) ? "unavailable" : "empty";
+    } else if (truncated || (reportedCount !== null && retrievedCount < reportedCount)) {
+      state = "incomplete";
+    }
+    return { state, reported: reportedCount, retrieved: retrievedCount };
+  }
+
+  /**
+   * identifies a repository across pages by id, then by full name
+   * @param {Object} repository github repository payload
+   * @returns {string|null} identity key
+   */
+  function getRepositoryIdentity(repository) {
+    if (!repository || typeof repository !== "object") return null;
+    if (repository.id !== undefined && repository.id !== null) return `id:${repository.id}`;
+    const name = repository.full_name || repository.name;
+    return typeof name === "string" && name ? `name:${name.toLowerCase()}` : null;
+  }
+
+  /**
+   * appends a page of repositories, skipping any already collected
+   *
+   * Offset pagination over a list sorted by update time shifts when a repository
+   * is updated mid-retrieval, so the same repository can arrive on two pages.
+   *
+   * @param {Array<Object>} collected repositories collected so far, appended to
+   * @param {Set<string>} seen identities collected so far, appended to
+   * @param {Array<Object>} page repositories from one page
+   * @returns {number} number of repositories newly added
+   */
+  function appendUniqueRepositories(collected, seen, page) {
+    let added = 0;
+    for (const repository of page) {
+      const identity = getRepositoryIdentity(repository);
+      if (identity === null || seen.has(identity)) continue;
+      seen.add(identity);
+      collected.push(repository);
+      added += 1;
+    }
+    return added;
+  }
+
+  /**
    * reads and validates a github username from a query string
    * @param {string} search url query string
    * @returns {string|null} valid username or null
@@ -1045,6 +1175,8 @@
   }
 
   return {
+    appendUniqueRepositories,
+    assessRepositoryCoverage,
     classifyPortfolioCandidate,
     createReport,
     // Exposed so the pinned optimizer can name a repository's remaining gaps in
