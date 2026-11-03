@@ -11,9 +11,14 @@ class GitHubRequestError extends Error {
   }
 }
 
+// The GraphQL account types whose repositories GitProfileLens can audit. Any other
+// repositoryOwner type, or a node without a type, is not assumed to be a user.
+const SUPPORTED_ACCOUNT_TYPES = new Set(["User", "Organization"]);
+
 async function fetchGitHubMetadata(username, token, fetchImplementation = fetch) {
   const readmes = [];
   let pinnedRepositories;
+  let account;
   let cursor = null;
   let firstPage = true;
   const seenCursors = new Set();
@@ -38,7 +43,7 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
         },
         body: JSON.stringify({
           query: METADATA_QUERY,
-          variables: { username, cursor },
+          variables: { username, cursor, includeProfile: firstPage },
         }),
       });
     } catch (error) {
@@ -97,7 +102,18 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
       );
     }
 
-    if (!githubResponse.ok || data?.errors) {
+    // An organization's profile README is optional and lives in its .github
+    // repository. Failing to read it leaves that one fact unverified; it is never
+    // a reason to discard the repository metadata, nor evidence that none exists.
+    const errors = Array.isArray(data?.errors) ? data.errors : [];
+    const blockingErrors = errors.filter((error) => !isProfileReadmeError(error));
+    // NOT_FOUND there means the organization has no public .github repository,
+    // which is an answer. Any other error leaves the profile README unverified.
+    const profileReadmeUnavailable = errors.some(
+      (error) => isProfileReadmeError(error) && error.type !== "NOT_FOUND"
+    );
+
+    if (!githubResponse.ok || (data?.errors && !Array.isArray(data.errors)) || blockingErrors.length > 0) {
       console.error("GitHub GraphQL metadata request failed", {
         username,
         status: githubResponse.status,
@@ -110,15 +126,28 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
       );
     }
 
-    if (!data?.data?.user) {
+    const owner = data?.data?.repositoryOwner;
+
+    if (!owner) {
       throw new GitHubRequestError(
         "GitHub user not found.",
         404
       );
     }
 
-    const repositoryConnection = data.data.user.repositories;
-    const pinnedNodes = data.data.user.pinnedItems?.nodes;
+    if (!SUPPORTED_ACCOUNT_TYPES.has(owner.__typename) || (account && owner.__typename !== account.type)) {
+      console.error("GitHub GraphQL returned an unsupported account type", {
+        username,
+        type: typeof owner.__typename === "string" ? owner.__typename : null,
+      });
+
+      throw new GitHubRequestError(
+        "GitHub returned an invalid metadata response."
+      );
+    }
+
+    const repositoryConnection = owner.repositories;
+    const pinnedNodes = owner.pinnedItems?.nodes;
 
     if (!Array.isArray(repositoryConnection?.nodes) || (firstPage && !Array.isArray(pinnedNodes))) {
       throw new GitHubRequestError(
@@ -127,6 +156,7 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
     }
 
     if (firstPage) {
+      account = readAccount(owner, profileReadmeUnavailable);
       pinnedRepositories = pinnedNodes
         .filter((repository) => isPublicOwnedPin(repository, username))
         .map((repository) => repository.name);
@@ -156,9 +186,53 @@ async function fetchGitHubMetadata(username, token, fetchImplementation = fetch)
   }
 
   return {
+    account,
     pinnedRepositories,
     readmes: Object.fromEntries(readmes.map(getReadmeEntry)),
   };
+}
+
+/**
+ * reads the public account facts GraphQL returned for the audited login
+ *
+ * Organizations carry a name, a description, and an optional profile README in
+ * their public .github repository. Users carry none of these here, and none are
+ * invented for them. A profile README is true or false only when GitHub answered;
+ * a private .github repository is never read as public evidence.
+ *
+ * @param {Object} owner repositoryOwner node
+ * @param {boolean} profileReadmeUnavailable true when GitHub refused that lookup
+ * @returns {Object} account metadata safe for public responses
+ */
+function readAccount(owner, profileReadmeUnavailable) {
+  if (owner.__typename !== "Organization") return { type: "User" };
+  const profileRepository = owner.profileReadmeRepository;
+  let profileReadme = null;
+  if (!profileReadmeUnavailable && profileRepository !== undefined) {
+    profileReadme = Boolean(
+      profileRepository
+      && profileRepository.isPrivate === false
+      && Number.isInteger(profileRepository.profileReadme?.byteSize)
+    );
+  }
+  return {
+    type: "Organization",
+    name: typeof owner.name === "string" && owner.name.trim() ? owner.name.trim() : null,
+    description: typeof owner.description === "string" && owner.description.trim() ? owner.description.trim() : null,
+    profileReadme,
+  };
+}
+
+/**
+ * identifies a GraphQL error confined to the optional profile README lookup
+ * @param {Object} error GraphQL error
+ * @returns {boolean} true when only the profile README lookup failed
+ */
+function isProfileReadmeError(error) {
+  return Array.isArray(error?.path)
+    && error.path[0] === "repositoryOwner"
+    && error.path[1] === "profileReadmeRepository"
+    && error?.type !== "RATE_LIMITED";
 }
 
 /**
@@ -238,15 +312,32 @@ function analyzeReadme(markdown) {
 }
 
 const METADATA_QUERY = `
-  query PinnedRepositories($username: String!, $cursor: String) {
-    user(login: $username) {
-      pinnedItems(first: 6, types: REPOSITORY) {
-        nodes {
-          ... on Repository {
-            name
-            isPrivate
-            owner {
-              login
+  query PinnedRepositories($username: String!, $cursor: String, $includeProfile: Boolean!) {
+    repositoryOwner(login: $username) {
+      __typename
+
+      ... on ProfileOwner @include(if: $includeProfile) {
+        pinnedItems(first: 6, types: REPOSITORY) {
+          nodes {
+            ... on Repository {
+              name
+              isPrivate
+              owner {
+                login
+              }
+            }
+          }
+        }
+      }
+
+      ... on Organization @include(if: $includeProfile) {
+        name
+        description
+        profileReadmeRepository: repository(name: ".github") {
+          isPrivate
+          profileReadme: object(expression: "HEAD:profile/README.md") {
+            ... on Blob {
+              byteSize
             }
           }
         }

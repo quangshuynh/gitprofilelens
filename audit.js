@@ -1126,6 +1126,32 @@
   }
 
   /**
+   * states whether a public audit's score is complete, partial, or not scored
+   *
+   * Builds on repository coverage rather than replacing it. "partial" means a
+   * score exists but rests on part of the evidence: GitHub returned only some
+   * repositories, or README and pin metadata could not be verified, in which case
+   * README scores are placeholders. Such a score is never presented as verified.
+   *
+   * @param {Object} input audit evidence
+   * @param {{state: string}} input.coverage result of assessRepositoryCoverage
+   * @param {boolean} input.metadataVerified true when README and pin data arrived
+   * @param {number} input.unverifiedReadmes repositories whose README is still unknown
+   * @returns {{state: string, gaps: Array<string>}} completeness and its gaps
+   */
+  function assessAuditCompleteness({ coverage, metadataVerified, unverifiedReadmes = 0 }) {
+    const coverageState = coverage?.state;
+    if (coverageState === "empty" || coverageState === "unavailable") {
+      return { state: coverageState, gaps: [] };
+    }
+    const gaps = [];
+    if (coverageState === "incomplete") gaps.push("repositories");
+    if (metadataVerified !== true) gaps.push("metadata");
+    else if (unverifiedReadmes > 0) gaps.push("readmes");
+    return { state: gaps.length > 0 ? "partial" : "complete", gaps };
+  }
+
+  /**
    * identifies a repository across pages by id, then by full name
    * @param {Object} repository github repository payload
    * @returns {string|null} identity key
@@ -1176,6 +1202,7 @@
 
   return {
     appendUniqueRepositories,
+    assessAuditCompleteness,
     assessRepositoryCoverage,
     classifyPortfolioCandidate,
     createReport,

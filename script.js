@@ -11,6 +11,9 @@ const profileAvatar = document.querySelector("#profile-avatar");
 const profileName = document.querySelector("#profile-name");
 const profileLink = document.querySelector("#profile-link");
 const profileInsight = document.querySelector("#profile-insight");
+const profileType = document.querySelector("#profile-type");
+const profileDescription = document.querySelector("#profile-description");
+const scoreCompleteness = document.querySelector("#score-completeness");
 const shareButton = document.querySelector("#share-button");
 const scoreCardButton = document.querySelector("#score-card-button");
 const overallScore = document.querySelector("#overall-score");
@@ -139,6 +142,8 @@ const appState = {
   // False when the supplemental contribution lookup failed, so an empty list is
   // never presented as "none found".
   contributionsAvailable: true,
+  // False for organizations, which cannot author pull requests.
+  contributionsApplicable: true,
 };
 
 /** Repositories requested per page of GitHub's public repository list. */
@@ -439,10 +444,13 @@ async function loadProfile(username) {
     if (!user || typeof user.login !== "string" || !GitHubAudit.isValidUsername(user.login)) {
       throw new Error("GitHub returned a profile response that could not be read. Try again shortly.");
     }
+    const isOrganization = user.type === "Organization";
     const [retrieval, supplemental, contributedRepositories] = await Promise.all([
       fetchAllRepositories(user.login),
       fetchSupplementalMetadata(user.login),
-      fetchContributedRepositories(user.login),
+      // Organizations cannot author pull requests, so the report request, and the
+      // GitHub requests behind it, would be spent to learn nothing.
+      isOrganization ? Promise.resolve(null) : fetchContributedRepositories(user.login),
     ]);
     // The public audit only ever holds public repositories.
     const repositories = transformRepositories(retrieval.repositories, supplemental)
@@ -453,6 +461,7 @@ async function loadProfile(username) {
     appState.repositories = repositories;
     appState.contributedRepositories = contributedRepositories || [];
     appState.contributionsAvailable = contributedRepositories !== null;
+    appState.contributionsApplicable = !isOrganization;
     appState.audits = audits;
     appState.supplemental = supplemental;
     appState.coverage = GitHubAudit.assessRepositoryCoverage({
@@ -474,7 +483,7 @@ async function loadProfile(username) {
     // A ?view=network deep link activates the tab before any profile exists, so the
     // lazy load is triggered here once the audited profile is actually available.
     if (isNetworkTabActive()) ensureNetworkLoaded();
-    statusEl.textContent = createSuccessStatus(appState.coverage, supplemental);
+    statusEl.textContent = createSuccessStatus(appState.coverage, supplemental, isOrganization);
   } catch (error) {
     showHomeView();
     showError(error.message);
@@ -609,6 +618,7 @@ async function loadPrivateRepositories() {
     appState.repositories = repositories;
     appState.contributedRepositories = [];
     appState.contributionsAvailable = true;
+    appState.contributionsApplicable = true;
     appState.coverage = { state: "complete", reported: null, retrieved: repositories.length };
     appState.audits = repositories.map(scoreTransformedRepository);
     appState.supplemental = supplemental;
@@ -722,12 +732,13 @@ function scoreTransformedRepository(repository) {
  * creates the status message shown after a successful profile fetch
  * @param {Object} coverage repository coverage from assessRepositoryCoverage
  * @param {Object|null} supplemental supplemental github metadata
+ * @param {boolean} isOrganization true when the audited account is an organization
  * @returns {string} success status message
  */
-function createSuccessStatus(coverage, supplemental) {
+function createSuccessStatus(coverage, supplemental, isOrganization = false) {
   const repositoryCount = coverage.retrieved;
   if (coverage.state === "empty") {
-    return "This account has no public repositories to audit. No score was calculated.";
+    return `This ${isOrganization ? "organization" : "account"} has no public repositories to audit. No score was calculated.`;
   }
 
   if (coverage.state === "unavailable") {
@@ -755,9 +766,55 @@ function createSuccessStatus(coverage, supplemental) {
  * @returns {string} empty-state message for the current coverage
  */
 function describeMissingRepositories() {
+  const noun = isOrganizationAudit() ? "organization" : "account";
   return appState.coverage.state === "unavailable"
-    ? "GitHub did not return this account's public repositories, so none could be analyzed."
-    : "This account has no public repositories.";
+    ? `GitHub did not return this ${noun}'s public repositories, so none could be analyzed.`
+    : `This ${noun} has no public repositories.`;
+}
+
+/**
+ * reports whether the public audit in view is of an organization
+ * @returns {boolean} true for an organization audit
+ */
+function isOrganizationAudit() {
+  return appState.mode === "public" && appState.user?.type === "Organization";
+}
+
+/**
+ * states how completely the public audit in view was evaluated
+ * @returns {{state: string, gaps: Array<string>}} audit completeness
+ */
+function getAuditCompleteness() {
+  // The private view is built from the signed-in user's own complete listing.
+  if (appState.mode !== "public") return { state: "complete", gaps: [] };
+  return GitHubAudit.assessAuditCompleteness({
+    coverage: appState.coverage,
+    metadataVerified: appState.supplemental !== null,
+    unverifiedReadmes: appState.repositories.filter((repository) => repository.readme?.present === null).length,
+  });
+}
+
+/**
+ * explains, in one sentence, which evidence a partial score is missing
+ * @param {Array<string>} gaps completeness gaps
+ * @returns {string} partial-score explanation
+ */
+function describePartialScore(gaps) {
+  const parts = [];
+  if (gaps.includes("repositories")) {
+    const { reported, retrieved } = appState.coverage;
+    parts.push(reported !== null && reported > retrieved
+      ? `it covers ${retrieved} of ${reported} public repositories`
+      : "GitHub did not return the complete repository list");
+  }
+  if (gaps.includes("metadata")) {
+    parts.push("README and pinned data could not be verified, so README scores are estimates");
+  }
+  if (gaps.includes("readmes")) {
+    const count = appState.repositories.filter((repository) => repository.readme?.present === null).length;
+    parts.push(`README data could not be verified for ${count} ${count === 1 ? "repository" : "repositories"}, so those README scores are estimates`);
+  }
+  return `Partial audit: ${parts.join(", and ")}. This score is not a complete result and should not be compared with complete audits.`;
 }
 
 /**
@@ -810,10 +867,24 @@ async function fetchSupplementalMetadata(username) {
       return null;
     }
 
-    return { pinnedRepositories: data.repositories, readmes: data.readmes };
+    return { pinnedRepositories: data.repositories, readmes: data.readmes, account: readAccountMetadata(data.account) };
   } catch {
     return null;
   }
+}
+
+/**
+ * keeps only the organization facts the metadata endpoint is expected to return
+ * @param {*} account account metadata from the serverless api
+ * @returns {Object|null} organization metadata, or null when absent or malformed
+ */
+function readAccountMetadata(account) {
+  if (!account || account.type !== "Organization") return null;
+  return {
+    type: "Organization",
+    name: typeof account.name === "string" && account.name.trim() ? account.name.trim() : null,
+    description: typeof account.description === "string" && account.description.trim() ? account.description.trim() : null,
+  };
 }
 
 /**
@@ -988,24 +1059,34 @@ function setResultMode(mode) {
  */
 function renderProfileHeader(profileScore) {
   const user = appState.user;
-  const firstName = (user.name || user.login).trim().split(/\s+/)[0];
+  const isOrganization = isOrganizationAudit();
+  const organization = isOrganization ? appState.supplemental?.account : null;
+  // An organization's name is a whole name, never a given name to shorten.
+  const displayName = isOrganization
+    ? (organization?.name || user.name || user.login).trim()
+    : (user.name || user.login).trim().split(/\s+/)[0];
   profileAvatar.crossOrigin = "anonymous";
   profileAvatar.src = user.avatar_url;
   profileAvatar.alt = `${user.login}'s GitHub avatar`;
-  profileName.textContent = user.name || `@${user.login}`;
+  profileName.textContent = (isOrganization && organization?.name) || user.name || `@${user.login}`;
   profileLink.href = user.html_url;
   profileLink.textContent = `@${user.login}`;
+  profileType.textContent = isOrganization ? "Organization" : "User";
+  profileType.classList.toggle("is-organization", isOrganization);
+  // Users have a bio rather than a description, and none is invented for them.
+  profileDescription.textContent = organization?.description || "";
+  profileDescription.hidden = !organization?.description;
   // Share and the score card both state a score, so neither is offered without one.
   shareButton.hidden = !profileScore.evaluated;
   scoreCardButton.hidden = !profileScore.evaluated;
   if (!profileScore.evaluated) {
     profileInsight.textContent = appState.coverage.state === "unavailable"
-      ? `${firstName}'s portfolio snapshot: GitHub did not return any public repositories to analyze.`
-      : `${firstName}'s portfolio snapshot: no public repositories are available to analyze yet.`;
+      ? `${displayName}'s portfolio snapshot: GitHub did not return any public repositories to analyze.`
+      : `${displayName}'s portfolio snapshot: no public repositories are available to analyze yet.`;
     return;
   }
   const strongestCategory = getStrongestCategory(profileScore.categories);
-  profileInsight.textContent = `${firstName}'s portfolio snapshot: ${appState.repositories.length} public ${appState.repositories.length === 1 ? "project" : "projects"} · strongest signal: ${strongestCategory}.`;
+  profileInsight.textContent = `${displayName}'s portfolio snapshot: ${appState.repositories.length} public ${appState.repositories.length === 1 ? "project" : "projects"} · strongest signal: ${strongestCategory}.`;
 }
 
 /**
@@ -1041,6 +1122,10 @@ function renderOverview(profileScore) {
 
   // Without repositories there is nothing to measure. Zeros here would read as
   // a measured, failing result, so the score is shown as not calculated.
+  scoreCompleteness.hidden = true;
+  scoreCompleteness.textContent = "";
+  overallScore.removeAttribute("aria-label");
+
   if (!profileScore.evaluated) {
     overallScore.textContent = "Not scored";
     overallScore.parentElement.classList.add("is-unscored");
@@ -1055,6 +1140,13 @@ function renderOverview(profileScore) {
 
   overallScore.textContent = profileScore.overall;
   overallScore.parentElement.classList.remove("is-unscored");
+
+  const completeness = getAuditCompleteness();
+  if (completeness.state === "partial") {
+    scoreCompleteness.textContent = describePartialScore(completeness.gaps);
+    scoreCompleteness.hidden = false;
+    overallScore.setAttribute("aria-label", `${profileScore.overall} out of 100, partial audit`);
+  }
 
   const labels = [
     ["presentation", "Repository presentation", profileScore.categories.presentation],
@@ -1530,6 +1622,12 @@ function renderContributions() {
   const repositories = appState.contributedRepositories;
   contributionsSection.hidden = false;
   contributionList.replaceChildren();
+
+  if (!appState.contributionsApplicable) {
+    contributionSummary.textContent = "Not applicable to organizations.";
+    contributionList.appendChild(createEmptyState("Organizations do not author pull requests, so external contributions are not part of an organization audit."));
+    return;
+  }
 
   if (!appState.contributionsAvailable) {
     contributionSummary.textContent = "External contributions unavailable.";
@@ -2155,7 +2253,9 @@ async function shareResult() {
   if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
   if (!profileScore.evaluated) return;
-  const shareText = GitProfileShare.buildShareText(appState.user.login, profileScore.overall);
+  const shareText = GitProfileShare.buildShareText(appState.user.login, profileScore.overall, undefined, {
+    partial: getAuditCompleteness().state === "partial",
+  });
   
   if (typeof navigator.share === "function") {
     try {
@@ -2185,7 +2285,9 @@ async function downloadScoreCard() {
   if (!appState.user || appState.mode !== "public") return;
   const profileScore = GitHubAudit.scoreProfile(appState.audits);
   if (!profileScore.evaluated) return;
-  const cardData = GitProfileShare.buildScoreCardData(appState.user.login, profileScore);
+  const cardData = GitProfileShare.buildScoreCardData(appState.user.login, profileScore, {
+    partial: getAuditCompleteness().state === "partial",
+  });
   scoreCardButton.disabled = true;
 
   let avatar = null;
@@ -2281,6 +2383,12 @@ function renderScoreCard(data, avatar) {
   context.fillStyle = "#79c0ff";
   context.font = "800 42px system-ui, sans-serif";
   context.fillText("/ 100", 94 + scoreWidth, 399);
+  if (data.partial) {
+    // A partial score must not travel as if it were complete.
+    context.fillStyle = "#d29922";
+    context.font = "700 24px system-ui, sans-serif";
+    context.fillText("Partial audit: some public data was unavailable", 90, 287);
+  }
 
   context.fillStyle = "#161b22";
   drawRoundedRectangle(context, 650, 190, 455, 100, 16);

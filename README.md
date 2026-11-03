@@ -179,6 +179,8 @@ Two fields state what the response could not establish:
 
 - `coverage.state` is `complete`, `empty` (the account has no public repositories), `unavailable` (GitHub reports public repositories but returned none), or `incomplete` (GitHub returned fewer than it reports, or pagination stopped early). `coverage.reported_repositories` is GitHub's own count, or `null` when it gave none.
 - `contributed_repositories_available` is `false` when contribution discovery failed, so an empty `contributed_repositories` is not read as "no contributions".
+- `contributed_repositories_applicable` is `false` for organizations, where contribution discovery is not attempted.
+- `account.type` is `User` or `Organization`. Organizations also report `name`, `description`, and `profile_readme` (whether the public `.github` repository has `profile/README.md`, or `null` when GitHub would not say). User-only fields are not invented for organizations.
 
 Only normalized public fields are returned. Private repository and pull-request details are excluded. Contribution discovery is bounded to GitHub Search's first 1,000 results and may be incomplete for unusually prolific accounts or when GitHub Search indexing lags. If this supplemental lookup fails or is rate-limited, the owned-repository report remains available with `contributed_repositories: []`.
 
@@ -407,7 +409,8 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - The public GraphQL README query checks common root README filenames. It reads at most 100 pages, and a repeated pagination cursor is treated as an upstream error rather than followed.
 - Repository lists are read at most 100 pages deep, deduplicated by repository id, and compared with the count GitHub reports. A shortfall is stated as incomplete rather than presented as the whole profile. GitHub's count can lag briefly after a repository is created or deleted.
 - An account with no public repositories is audited but not scored: there is no evidence to score, so no category score, recommendation, share text, or score card is produced.
-- README and pin enrichment queries GitHub's GraphQL `user` field, which does not resolve organizations. Organization audits therefore report README and pin data as unverified, and `/api/report` fails for organizations.
+- User and organization accounts are both audited. Enrichment reads GraphQL `repositoryOwner` and rejects any account type other than `User` or `Organization`. Organizations have no external-contribution section, because organizations cannot author pull requests.
+- A score built on part of the evidence (an incomplete repository list, or README and pin data that could not be verified) is labelled as a partial audit on the page, in share text, and on the score card.
 - Private auditing retrieves the preferred root README but does not clone repositories or analyze source code.
 - The private view currently focuses on repositories owned by the signed-in user, not organization administration.
 - Private report APIs, saved audits, and combined public/private scores are intentionally excluded. Private Markdown export is available only through the authenticated browser view.

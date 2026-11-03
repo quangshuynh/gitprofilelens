@@ -21,7 +21,11 @@ async function pinnedRepositoriesHandler(request, response) {
   try {
     const metadata = await fetchGitHubMetadata(username, process.env.GITHUB_TOKEN);
     response.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
-    response.status(200).json({ repositories: metadata.pinnedRepositories, readmes: metadata.readmes });
+    response.status(200).json({
+      repositories: metadata.pinnedRepositories,
+      readmes: metadata.readmes,
+      account: metadata.account,
+    });
   } catch (error) {
     const knownError = error instanceof GitHubRequestError;
     response.status(knownError ? error.status : 502).json({
