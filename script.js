@@ -105,6 +105,24 @@ const pinnedPrivateSection = document.querySelector("#pinned-private-section");
 const pinnedPrivateList = document.querySelector("#pinned-private-list");
 const pinnedExcludedSection = document.querySelector("#pinned-excluded-section");
 const pinnedExcludedList = document.querySelector("#pinned-excluded-list");
+const brandLink = document.querySelector("#brand-link");
+const accountButton = document.querySelector("#account-button");
+const accountMenu = document.querySelector("#account-menu");
+const accountAvatar = document.querySelector("#account-avatar");
+const accountMenuAvatar = document.querySelector("#account-menu-avatar");
+const accountMenuLogin = document.querySelector("#account-menu-login");
+const accountCapability = document.querySelector("#account-capability");
+const navMyProfile = document.querySelector("#nav-my-profile");
+const menuMyProfile = document.querySelector("#menu-my-profile");
+const homeMyProfileButton = document.querySelector("#home-my-profile-button");
+const homeAuthAvatar = document.querySelector("#home-auth-avatar");
+const authNotice = document.querySelector("#auth-notice");
+const authNoticeText = document.querySelector("#auth-notice-text");
+const authNoticeAction = document.querySelector("#auth-notice-action");
+const authNoticeDismiss = document.querySelector("#auth-notice-dismiss");
+const networkManagerBlockedGroup = document.querySelector("#network-manager-blocked-group");
+const networkManagerReauthorize = document.querySelector("#network-manager-reauthorize");
+const networkPanel = document.querySelector("#network-panel");
 
 /**
  * Result tabs, in the order the tab strip presents them.
@@ -261,6 +279,40 @@ const managerState = {
 };
 
 /**
+ * where the reader stands with GitHub, and what an authorization round trip asked for
+ *
+ * The server decides every capability; this only records what the interface has
+ * been told and what the landing URL asked the page to resume. `outcome` and
+ * `requestedManage` are read once from the URL a callback redirected to, and
+ * `pendingManage` stays set until both the session and the network are known, so
+ * the manager opens exactly when it can and never on a guess.
+ */
+const authState = {
+  resolved: false,
+  status: "unknown",
+  outcome: null,
+  requestedManage: false,
+  pendingManage: false,
+  // True while the username field holds the signed-in login as a default rather
+  // than something the reader chose, so a sign-out or account switch can take back
+  // only what it put there.
+  prefilled: false,
+  noticeAction: null,
+};
+
+/** Public audits kept in memory so Back and My profile do not refetch them. */
+const AUDIT_CACHE_LIMIT = 5;
+const auditCache = new Map();
+
+/**
+ * the single-use copy of a public audit carried across a GitHub round trip
+ *
+ * sessionStorage belongs to this tab only and is never sent anywhere. It is read
+ * once on load and only used when the page is returning from an authorization.
+ */
+const handoffStore = GitProfileAuthContext.createHandoffStore({ storage: readSessionStorage() });
+
+/**
  * observation history for the Network lists, stored only in this browser
  *
  * GitHub exposes no follow timestamp, so ordering can never come from the API.
@@ -291,6 +343,18 @@ function readLocalStorage() {
 }
 
 /**
+ * reads sessionStorage only when the browser actually permits it
+ * @returns {Object|null} usable storage, or null when storage is unavailable
+ */
+function readSessionStorage() {
+  try {
+    return window.sessionStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * builds the default visible-account count for every network section
  * @returns {Object} section key to visible count
  */
@@ -303,10 +367,53 @@ shareButton.addEventListener("click", shareResult);
 scoreCardButton.addEventListener("click", downloadScoreCard);
 copyButton.addEventListener("click", copyMarkdown);
 downloadButton.addEventListener("click", downloadMarkdown);
-privateAuditButton.addEventListener("click", loadPrivateRepositories);
+privateAuditButton.addEventListener("click", () => {
+  setAccountMenu(false);
+  loadPrivateRepositories();
+});
 homePrivateAuditButton.addEventListener("click", loadPrivateRepositories);
 logoutButton.addEventListener("click", logout);
 homeLogoutButton.addEventListener("click", logout);
+brandLink.addEventListener("click", handleBrandClick);
+navMyProfile.addEventListener("click", handleMyProfileClick);
+menuMyProfile.addEventListener("click", handleMyProfileClick);
+homeMyProfileButton.addEventListener("click", () => openOwnProfile());
+accountButton.addEventListener("click", () => setAccountMenu(accountMenu.hidden, { focusFirst: true }));
+accountMenu.addEventListener("keydown", handleAccountMenuKeydown);
+accountMenu.addEventListener("focusout", (event) => {
+  // Tabbing out of the menu closes it, the way a disclosure should not linger.
+  if (!event.relatedTarget || !accountMenu.parentElement.contains(event.relatedTarget)) setAccountMenu(false);
+});
+document.addEventListener("click", (event) => {
+  if (!accountMenu.hidden && !event.target.closest?.(".account")) setAccountMenu(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || accountMenu.hidden) return;
+  setAccountMenu(false);
+  accountButton.focus();
+});
+// Sign-in links are real links. Their destination is filled in at the moment they
+// are used, from wherever the reader is standing then.
+document.addEventListener("click", handleAuthStartClick);
+authNoticeAction.addEventListener("click", () => authState.noticeAction?.run());
+authNoticeDismiss.addEventListener("click", hideAuthNotice);
+networkManagerReauthorize.addEventListener("click", () => beginAuthorization({ manage: true }));
+usernameInput.addEventListener("input", () => {
+  // Anything typed is the reader's choice, never a default to be replaced.
+  authState.prefilled = false;
+});
+window.addEventListener("popstate", () => applyRoute(readRoute()));
+window.addEventListener("pageshow", (event) => {
+  // Returning to this page from GitHub with the Back button restores it from the
+  // back/forward cache exactly as it was left, including "Redirecting to GitHub".
+  if (!event.persisted) return;
+  if (authNotice.dataset.tone === "progress") hideAuthNotice();
+  refreshAuthSession("recheck");
+});
+document.addEventListener("visibilitychange", () => {
+  // Another tab may have signed in, signed out, or switched accounts.
+  if (document.visibilityState === "visible" && authState.resolved) refreshAuthSession("recheck");
+});
 includeDetailsInput.addEventListener("change", refreshMarkdown);
 pinnedOnlyInput.addEventListener("change", refreshMarkdown);
 selectedOnlyInput.addEventListener("change", refreshMarkdown);
@@ -328,10 +435,12 @@ networkHistoryResetButton.addEventListener("click", () => setHistoryResetConfirm
 networkHistoryCancelButton.addEventListener("click", () => setHistoryResetConfirmation(false));
 networkHistoryConfirmButton.addEventListener("click", resetNetworkHistory);
 networkManageButton.addEventListener("click", () => {
-  if (describeManageAvailability().needsPermission) startFollowManagementAuthorization();
-  else openUnfollowManager();
+  const availability = describeManageAvailability();
+  if (availability.actionable) openUnfollowManager();
+  else if (availability.needsSignIn || availability.needsPermission) beginAuthorization({ manage: true });
+  else if (availability.needsOwnProfile) openOwnProfile({ view: "network" });
 });
-networkManagerBack.addEventListener("click", closeUnfollowManager);
+networkManagerBack.addEventListener("click", () => closeUnfollowManager());
 networkManagerMore.addEventListener("click", () => {
   managerState.visibleCount += NETWORK_PAGE_SIZE;
   renderUnfollowManager();
@@ -377,38 +486,22 @@ for (const section of networkSections) {
   });
 }
 
-randomizeDoodles();
-initializeFromUrl();
-initializeAuthSession();
+// Start once every script on the page has run. A profile carried across an
+// authorization renders synchronously, so starting earlier would render before
+// this file's later declarations and the Markdown format control exist.
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", startApplication, { once: true });
+} else {
+  startApplication();
+}
 
 /**
- * varies decorative artwork within CSS-enforced gutter zones
+ * restores the reader's place from the url, then learns who is signed in
  * @returns {void} no return value
  */
-function randomizeDoodles() {
-  const doodles = document.querySelector(".page-doodles");
-  if (!doodles) return;
-
-  const randomBetween = (minimum, maximum) =>
-    Math.round(minimum + Math.random() * (maximum - minimum));
-  const properties = {
-    "--ring-y": `${randomBetween(40, 240)}px`,
-    "--ring-rotation": `${randomBetween(-24, 18)}deg`,
-    "--star-y": `${randomBetween(100, 360)}px`,
-    "--star-rotation": `${randomBetween(-18, 24)}deg`,
-    "--dots-bottom": `${randomBetween(45, 220)}px`,
-    "--dots-rotation": `${randomBetween(-12, 14)}deg`,
-    "--squiggle-bottom": `${randomBetween(35, 180)}px`,
-    "--squiggle-rotation": `${randomBetween(-13, 9)}deg`,
-    "--underline-rotation": `${randomBetween(-4, 3)}deg`,
-    "--underline-width": `${randomBetween(72, 106)}px`,
-  };
-
-  for (const [property, value] of Object.entries(properties)) {
-    doodles.style.setProperty(property, value);
-  }
-  document.documentElement.style.setProperty("--underline-rotation", properties["--underline-rotation"]);
-  document.documentElement.style.setProperty("--underline-width", properties["--underline-width"]);
+function startApplication() {
+  initializeFromUrl();
+  refreshAuthSession("initial");
 }
 
 /**
@@ -418,15 +511,18 @@ function randomizeDoodles() {
  */
 async function handleFormSubmit(event) {
   event.preventDefault();
-  await loadProfile(usernameInput.value.trim());
+  // A profile the reader asked for directly starts its own workflow.
+  authState.pendingManage = false;
+  await loadProfile(usernameInput.value.trim(), { history: "push" });
 }
 
 /**
  * loads and renders github profile data for a username
  * @param {string} username github username
+ * @param {Object} options history mode for the resulting url: push, replace, or none
  * @returns {Promise<void>} no return value
  */
-async function loadProfile(username) {
+async function loadProfile(username, options = {}) {
   if (!username) {
     showError("Enter a GitHub username.");
     return;
@@ -455,41 +551,126 @@ async function loadProfile(username) {
     // The public audit only ever holds public repositories.
     const repositories = transformRepositories(retrieval.repositories, supplemental)
       .filter((repository) => !repository.private);
-    const audits = repositories.map(scoreTransformedRepository);
 
-    appState.user = user;
-    appState.repositories = repositories;
-    appState.contributedRepositories = contributedRepositories || [];
-    appState.contributionsAvailable = contributedRepositories !== null;
-    appState.contributionsApplicable = !isOrganization;
-    appState.audits = audits;
-    appState.supplemental = supplemental;
-    appState.coverage = GitHubAudit.assessRepositoryCoverage({
-      reported: user.public_repos,
-      retrieved: repositories.length,
-      truncated: retrieval.truncated,
-    });
-    appState.mode = "public";
-    // A public audit holds no private audit data, even in memory.
-    appState.privateInstallation = false;
-    clearPrivateExportState();
-
-    // A newly audited profile must never inherit the previous profile's network.
-    resetNetworkState();
-
-    updateShareUrl(user.login);
-    renderResults();
-    showResultView();
-    // A ?view=network deep link activates the tab before any profile exists, so the
-    // lazy load is triggered here once the audited profile is actually available.
-    if (isNetworkTabActive()) ensureNetworkLoaded();
-    statusEl.textContent = createSuccessStatus(appState.coverage, supplemental, isOrganization);
+    applyPublicAudit({
+      user,
+      repositories,
+      contributedRepositories: contributedRepositories || [],
+      contributionsAvailable: contributedRepositories !== null,
+      contributionsApplicable: !isOrganization,
+      supplemental,
+      coverage: GitHubAudit.assessRepositoryCoverage({
+        reported: user.public_repos,
+        retrieved: repositories.length,
+        truncated: retrieval.truncated,
+      }),
+    }, { history: options.history ?? "replace" });
   } catch (error) {
     showHomeView();
     showError(error.message);
   } finally {
     setLoading(false);
   }
+}
+
+/**
+ * puts one public audit on screen, whether just fetched or kept from before
+ *
+ * Everything an audit shows is derived from this snapshot: the GitHub profile,
+ * the normalized public repositories, and what the retrieval could and could not
+ * establish. Scores are recomputed from it rather than stored, because scoring
+ * is deterministic and a stored score is one more thing that could disagree.
+ *
+ * @param {Object} snapshot public audit inputs
+ * @param {Object} options history mode, and a network to restore without refetching
+ * @returns {void} no return value
+ */
+function applyPublicAudit(snapshot, options = {}) {
+  const isOrganization = snapshot.user.type === "Organization";
+  appState.user = snapshot.user;
+  appState.repositories = snapshot.repositories;
+  appState.contributedRepositories = snapshot.contributedRepositories;
+  appState.contributionsAvailable = snapshot.contributionsAvailable;
+  appState.contributionsApplicable = snapshot.contributionsApplicable;
+  appState.audits = snapshot.repositories.map(scoreTransformedRepository);
+  appState.supplemental = snapshot.supplemental;
+  appState.coverage = snapshot.coverage;
+  appState.mode = "public";
+  // A public audit holds no private audit data, even in memory.
+  appState.privateInstallation = false;
+  clearPrivateExportState();
+  rememberAudit(snapshot);
+
+  // A newly audited profile must never inherit the previous profile's network.
+  resetNetworkState();
+
+  // The profile on screen is the reader's current choice of username.
+  usernameInput.value = snapshot.user.login;
+  authState.prefilled = false;
+
+  renderResults();
+  showResultView();
+  writeRoute(currentRoute(), options.history ?? "replace");
+
+  const network = options.network ?? null;
+  if (network && sameLogin(network.user?.login, snapshot.user.login)) {
+    restoreNetwork(network);
+  } else if (isNetworkTabActive()) {
+    // A ?view=network deep link activates the tab before any profile exists, so
+    // the lazy load is triggered here once the audited profile is available.
+    ensureNetworkLoaded();
+  }
+  statusEl.textContent = createSuccessStatus(appState.coverage, appState.supplemental, isOrganization);
+  resolvePendingManage();
+}
+
+/**
+ * gathers the current public audit into the snapshot applyPublicAudit accepts
+ * @returns {Object} public audit inputs
+ */
+function captureAuditSnapshot() {
+  return {
+    user: appState.user,
+    repositories: appState.repositories,
+    contributedRepositories: appState.contributedRepositories,
+    contributionsAvailable: appState.contributionsAvailable,
+    contributionsApplicable: appState.contributionsApplicable,
+    supplemental: appState.supplemental,
+    coverage: appState.coverage,
+  };
+}
+
+/**
+ * keeps a public audit in memory, most recent first, within a small bound
+ * @param {Object} snapshot public audit inputs
+ * @returns {void} no return value
+ */
+function rememberAudit(snapshot) {
+  const key = snapshot.user.login.toLowerCase();
+  auditCache.delete(key);
+  auditCache.set(key, { snapshot, network: null });
+  while (auditCache.size > AUDIT_CACHE_LIMIT) auditCache.delete(auditCache.keys().next().value);
+}
+
+/**
+ * attaches a retrieved or reconciled network to the cached audit it belongs to
+ * @param {Object} network network result
+ * @returns {void} no return value
+ */
+function rememberNetwork(network) {
+  const entry = auditCache.get(String(network?.user?.login || "").toLowerCase());
+  if (entry) entry.network = network;
+}
+
+/**
+ * compares two GitHub logins the way GitHub does, case-folded
+ * @param {*} first a login
+ * @param {*} second another login
+ * @returns {boolean} true when both name the same account
+ */
+function sameLogin(first, second) {
+  return typeof first === "string" && typeof second === "string" &&
+    first.length > 0 && first.toLowerCase() === second.toLowerCase();
 }
 
 function showLoadingView(username) {
@@ -507,6 +688,7 @@ function showResultView() {
   resultPage.hidden = false;
   resultPage.insertBefore(statusEl, resultSection);
   resultSection.hidden = false;
+  updateMyProfileLinks();
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
@@ -516,64 +698,548 @@ function showHomeView() {
   resultSection.hidden = true;
   hero.hidden = false;
   hero.appendChild(statusEl);
+  updateMyProfileLinks();
   window.scrollTo({ top: 0, behavior: "auto" });
 }
 
+/* --------------------------------------------------------------------------
+ * Where the reader is: the URL as the record of profile, tab, and manager
+ * ------------------------------------------------------------------------ */
+
+/**
+ * reads the reader's place from a query string
+ *
+ * Only a valid login, a known result view, and the management view are read.
+ * Asking for the manager always means the Network tab, the same rule the
+ * authorization routes apply to a return destination.
+ *
+ * @param {string} search location search string
+ * @returns {Object} user, view, and manage
+ */
+function readRoute(search = window.location.search) {
+  const parameters = new URLSearchParams(search);
+  const user = GitHubAudit.parseUsernameFromSearch(search);
+  const manage = Boolean(user) && parameters.get("manage") === "unfollows";
+  const requested = parameters.get("view");
+  const view = manage ? "network" : RESULT_TABS.includes(requested) ? requested : "overview";
+  return { user, view, manage };
+}
+
+/**
+ * describes where the reader is standing now, from what is on screen
+ * @returns {Object} user, view, and manage
+ */
+function currentRoute() {
+  const user = appState.mode === "public" && !resultPage.hidden ? appState.user?.login ?? null : null;
+  const view = readActiveTab();
+  return { user, view, manage: Boolean(user) && view === "network" && managerState.open };
+}
+
+/**
+ * writes the reader's place into the address bar
+ *
+ * The URL never carries anything but a login, a view, and the management view:
+ * it is built by the same function that builds an authorization's return
+ * destination, so what can be shared and what can be returned to are the same.
+ *
+ * @param {Object} route user, view, and manage
+ * @param {string} mode push, replace, or none
+ * @param {Object|null} state extra history state for this entry
+ * @returns {void} no return value
+ */
+function writeRoute(route, mode = "replace", state = null) {
+  if (mode === "none") return;
+  const path = GitProfileAuthContext.buildReturnPath({
+    user: route.user,
+    view: route.user && route.view !== "overview" ? route.view : null,
+    manage: route.user && route.manage ? "unfollows" : null,
+  });
+  const entry = { gitprofilelens: true, ...state };
+  const current = `${window.location.pathname}${window.location.search}`;
+  if (mode === "push" && path !== current) history.pushState(entry, "", path);
+  else history.replaceState(entry, "", path);
+}
+
+/**
+ * brings the page in line with a URL the reader moved to with Back or Forward
+ *
+ * Nothing is fetched that is already in memory: the same profile only changes
+ * tab or manager, and a profile seen earlier in this visit comes back from the
+ * in-memory cache together with its network.
+ *
+ * @param {Object} route user, view, and manage
+ * @returns {void} no return value
+ */
+function applyRoute(route) {
+  setAccountMenu(false);
+  if (!route.user) {
+    if (managerState.open) closeUnfollowManager({ history: "none" });
+    showHomeView();
+    return;
+  }
+
+  const current = appState.mode === "public" ? appState.user?.login : null;
+  if (current && sameLogin(current, route.user)) {
+    if (resultPage.hidden) showResultView();
+    activateTab(route.view, "none");
+    if (route.manage && !managerState.open) {
+      authState.pendingManage = true;
+      resolvePendingManage();
+    } else if (!route.manage && managerState.open) {
+      closeUnfollowManager({ history: "none" });
+    }
+    updateMyProfileLinks();
+    return;
+  }
+
+  authState.pendingManage = route.manage;
+  showProfile(route.user, { view: route.view, history: "none" });
+}
+
+/**
+ * shows a public profile, from memory when this visit already audited it
+ * @param {string} login profile to show
+ * @param {Object} options tab to show and history mode
+ * @returns {void} no return value
+ */
+function showProfile(login, options = {}) {
+  setActiveTab(options.view ?? "overview");
+  const cached = auditCache.get(login.toLowerCase());
+  if (cached) applyPublicAudit(cached.snapshot, { history: options.history, network: cached.network });
+  else loadProfile(login, { history: options.history });
+}
+
+/**
+ * returns to the homepage without reloading, keeping what was audited in memory
+ * @param {MouseEvent} event click on the brand link
+ * @returns {void} no return value
+ */
+function handleBrandClick(event) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  setAccountMenu(false);
+  if (managerState.open) closeUnfollowManager({ history: "none" });
+  writeRoute({ user: null }, "push");
+  showHomeView();
+  usernameInput.focus();
+}
+
+/* --------------------------------------------------------------------------
+ * Who the reader is: the GitHub session as the server reports it
+ * ------------------------------------------------------------------------ */
+
 /**
  * reads safe sign-in state without exposing GitHub credentials to the browser
+ *
+ * Called once on load, and again whenever the page is shown after being hidden
+ * or restored from the back/forward cache, because another tab can sign in, sign
+ * out, or switch accounts in the meantime. A failed re-check changes nothing:
+ * the reader keeps the state they had rather than being signed out by a network
+ * blip.
+ *
+ * @param {string} reason initial or recheck
  * @returns {Promise<void>} no return value
  */
-async function initializeAuthSession() {
+async function refreshAuthSession(reason = "initial") {
+  const previous = appState.authUser;
+  let data = null;
+  let ok = false;
   try {
     const response = await fetch("/api/auth/session", { headers: { Accept: "application/json" } });
-    const data = await response.json();
-    appState.authUser = response.ok && data.authenticated ? data.user : null;
-    // A capability the server reports, never a credential. The server checks it
-    // again on every mutation, so this copy only decides what is offered.
-    appState.canManageFollows = Boolean(appState.authUser && data.can_manage_follows);
-    renderAuthState();
-    const url = new URL(window.location.href);
-    const outcome = url.searchParams.get("auth");
-    if (outcome === "success" && appState.authUser) {
-      statusEl.textContent = `Signed in as @${appState.authUser.login}. Choose repositories to audit.`;
-      url.searchParams.delete("auth");
-      history.replaceState(null, "", url);
-    }
-    if (outcome === "manage-follows" && appState.authUser) {
-      statusEl.textContent = appState.canManageFollows
-        ? `GitProfileLens can now unfollow accounts you choose, as @${appState.authUser.login}. ` +
-          "It will never unfollow anyone automatically."
-        : "GitHub did not grant permission to manage who you follow.";
-      url.searchParams.delete("auth");
-      history.replaceState(null, "", url);
-    }
+    ok = response.ok;
+    data = await response.json();
   } catch {
-    appState.authUser = null;
-    appState.canManageFollows = false;
-    renderAuthState();
+    data = null;
+  }
+  if (reason !== "initial" && data === null) return;
+
+  const next = ok && data?.authenticated && typeof data.user?.login === "string" ? data.user : null;
+  appState.authUser = next;
+  // A capability the server reports, never a credential. The server checks it
+  // again on every mutation, so this copy only decides what is offered.
+  appState.canManageFollows = Boolean(next && data.can_manage_follows);
+  authState.status = next ? "signed-in" : data?.expired ? "expired" : "signed-out";
+  authState.resolved = true;
+
+  if (previous && !sameLogin(previous.login, next?.login)) handleAccountChange(previous, next);
+  renderAuthState();
+
+  if (reason === "initial") {
+    prefillHomeUsername();
+    handleAuthOutcome(authState.outcome);
+    authState.outcome = null;
+  }
+  resolvePendingManage();
+}
+
+/**
+ * clears everything that belonged to an account that is no longer signed in here
+ *
+ * Public profile data is not account data and stays. A private audit, an open
+ * manager's remaining offers, and the authorization handoff all belonged to the
+ * previous account and go with it.
+ *
+ * @param {Object} previous the account that was signed in
+ * @param {Object|null} next the account signed in now, if any
+ * @returns {void} no return value
+ */
+function handleAccountChange(previous, next) {
+  handoffStore.clear();
+  if (appState.mode === "private") clearPrivateAudit();
+  if (managerState.open && !managerState.blocked) {
+    blockUnfollowManager(
+      next
+        ? `You are now signed in as @${next.login}, not @${previous.login}.`
+        : "You are no longer signed in to GitHub.",
+      next ? null : "signin"
+    );
+  }
+  if (authState.prefilled && sameLogin(usernameInput.value, previous.login)) {
+    usernameInput.value = next?.login ?? "";
+    authState.prefilled = Boolean(next);
+  }
+  showAuthNotice(next
+    ? {
+      message: `You are now signed in as @${next.login}. Nothing that belonged to @${previous.login} is shown any more.`,
+      tone: "info",
+    }
+    : {
+      message: "You were signed out of GitProfileLens.",
+      tone: "info",
+      action: { label: "Sign in again", run: () => beginAuthorization({ manage: false }) },
+    });
+}
+
+/**
+ * fills an untouched homepage field with the signed-in login
+ *
+ * Precedence is a profile the URL asked for, then whatever the field already
+ * holds (typed, or a profile the reader chose), then the signed-in login.
+ *
+ * @returns {void} no return value
+ */
+function prefillHomeUsername() {
+  const login = appState.authUser?.login ?? null;
+  const chosen = GitProfileAuthContext.chooseHomeUsername({
+    explicit: readRoute().user,
+    typed: usernameInput.value,
+    authLogin: login,
+  });
+  if (chosen === usernameInput.value) return;
+  usernameInput.value = chosen;
+  authState.prefilled = sameLogin(chosen, login);
+}
+
+/**
+ * tells the reader what came back from GitHub, and how to recover when nothing did
+ * @param {string|null} outcome callback outcome read from the landing url
+ * @returns {void} no return value
+ */
+function handleAuthOutcome(outcome) {
+  const login = appState.authUser?.login;
+  const retry = {
+    label: "Try again",
+    run: () => beginAuthorization({ manage: authState.requestedManage }),
+  };
+
+  if (!outcome) {
+    if (authState.status === "expired") {
+      showAuthNotice({
+        message: "Your GitHub session expired. Sign in again to manage follows or audit authorized repositories.",
+        tone: "warning",
+        action: { label: "Sign in again", run: () => beginAuthorization({ manage: false }) },
+      });
+    }
+    return;
+  }
+  if (outcome === "success" && login) {
+    showAuthNotice({ message: `Signed in as @${login}.`, tone: "success" });
+  } else if (outcome === "manage-follows" && login && appState.canManageFollows) {
+    showAuthNotice({
+      message: `GitProfileLens can now unfollow accounts you choose, as @${login}. ` +
+        "It will never unfollow anyone automatically.",
+      tone: "success",
+    });
+  } else if (outcome === "manage-follows") {
+    showAuthNotice({
+      message: "GitHub did not grant permission to manage who you follow. Nothing was changed.",
+      tone: "error",
+      action: retry,
+    });
+  } else if (outcome === "denied") {
+    showAuthNotice({ message: "GitHub authorization was cancelled. Nothing was changed.", tone: "info", action: retry });
+  } else if (outcome === "invalid") {
+    showAuthNotice({
+      message: "That sign-in could not be verified, or it took too long. Nothing was changed.",
+      tone: "error",
+      action: retry,
+    });
+  } else {
+    showAuthNotice({
+      message: "GitHub could not complete the authorization. Nothing was changed.",
+      tone: "error",
+      action: retry,
+    });
   }
 }
 
+/**
+ * opens the manager a returning authorization asked for, once that is possible
+ *
+ * Waits for both the session and the network, because either can arrive first.
+ * When the manager cannot open, the request is dropped from the URL and the
+ * reason, which the Network tab already states, is brought into view.
+ *
+ * @returns {void} no return value
+ */
+function resolvePendingManage() {
+  if (!authState.pendingManage || !authState.resolved) return;
+  if (appState.mode !== "public" || !appState.user || resultPage.hidden) return;
+  if (networkState.status !== "loaded" && networkState.status !== "failed") return;
+  authState.pendingManage = false;
+
+  if (networkState.status === "loaded" && describeManageAvailability().actionable) {
+    if (!managerState.open) openUnfollowManager({ history: "replace" });
+    return;
+  }
+  writeRoute(currentRoute(), "replace");
+  if (!networkManage.hidden && isNetworkTabActive()) networkManage.scrollIntoView({ block: "nearest" });
+}
+
+/* --------------------------------------------------------------------------
+ * Starting an authorization without losing the reader's place
+ * ------------------------------------------------------------------------ */
+
+/**
+ * builds the url that starts a GitHub authorization from where the reader is
+ * @param {Object} options manage requests the follow-management authorization
+ * @returns {string} same-origin url of the authorization start route
+ */
+function buildAuthorizationUrl({ manage = false } = {}) {
+  const route = currentRoute();
+  const parameters = new URLSearchParams();
+  if (manage) parameters.set("manage", "follows");
+  parameters.set("return", GitProfileAuthContext.buildReturnPath({
+    user: route.user,
+    view: route.user && route.view !== "overview" ? route.view : null,
+    manage: route.user && manage ? "unfollows" : null,
+  }));
+  return `/api/auth/github?${parameters}`;
+}
+
+/**
+ * hands the current public audit across the redirect and says what is happening
+ * @param {Object} options manage requests the follow-management authorization
+ * @returns {string} the authorization start url
+ */
+function prepareAuthorization(options = {}) {
+  saveHandoff();
+  showAuthNotice({ message: "Redirecting to GitHub…", tone: "progress" });
+  return buildAuthorizationUrl(options);
+}
+
+/**
+ * leaves for GitHub to sign in, or to allow follow management
+ * @param {Object} options manage requests the follow-management authorization
+ * @returns {void} no return value
+ */
+function beginAuthorization(options = {}) {
+  window.location.assign(prepareAuthorization(options));
+}
+
+/**
+ * fills in a sign-in link's destination at the moment it is used
+ * @param {MouseEvent} event click anywhere in the document
+ * @returns {void} no return value
+ */
+function handleAuthStartClick(event) {
+  const link = event.target.closest?.("a[data-auth-start]");
+  if (!link) return;
+  const options = { manage: link.dataset.authStart === "follows" };
+  // A sign-in opened in another tab leaves this one where it is.
+  const elsewhere = event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey;
+  link.href = elsewhere ? buildAuthorizationUrl(options) : prepareAuthorization(options);
+}
+
+/**
+ * keeps the public audit for one round trip, or clears any stale copy
+ *
+ * Only a public audit is ever handed across: a private audit, or no audit, clears
+ * the store instead of writing it.
+ *
+ * @returns {void} no return value
+ */
+function saveHandoff() {
+  if (appState.mode !== "public" || !appState.user || resultPage.hidden) {
+    handoffStore.clear();
+    return;
+  }
+  const network = networkState.status === "loaded" && sameLogin(networkState.network?.user?.login, appState.user.login)
+    ? networkState.network
+    : null;
+  handoffStore.save({ login: appState.user.login, audit: captureAuditSnapshot(), network });
+}
+
+/* --------------------------------------------------------------------------
+ * Showing the reader who they are
+ * ------------------------------------------------------------------------ */
+
 function renderAuthState() {
-  const authenticated = Boolean(appState.authUser);
+  const user = appState.authUser;
+  const authenticated = Boolean(user);
   signedOutAuth.hidden = authenticated;
   signedInAuth.hidden = !authenticated;
   homeSignedOutAuth.hidden = authenticated;
   homeSignedInAuth.hidden = !authenticated;
-  authLogin.textContent = authenticated ? `@${appState.authUser.login}` : "";
-  homeAuthLogin.textContent = authenticated ? `@${appState.authUser.login}` : "";
+  const handle = authenticated ? `@${user.login}` : "";
+  authLogin.textContent = handle;
+  homeAuthLogin.textContent = handle;
+  accountMenuLogin.textContent = handle;
+  accountButton.setAttribute("aria-label", authenticated ? `Account menu for ${handle}` : "Account menu");
+  for (const image of [accountAvatar, accountMenuAvatar, homeAuthAvatar]) {
+    if (authenticated && isDisplayableAvatar(user.avatar_url)) {
+      image.src = user.avatar_url;
+      image.hidden = false;
+    } else {
+      image.removeAttribute("src");
+      image.hidden = true;
+    }
+  }
   if (!authenticated) {
     configureAccessLink.hidden = true;
     appState.canManageFollows = false;
+    setAccountMenu(false);
   }
+  accountCapability.textContent = !authenticated ? "" : appState.canManageFollows
+    ? "Follow management is allowed for this session. Every unfollow is still one account you confirm."
+    : "Follow management is not granted. GitProfileLens asks only when you choose to manage unfollows.";
   // Whether unfollowing may be offered follows the authorization as it stands now,
   // not the one that happened to hold when the Network tab was first loaded. An
   // open manager keeps showing what already happened, with its remaining offers
   // withdrawn, rather than vanishing mid-action.
   if (!authenticated && managerState.open && !managerState.blocked) {
-    blockUnfollowManager("You are no longer signed in to GitHub.");
+    blockUnfollowManager("You are no longer signed in to GitHub.", "signin");
   }
+  updateMyProfileLinks();
   updateManageAvailability();
+}
+
+/**
+ * accepts only avatar addresses GitHub or the page itself could have produced
+ * @param {*} value avatar url from the session
+ * @returns {boolean} true when the address is safe to load
+ */
+function isDisplayableAvatar(value) {
+  return typeof value === "string" && (value.startsWith("https://") || value.startsWith("data:image/"));
+}
+
+/**
+ * points every My profile control at the signed-in account, marking it when shown
+ * @returns {void} no return value
+ */
+function updateMyProfileLinks() {
+  const login = appState.authUser?.login;
+  const viewingOwn = Boolean(login) && appState.mode === "public" && !resultPage.hidden &&
+    sameLogin(appState.user?.login, login);
+  for (const link of [navMyProfile, menuMyProfile]) {
+    link.href = login ? GitProfileAuthContext.buildReturnPath({ user: login }) : "/";
+    if (viewingOwn) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+}
+
+/**
+ * opens the signed-in account's own public profile
+ * @param {Object} options tab to show
+ * @returns {void} no return value
+ */
+function openOwnProfile(options = {}) {
+  const login = appState.authUser?.login;
+  if (!login) return;
+  setAccountMenu(false);
+  authState.pendingManage = false;
+  const view = options.view ?? "overview";
+  const current = appState.mode === "public" && !resultPage.hidden ? appState.user?.login : null;
+  if (current && sameLogin(current, login)) {
+    activateTab(view, "push");
+    return;
+  }
+  showProfile(login, { view, history: "push" });
+}
+
+/**
+ * follows a My profile link inside the page, leaving modified clicks to the browser
+ * @param {MouseEvent} event click on a My profile link
+ * @returns {void} no return value
+ */
+function handleMyProfileClick(event) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  openOwnProfile();
+}
+
+/**
+ * opens or closes the account menu
+ * @param {boolean} open whether the menu should be open
+ * @param {Object} options focusFirst moves focus into the menu when it opens
+ * @returns {void} no return value
+ */
+function setAccountMenu(open, options = {}) {
+  if (accountMenu.hidden === !open) return;
+  accountMenu.hidden = !open;
+  accountButton.setAttribute("aria-expanded", String(open));
+  if (open && options.focusFirst) menuItems()[0]?.focus();
+}
+
+/**
+ * the menu's visible items in order
+ * @returns {Array<HTMLElement>} focusable menu items
+ */
+function menuItems() {
+  return [...accountMenu.querySelectorAll(".menu-item")].filter((item) => !item.hidden);
+}
+
+/**
+ * moves between menu items with the arrow keys
+ * @param {KeyboardEvent} event keydown inside the menu
+ * @returns {void} no return value
+ */
+function handleAccountMenuKeydown(event) {
+  const items = menuItems();
+  const index = items.indexOf(document.activeElement);
+  let next = null;
+  if (event.key === "ArrowDown") next = items[(index + 1) % items.length];
+  else if (event.key === "ArrowUp") next = items[(index - 1 + items.length) % items.length];
+  else if (event.key === "Home") next = items[0];
+  else if (event.key === "End") next = items[items.length - 1];
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
+}
+
+/**
+ * shows one message about the reader's GitHub authorization, with a way forward
+ * @param {Object} notice message, tone, and an optional action
+ * @returns {void} no return value
+ */
+function showAuthNotice({ message, tone = "info", action = null }) {
+  authNotice.hidden = false;
+  authNotice.dataset.tone = tone;
+  authNoticeText.textContent = message;
+  authState.noticeAction = action;
+  authNoticeAction.hidden = !action;
+  authNoticeAction.textContent = action?.label ?? "";
+}
+
+/**
+ * dismisses the authorization message
+ * @returns {void} no return value
+ */
+function hideAuthNotice() {
+  authNotice.hidden = true;
+  authNotice.dataset.tone = "";
+  authNoticeText.textContent = "";
+  authState.noticeAction = null;
 }
 
 /**
@@ -595,6 +1261,7 @@ async function loadPrivateRepositories() {
     const data = await response.json().catch(() => null);
     if (response.status === 401) {
       appState.authUser = null;
+      authState.status = "expired";
       renderAuthState();
       throw new Error(data?.error || "Your GitHub session expired. Please sign in again.");
     }
@@ -633,11 +1300,14 @@ async function loadPrivateRepositories() {
     configureAccessLink.hidden = !data.configure_url;
     if (data.configure_url) configureAccessLink.href = data.configure_url;
 
-    clearPublicAuditUrl();
     // The Network tab is public-profile only, so entering private mode drops it.
     resetNetworkState();
     renderResults();
     showResultView();
+    // A private audit has no shareable address: the URL names no profile, and
+    // Back returns to whatever public view came before it.
+    writeRoute({ user: null }, "push");
+    updateMyProfileLinks();
     if (!data.installation) {
       statusEl.textContent = "GitProfileLens is connected, but no GitHub App installation is available.";
     } else if (data.metadata?.repositories_complete === false) {
@@ -657,29 +1327,50 @@ async function loadPrivateRepositories() {
 }
 
 async function logout() {
+  setAccountMenu(false);
   logoutButton.disabled = true;
   homeLogoutButton.disabled = true;
   try {
     await fetch("/api/auth/logout", { method: "POST", headers: { Accept: "application/json" } });
   } finally {
+    const previous = appState.authUser;
     appState.authUser = null;
+    appState.canManageFollows = false;
+    authState.status = "signed-out";
+    handoffStore.clear();
     configureAccessLink.hidden = true;
-    if (appState.mode === "private") {
-      appState.mode = "public";
-      appState.user = null;
-      appState.repositories = [];
-      appState.contributedRepositories = [];
-      appState.audits = [];
-      appState.supplemental = null;
-      clearPrivateExportState();
-      showHomeView();
+    if (appState.mode === "private") clearPrivateAudit();
+    // A login the page filled in as a default leaves with the session; a profile
+    // the reader chose stays, because public browsing does not need a session.
+    if (authState.prefilled && previous && sameLogin(usernameInput.value, previous.login)) {
+      usernameInput.value = "";
+      authState.prefilled = false;
     }
     renderAuthState();
+    hideAuthNotice();
     logoutButton.disabled = false;
     homeLogoutButton.disabled = false;
     statusEl.classList.remove("error");
     statusEl.textContent = "Signed out of GitProfileLens.";
   }
+}
+
+/**
+ * removes a private audit from page state and returns to the homepage
+ * @returns {void} no return value
+ */
+function clearPrivateAudit() {
+  appState.mode = "public";
+  appState.user = null;
+  appState.repositories = [];
+  appState.contributedRepositories = [];
+  appState.audits = [];
+  appState.supplemental = null;
+  appState.privateInstallation = false;
+  configureAccessLink.hidden = true;
+  clearPrivateExportState();
+  showHomeView();
+  writeRoute({ user: null }, "replace");
 }
 
 function combineRepositoryScopes(publicRepositories, privateRepositories) {
@@ -693,14 +1384,6 @@ function combineRepositoryScopes(publicRepositories, privateRepositories) {
 function clearPrivateExportState() {
   appState.privateExports = { public: [], private: [], combined: [], publicSupplemental: null };
   output.value = "";
-}
-
-function clearPublicAuditUrl() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete("user");
-  url.searchParams.delete("view");
-  url.searchParams.delete("auth");
-  history.replaceState(null, "", url);
 }
 
 /**
@@ -2146,7 +2829,8 @@ function createPinnedStatus(text) {
  * @returns {void} no return value
  */
 function handleTabClick(event) {
-  activateTab(event.currentTarget.dataset.tab, true);
+  // A chosen tab is a place the reader can come Back to.
+  activateTab(event.currentTarget.dataset.tab, "push");
 }
 
 /**
@@ -2173,34 +2857,23 @@ function handleTabKeydown(event) {
   event.preventDefault();
   const nextTab = availableTabs[nextIndex];
   nextTab.focus();
-  activateTab(nextTab.dataset.tab, true);
+  // Arrowing through the tab strip is browsing, not navigating: one history
+  // entry for the strip rather than one per key press.
+  activateTab(nextTab.dataset.tab, "replace");
 }
 
 /**
- * activates one result tab and optionally updates the url
+ * activates one result tab and records it in the url
  * @param {string} tabName tab identifier
- * @param {boolean} updateUrl whether to write the tab into the url
+ * @param {string|boolean} historyMode push, replace, or none; true and false are replace and none
  * @returns {void} no return value
  */
-function activateTab(tabName, updateUrl) {
-  if (appState.mode === "private" && !PRIVATE_MODE_TABS.includes(tabName)) tabName = "audit";
-  const validTab = RESULT_TABS.includes(tabName)
-    ? tabName
-    : "overview";
+function activateTab(tabName, historyMode = "none") {
+  const mode = historyMode === true ? "replace" : historyMode === false ? "none" : historyMode;
+  const validTab = setActiveTab(tabName);
 
-  for (const button of tabButtons) {
-    const active = button.dataset.tab === validTab;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-  }
-
-  for (const panel of tabPanels) {
-    panel.hidden = panel.id !== `${validTab}-panel`;
-  }
-
-  if (updateUrl && appState.user && appState.mode === "public") {
-    updateShareUrl(appState.user.login, validTab);
+  if (appState.user && appState.mode === "public" && !resultPage.hidden) {
+    writeRoute(currentRoute(), mode);
   }
 
   // Follower and following pages are fetched only once this tab is actually opened,
@@ -2209,40 +2882,76 @@ function activateTab(tabName, updateUrl) {
 }
 
 /**
- * updates the current url with the audited username and active view
- * @param {string} username github username
- * @param {string|null} tabName optional result tab identifier
- * @returns {void} no return value
+ * marks one tab and its panel active without touching the url or the network
+ * @param {string} tabName tab identifier
+ * @returns {string} the tab actually activated
  */
-function updateShareUrl(username, tabName = null) {
-  if (appState.mode !== "public") return;
-  const url = new URL(window.location.href);
-  url.searchParams.set("user", username);
-  const activeTab = tabName || url.searchParams.get("view");
+function setActiveTab(tabName) {
+  if (appState.mode === "private" && !PRIVATE_MODE_TABS.includes(tabName)) tabName = "audit";
+  const validTab = RESULT_TABS.includes(tabName) ? tabName : "overview";
 
-  if (activeTab && activeTab !== "overview") {
-    url.searchParams.set("view", activeTab);
-  } else {
-    url.searchParams.delete("view");
+  for (const button of tabButtons) {
+    const active = button.dataset.tab === validTab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+    if (active) revealTab(button);
   }
 
-  history.replaceState(null, "", url);
+  for (const panel of tabPanels) {
+    panel.hidden = panel.id !== `${validTab}-panel`;
+  }
+  return validTab;
+}
+
+/**
+ * scrolls a narrow tab strip just enough to show the selected tab
+ * @param {HTMLElement} button selected tab
+ * @returns {void} no return value
+ */
+function revealTab(button) {
+  const strip = button.parentElement;
+  if (!strip?.getBoundingClientRect || strip.scrollWidth <= strip.clientWidth) return;
+  const stripBox = strip.getBoundingClientRect();
+  const tabBox = button.getBoundingClientRect();
+  if (tabBox.left < stripBox.left) strip.scrollLeft -= stripBox.left - tabBox.left + 8;
+  else if (tabBox.right > stripBox.right) strip.scrollLeft += tabBox.right - stripBox.right + 8;
+}
+
+/**
+ * reads which result tab is selected
+ * @returns {string} tab identifier
+ */
+function readActiveTab() {
+  return [...tabButtons].find((button) => button.classList.contains("is-active"))?.dataset.tab ?? "overview";
 }
 
 /**
  * initializes username and result view from url parameters
+ *
+ * A landing that carries `auth=` is the end of a GitHub round trip. The outcome
+ * is read once and removed from the URL, so a reload never replays it, and the
+ * audit handed across the redirect is used instead of fetching the profile again.
+ * The handoff is consumed on every load either way, so it can never be reused.
+ *
  * @returns {void} no return value
  */
 function initializeFromUrl() {
-  const parameters = new URLSearchParams(window.location.search);
-  const username = GitHubAudit.parseUsernameFromSearch(window.location.search);
-  const tabName = parameters.get("view") || "overview";
-  activateTab(tabName, false);
+  const route = readRoute();
+  authState.outcome = GitProfileAuthContext.readAuthOutcome(window.location.search);
+  authState.requestedManage = route.manage;
+  authState.pendingManage = route.manage;
+  const handoff = handoffStore.take(route.user ?? "");
+  setActiveTab(route.view);
+  writeRoute(route, "replace");
 
-  if (username) {
-    usernameInput.value = username;
-    loadProfile(username);
+  if (!route.user) return;
+  usernameInput.value = route.user;
+  if (authState.outcome && handoff?.audit?.user) {
+    applyPublicAudit(handoff.audit, { history: "replace", network: handoff.network });
+    return;
   }
+  loadProfile(route.user, { history: "replace" });
 }
 
 /**
@@ -2578,26 +3287,52 @@ async function loadNetwork(username, options = {}) {
     if (requestId !== networkState.requestId) return;
     networkState.status = "loaded";
     renderNetwork(network);
+    rememberNetwork(network);
   } catch (error) {
     if (requestId !== networkState.requestId) return;
     clearNetworkPanel();
     networkState.status = "failed";
     showNetworkError(error.message);
   }
+  resolvePendingManage();
+}
+
+/**
+ * shows a network this visit already retrieved, without asking GitHub again
+ *
+ * Used for a network carried across an authorization or kept in memory for Back.
+ * It is not a new observation, so observation history is read, never written:
+ * recording it again would claim GitProfileLens looked at GitHub when it did not.
+ *
+ * @param {Object} network network result retrieved earlier in this visit
+ * @returns {void} no return value
+ */
+function restoreNetwork(network) {
+  const validation = GitProfileNetwork.validateUsername(network?.user?.login ?? "");
+  if (!validation.ok || !network.followers || !network.following) return;
+  networkState.requestId += 1;
+  clearNetworkPanel();
+  networkState.username = validation.username;
+  networkState.status = "loaded";
+  renderNetwork(network, { record: false });
+  rememberNetwork(network);
+  resolvePendingManage();
 }
 
 /**
  * renders a retrieved network and enables export only when it is complete
  * @param {Object} network retrieved network result
+ * @param {Object} options record is false for a network that was already observed
  * @returns {void} no return value
  */
-function renderNetwork(network) {
+function renderNetwork(network, options = {}) {
   networkState.network = network;
 
   // Exactly one observation per completed retrieval, recorded before anything is
   // ordered so that the list the reader sees is ordered by history that already
   // includes this observation. Re-rendering never records again.
-  recordNetworkObservation(network);
+  if (options.record === false) readNetworkHistory(network);
+  else recordNetworkObservation(network);
 
   networkFollowerCount.textContent = formatNetworkCount(network.followers);
   networkFollowingCount.textContent = formatNetworkCount(network.following);
@@ -2691,6 +3426,21 @@ function recordNetworkObservation(network) {
     droppedProfiles: outcome.droppedProfiles ?? 0,
   };
   return outcome;
+}
+
+/**
+ * reads the stored history for a network without recording a new observation
+ * @param {Object} network network result retrieved earlier in this visit
+ * @returns {void} no return value
+ */
+function readNetworkHistory(network) {
+  const login = network.user.login;
+  networkState.history = {
+    followers: network.followers.complete ? networkHistory.getList(login, "followers") : null,
+    following: network.following.complete ? networkHistory.getList(login, "following") : null,
+    storage: null,
+    droppedProfiles: 0,
+  };
 }
 
 /**
@@ -2863,15 +3613,23 @@ function describeManageAvailability() {
         "that did not arrive, so GitProfileLens will not offer to act on the difference.",
     };
   }
+  // Until the session is known, offering "Sign in" to someone already signed in
+  // would be wrong half the time, so nothing is offered yet.
+  if (!authState.resolved) {
+    return { actionable: false, note: "Checking your GitHub sign-in…" };
+  }
   if (!appState.authUser) {
     return {
       actionable: false,
-      note: `Sign in as @${network.user.login} to manage who this account follows.`,
+      needsSignIn: true,
+      note: `Sign in as @${network.user.login} to manage who this account follows. GitHub will ask ` +
+        "you to allow GitProfileLens to change who you follow, and it never unfollows anyone automatically.",
     };
   }
   if (appState.authUser.login.toLowerCase() !== network.user.login.toLowerCase()) {
     return {
       actionable: false,
+      needsOwnProfile: true,
       note: `You are signed in as @${appState.authUser.login} and viewing @${network.user.login}. ` +
         "You can only manage the follows of the account you are signed in as.",
     };
@@ -2916,28 +3674,30 @@ function updateManageAvailability() {
     return;
   }
 
-  // The permission case is the one refusal the reader can resolve from here, so it
-  // keeps a control. Every other refusal is a statement of fact, not an offer.
-  networkManageButton.hidden = !availability.needsPermission;
+  // The refusals the reader can resolve from here keep a control: signing in,
+  // allowing follow management, or going to their own network. An incomplete
+  // retrieval is a statement of fact, not an offer, and has none.
+  //
+  // Signing in and allowing follow management both start the dedicated
+  // follow-management authorization, separate from ordinary sign-in. GitHub
+  // grants a GitHub App's user permissions as one set, so it cannot narrow the
+  // token; what it does is make the moment explicit and record that the reader
+  // chose it, and it returns them here rather than to the homepage.
+  const label = availability.needsSignIn
+    ? "Sign in to manage unfollows"
+    : availability.needsPermission
+      ? "Allow managing follows"
+      : availability.needsOwnProfile
+        ? "View my network"
+        : "";
+  networkManageButton.hidden = !label;
+  networkManageButton.textContent = label;
   if (availability.needsPermission) {
-    networkManageButton.textContent = "Allow managing follows";
     networkManageButton.setAttribute("aria-label", "Allow GitProfileLens to manage who you follow");
+  } else {
+    networkManageButton.removeAttribute("aria-label");
   }
   networkManageNote.textContent = availability.note;
-}
-
-/**
- * sends the reader to github to grant the follow-management permission
- *
- * A separate authorization from ordinary sign-in, so that reading a profile never
- * quietly carries the ability to change one. GitHub grants a GitHub App's user
- * permissions as one set, so this cannot narrow the token; what it does is make
- * the moment explicit and record that the reader chose it.
- *
- * @returns {void} no return value
- */
-function startFollowManagementAuthorization() {
-  window.location.href = "/api/auth/github?manage=follows";
 }
 
 /**
@@ -2946,10 +3706,16 @@ function startFollowManagementAuthorization() {
  * The snapshot is taken here, once, from the Network order established by
  * observation history. The manager invents no order of its own.
  *
+ * Opening it is a place in the reader's history: the URL gains
+ * `manage=unfollows`, so a reload, a shared link, or an authorization round trip
+ * returns to it, and Back leaves it.
+ *
+ * @param {Object} options history mode: push, replace, or none
  * @returns {void} no return value
  */
-function openUnfollowManager() {
+function openUnfollowManager(options = {}) {
   if (!describeManageAvailability().actionable) return;
+  const historyMode = options.history ?? "push";
 
   managerState.open = true;
   managerState.username = networkState.username;
@@ -2967,13 +3733,14 @@ function openUnfollowManager() {
   networkManagerFilter.value = "";
   networkManagerAnnouncement.textContent = "";
   networkManagerAnnouncement.classList.remove("is-error");
-  networkManagerBlocked.hidden = true;
-  networkManagerBlocked.textContent = "";
+  clearManagerBlock();
 
   networkResults.hidden = true;
   networkExport.hidden = true;
   networkManager.hidden = false;
+  networkPanel.classList.add("is-managing");
   renderUnfollowManager();
+  writeRoute(currentRoute(), historyMode, historyMode === "push" ? { manager: true } : null);
   // The view changed under the reader, so the heading takes focus and names what
   // they are now looking at rather than leaving them at the top of the document.
   networkManagerHeading.focus();
@@ -2987,13 +3754,24 @@ function openUnfollowManager() {
  * That keeps one unfollow from rebuilding a fully expanded list of thousands of
  * pills that nobody is looking at, once per account.
  *
+ * The Back to Network control behaves like the browser's Back when the manager
+ * was opened from the Network tab, so the two never disagree about where the
+ * reader is.
+ *
+ * @param {Object} options history mode: auto, replace, or none
  * @returns {void} no return value
  */
-function closeUnfollowManager() {
+function closeUnfollowManager(options = {}) {
   if (!managerState.open) return;
+  const historyMode = options.history ?? "auto";
+  if (historyMode === "auto" && history.state?.manager) {
+    history.back();
+    return;
+  }
   managerState.open = false;
   managerState.confirming = null;
   networkManager.hidden = true;
+  networkPanel.classList.remove("is-managing");
   // Restored only to what the network itself supports. A session that ended while
   // the manager was open must not reveal results the Network tab would not have
   // shown on its own.
@@ -3006,7 +3784,8 @@ function closeUnfollowManager() {
     renderReconciledNetwork();
   }
   updateManageAvailability();
-  if (!networkManageButton.hidden) networkManageButton.focus();
+  writeRoute(currentRoute(), historyMode === "none" ? "none" : "replace");
+  if (!networkManageButton.hidden && isNetworkTabActive()) networkManageButton.focus();
 }
 
 /**
@@ -3035,11 +3814,11 @@ function resetUnfollowManager() {
   managerState.rows = new Map();
   managerState.accountsByLogin = new Map();
   networkManager.hidden = true;
+  networkPanel.classList.remove("is-managing");
   networkManagerList.replaceChildren();
   networkManagerAnnouncement.textContent = "";
   networkManagerAnnouncement.classList.remove("is-error");
-  networkManagerBlocked.hidden = true;
-  networkManagerBlocked.textContent = "";
+  clearManagerBlock();
   networkManagerFilter.value = "";
   networkManagerFilterGroup.hidden = true;
   networkManage.hidden = true;
@@ -3204,6 +3983,11 @@ function createManagerRow(account) {
   view.textContent = "View on GitHub";
   link.appendChild(view);
   identity.appendChild(link);
+  // The relationship, stated once per row in exactly the terms it was derived in.
+  const relationship = document.createElement("span");
+  relationship.className = "manager-relationship";
+  relationship.textContent = "You follow · not in your followers list";
+  identity.appendChild(relationship);
   row.appendChild(identity);
 
   const actions = document.createElement("div");
@@ -3320,17 +4104,35 @@ function applyManagerRowState(row, account) {
  * exactly the moment the reader most needs to see which accounts were changed and
  * which were not, and pulling the view away would take that with it.
  *
+ * When signing in again or allowing follow management would fix it, that is
+ * offered beside the explanation. Either returns the reader to this manager with
+ * the network as it now stands, including every unfollow already confirmed.
+ *
  * @param {string} reason short phrase naming what is missing
+ * @param {string|null} recovery signin, permission, or null when nothing here can fix it
  * @returns {void} no return value
  */
-function blockUnfollowManager(reason) {
+function blockUnfollowManager(reason, recovery = null) {
   managerState.blocked = reason;
   managerState.confirming = null;
   networkManagerBlocked.textContent =
     `${reason} Nothing further can be unfollowed from here until that is resolved. ` +
     "Accounts already marked below were confirmed by GitHub before this happened.";
-  networkManagerBlocked.hidden = false;
+  networkManagerBlockedGroup.hidden = false;
+  networkManagerReauthorize.hidden = !recovery;
+  networkManagerReauthorize.textContent = recovery === "permission" ? "Allow managing follows" : "Sign in again";
   for (const [normalized] of managerState.rows) refreshManagerRow(normalized);
+}
+
+/**
+ * removes a block notice and its recovery control
+ * @returns {void} no return value
+ */
+function clearManagerBlock() {
+  networkManagerBlockedGroup.hidden = true;
+  networkManagerBlocked.textContent = "";
+  networkManagerReauthorize.hidden = true;
+  networkManagerReauthorize.textContent = "";
 }
 
 /**
@@ -3468,14 +4270,15 @@ async function requestUnfollow(login) {
       state: "failed",
       message: data?.error || "Your GitHub session expired. Please sign in again.",
     });
-    blockUnfollowManager("Your GitHub session ended.");
+    authState.status = "expired";
+    blockUnfollowManager("Your GitHub session ended.", "signin");
     renderAuthState();
     return;
   }
   if (response.status === 403 && data?.reason === "permission_required") {
     appState.canManageFollows = false;
     finishUnfollow(login, { state: "failed", message: data.error });
-    blockUnfollowManager("GitProfileLens no longer has permission to change who you follow.");
+    blockUnfollowManager("GitProfileLens no longer has permission to change who you follow.", "permission");
     updateManageAvailability();
     return;
   }
@@ -3583,6 +4386,9 @@ function reconcileUnfollow(login) {
     orderingNote: networkOrderingNote.textContent,
   });
   networkOutput.value = networkState.markdown;
+  // Back, My profile, and an authorization round trip all return to the network
+  // as it now stands, never to the one retrieved before this unfollow.
+  rememberNetwork(removal.network);
   // The Network lists are hidden behind the manager, so their DOM is rebuilt when
   // the reader goes back rather than once per unfollow.
   managerState.dirty = true;
@@ -3731,19 +4537,40 @@ function createAccountItem(section, account) {
   link.href = account.profileUrl;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
-  link.appendChild(document.createTextNode(account.login));
+
+  // The avatar GitHub already returned with the list; no request per account.
+  if (account.avatarUrl) {
+    const avatar = document.createElement("img");
+    avatar.className = "account-avatar-sm";
+    avatar.src = account.avatarUrl;
+    // Decorative: the login beside it already names the account.
+    avatar.alt = "";
+    avatar.width = 24;
+    avatar.height = 24;
+    avatar.loading = "lazy";
+    avatar.decoding = "async";
+    link.appendChild(avatar);
+  }
+
+  const text = document.createElement("span");
+  text.className = "account-text";
+  const name = document.createElement("span");
+  name.className = "account-name";
+  name.textContent = account.login;
+  text.appendChild(name);
 
   const entry = GitProfileNetworkHistory.findEntry(section.historyList, account.login);
   if (entry && !GitProfileNetworkHistory.isBaselineAccount(section.historyList, account.login)) {
     const observed = document.createElement("span");
     observed.className = "account-observed";
     observed.textContent = `first seen ${formatShortDate(entry.firstObservedAt)}`;
-    link.appendChild(observed);
+    text.appendChild(observed);
     link.classList.add("is-newly-observed");
     link.title = `First observed by GitProfileLens on ${formatShortDate(entry.firstObservedAt)}. ` +
       "GitHub does not report when the follow happened.";
   }
 
+  link.appendChild(text);
   item.appendChild(link);
   return item;
 }

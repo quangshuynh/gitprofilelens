@@ -93,38 +93,12 @@
     const control = document.createElement("label");
     control.className = "export-format-control";
     control.htmlFor = "export-format";
-    control.style.display = "inline-flex";
-    control.style.alignItems = "center";
-    control.style.gap = ".55rem";
-    control.style.margin = ".25rem 0 .8rem";
-    control.style.fontSize = ".88rem";
-    control.style.fontWeight = "700";
-    control.style.color = "#b1bac4";
     control.append("Format");
 
     const select = document.createElement("select");
     select.id = "export-format";
     select.setAttribute("aria-label", "Markdown export format");
     select.innerHTML = '<option value="full">Full</option><option value="compact">Compact</option>';
-    select.style.minWidth = "118px";
-    select.style.padding = ".55rem 2rem .55rem .75rem";
-    select.style.border = "1px solid #30363d";
-    select.style.borderRadius = "8px";
-    select.style.background = "#21262d";
-    select.style.color = "#f0f6fc";
-    select.style.font = "inherit";
-    select.style.fontWeight = "700";
-    select.style.cursor = "pointer";
-    select.style.boxShadow = "0 2px 8px rgba(0,0,0,.18)";
-    select.style.outline = "none";
-    select.addEventListener("focus", () => {
-      select.style.borderColor = "#58a6ff";
-      select.style.boxShadow = "0 0 0 2px rgba(88,166,255,.25)";
-    });
-    select.addEventListener("blur", () => {
-      select.style.borderColor = "#30363d";
-      select.style.boxShadow = "0 2px 8px rgba(0,0,0,.18)";
-    });
     control.appendChild(select);
     exportSummaryElement.before(control);
 
