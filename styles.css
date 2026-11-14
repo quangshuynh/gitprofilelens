@@ -1180,10 +1180,13 @@ textarea:focus-visible { box-shadow: inset 0 0 0 1px rgba(99, 161, 255, 0.7); ou
   .brand-name { display: none; }
 }
 
-@media (pointer: coarse) {
-  button, .button { min-height: 44px; }
-  .button-sm, .tab, .icon-button { min-height: 40px; }
-  .link-button, .category-score-trigger { min-height: 0; }
+/* Touch screens and anything tablet-sized or smaller get thumb-sized targets. */
+@media (pointer: coarse), (max-width: 768px) {
+  button, .button, .menu-item, .account-button, .manager-actions button { min-height: 44px; }
+  .button-sm, .tab, .icon-button, .pinned-audit-link, .nav-link { min-height: 40px; }
+  .category-score-trigger { min-height: 0; padding: 6px 0; }
+  .link-button { display: inline-flex; align-items: center; min-height: 40px; }
+  .icon-button { width: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
