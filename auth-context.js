@@ -32,6 +32,10 @@
   /** How long an audit handed across an authorization stays usable. */
   const HANDOFF_MAX_AGE_MS = 10 * 60 * 1000;
 
+  const RETURN_MEMORY_KEY = "gitprofilelens.auth-return.v1";
+  /** Long enough to outlive a stalled GitHub consent screen, short enough to go stale. */
+  const RETURN_MEMORY_MAX_AGE_MS = 60 * 60 * 1000;
+
   /**
    * reduces a requested return destination to one this application may redirect to
    *
@@ -189,11 +193,67 @@
     return { save, take, clear };
   }
 
+  /**
+   * remembers, in this tab, where the reader was when an authorization started
+   *
+   * The server keeps the same destination in a cookie that lives exactly as long
+   * as the OAuth state. When that state has expired, or a reader returns to a
+   * callback a second time, the server can no longer vouch for the destination
+   * and sends them to the homepage. This lets the page put them back where they
+   * started anyway. It holds one normalized same-origin path and nothing else,
+   * and is read once.
+   *
+   * @param {Object} options storage, clock, and maximum age
+   * @returns {Object} remember and recall
+   */
+  function createReturnMemory(options = {}) {
+    const storage = options.storage ?? null;
+    const now = options.now ?? (() => Date.now());
+    const maxAgeMs = options.maxAgeMs ?? RETURN_MEMORY_MAX_AGE_MS;
+
+    function remember(path) {
+      const normalized = normalizeReturnPath(path);
+      if (!storage || !normalized) return false;
+      try {
+        storage.setItem(RETURN_MEMORY_KEY, JSON.stringify({ version: 1, savedAt: now(), path: normalized }));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function recall() {
+      if (!storage) return null;
+      let raw = null;
+      try {
+        raw = storage.getItem(RETURN_MEMORY_KEY);
+        storage.removeItem(RETURN_MEMORY_KEY);
+      } catch {
+        return null;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return null;
+      }
+      if (!parsed || parsed.version !== 1) return null;
+      const age = now() - Number(parsed.savedAt);
+      if (!Number.isFinite(age) || age < 0 || age > maxAgeMs) return null;
+      return normalizeReturnPath(parsed.path);
+    }
+
+    return { remember, recall };
+  }
+
   return {
     RESULT_VIEWS,
     AUTH_OUTCOMES,
     HANDOFF_KEY,
     HANDOFF_MAX_AGE_MS,
+    RETURN_MEMORY_KEY,
+    RETURN_MEMORY_MAX_AGE_MS,
+    createReturnMemory,
     normalizeReturnPath,
     buildReturnPath,
     readAuthOutcome,

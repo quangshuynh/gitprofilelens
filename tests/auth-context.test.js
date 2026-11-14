@@ -203,3 +203,52 @@ test("a handoff without a valid login is refused rather than stored", () => {
   assert.equal(store.save({ ...payload, login: "not a login" }), false);
   assert.equal(storage.values.size, 0);
 });
+
+/* --------------------------------------------------------------------------
+ * Remembering where an authorization started
+ * ------------------------------------------------------------------------ */
+
+const { createReturnMemory, RETURN_MEMORY_KEY, RETURN_MEMORY_MAX_AGE_MS } = require("../auth-context.js");
+
+test("the place an authorization started is recalled once, normalized", () => {
+  const storage = memoryStorage();
+  const memory = createReturnMemory({ storage, now: () => 0 });
+  assert.equal(memory.remember("/?user=octocat&view=network&manage=unfollows&auth=x"), true);
+  assert.equal(memory.recall(), "/?user=octocat&view=network&manage=unfollows");
+  assert.equal(memory.recall(), null, "recall is single-use");
+  assert.equal(storage.values.has(RETURN_MEMORY_KEY), false);
+});
+
+test("a remembered place outlives the ten-minute OAuth state, but not indefinitely", () => {
+  const storage = memoryStorage();
+  let clock = 0;
+  const memory = createReturnMemory({ storage, now: () => clock });
+  memory.remember("/?user=octocat");
+  clock = 30 * 60 * 1000;
+  assert.equal(memory.recall(), "/?user=octocat");
+
+  memory.remember("/?user=octocat");
+  clock += RETURN_MEMORY_MAX_AGE_MS + 1;
+  assert.equal(memory.recall(), null);
+  assert.ok(RETURN_MEMORY_MAX_AGE_MS >= 60 * 60 * 1000);
+});
+
+test("a remembered place can never name another origin", () => {
+  const storage = memoryStorage();
+  const memory = createReturnMemory({ storage, now: () => 0 });
+  assert.equal(memory.remember("https://evil.test/"), false);
+  storage.setItem(RETURN_MEMORY_KEY, JSON.stringify({ version: 1, savedAt: 0, path: "//evil.test" }));
+  assert.equal(memory.recall(), null);
+});
+
+test("blocked storage remembers nothing and never throws", () => {
+  const refusing = {
+    getItem: () => { throw new Error("blocked"); },
+    setItem: () => { throw new Error("blocked"); },
+    removeItem: () => { throw new Error("blocked"); },
+  };
+  const memory = createReturnMemory({ storage: refusing, now: () => 0 });
+  assert.equal(memory.remember("/?user=octocat"), false);
+  assert.equal(memory.recall(), null);
+  assert.equal(createReturnMemory({ storage: null }).recall(), null);
+});

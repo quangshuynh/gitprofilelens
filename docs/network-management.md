@@ -150,16 +150,22 @@ browser
         -> DELETE https://api.github.com/user/following/octocat
 ```
 
-The request body may name **only** who to unfollow. `actingUser`,
-`authenticatedLogin`, `token` and anything else in the body are ignored, not
-trusted. There is no path parameter, no token parameter and no batch form, so
+The request body may name **only** who to unfollow, plus, optionally, which
+account the page believes is acting (`expectedActor`). That second field can
+only refuse: when it differs from the sealed session's login, compared
+case-insensitively, the request is answered `409 account_mismatch` before any
+GitHub request, because another tab has signed this browser in as someone else
+and the reader was managing a different account's follows. The page always
+sends it. `actingUser`, `authenticatedLogin`, `token` and anything else in the
+body are ignored, not trusted. There is no path parameter, no token parameter and no batch form, so
 the endpoint cannot be turned into a general GitHub proxy by anyone who has the
 URL. It implements exactly one bounded operation.
 
 The server checks, in order: the method is `POST`; the `Origin`, when present,
 matches the host; the target login is syntactically valid; the session is valid
-and unexpired; the session carries the follow-management permission; and the
-target is not the signed-in account itself. The session cookie is already
+and unexpired; the session carries the follow-management permission; the page's
+expected account, when named, is the signed-in account; and the target is not
+the signed-in account itself. The session cookie is already
 `SameSite=Lax`, so the `Origin` check is a second lock rather than the only one.
 
 A write is **never retried**. GitHub counts one against a secondary limit of 80
@@ -322,5 +328,7 @@ does and what GitHub permits.
 - Observation history lives in this browser only. A different browser or device
   starts a new baseline, and the ordering falls back to GitHub's own.
 - Unfollowing is possible only for the account you are signed in as.
-- The audit handed across an authorization lives in one browser tab. A sign-in
-  opened in a new tab, or completed after ten minutes, fetches the profile again.
+- The audit handed across an authorization lives in one browser tab for ten
+  minutes. A sign-in completed later fetches the profile again; the tab
+  remembers for an hour where the authorization started, so it still returns
+  there even when GitHub's state has expired.

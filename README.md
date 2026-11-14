@@ -77,6 +77,7 @@ Public auditing never needs an account. Signing in with GitHub adds three things
 
 1. Records where you are as a return destination. The server reduces it to an allowlisted same-origin path (`/`, a valid `user`, a known `view`, and `manage=unfollows`), keeps it in a short-lived `HttpOnly` cookie, and normalizes it again in the callback, so neither a crafted link nor an edited cookie can redirect anywhere else.
 2. Hands the public audit and network you were looking at across the redirect in this tab's `sessionStorage`. The copy is public data only, is read once, expires after ten minutes, is never written for a private audit, and holds nothing that could act as you. On return the page restores it instead of fetching the profile again, which matters against GitHub's sixty-requests-an-hour unauthenticated limit. If the browser blocks storage, the profile is simply fetched once more.
+3. Remembers the same return path in this tab for an hour. If you take long enough on GitHub that the sign-in itself expires, or revisit an old callback, the server can no longer vouch for the destination and sends you home; the tab then puts you back on the page you left, with an explanation and **Try again**.
 
 **Your username is filled in for you.** The navigation shows your avatar and login with **My profile**, **Audit my repositories**, and **Sign out**. The homepage field is prefilled with your login only when it is empty. A profile in the URL, or one you typed or chose, always wins, so you can inspect anyone's public profile without signing out.
 
@@ -211,7 +212,8 @@ GitProfileLens uses the GitHub App web authorization flow and requests read-only
 - Private repository responses are processed for the current request and are not permanently stored by GitProfileLens.
 - Private Markdown reports are generated locally in the browser and cleared from page state on logout, and when the page finds a different account signed in.
 - Every authorization returns to a server-normalized, same-origin destination. The OAuth callback never ends on an error page: a cancelled, failed, or unverifiable authorization redirects back with an outcome word in `auth=`, issues no session, and leaves any existing session as it was.
-- The only browser storage used for authorization is a single-use, ten-minute `sessionStorage` copy of the public audit you were looking at. Tokens, private repository data, and anything account-specific never enter browser storage.
+- The only browser storage used for authorization is a single-use, ten-minute `sessionStorage` copy of the public audit you were looking at, and the normalized path an authorization started from. Tokens, private repository data, and anything account-specific never enter browser storage.
+- An unfollow request names the account the page believes is acting. The server refuses with `409` when that is no longer the signed-in account, so an account switched in another tab can never unfollow from the wrong account. The field only narrows: who acts is always the sealed session.
 - Logout clears the GitProfileLens session cookie. It does not sign the user out of GitHub.
 - The interface loads the Inter and Geist Mono typefaces from Google Fonts. This is the only third-party request the page makes besides GitHub's API and avatars; without it the page falls back to system fonts.
 
@@ -490,7 +492,7 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - GitHub exposes no timestamp for when a follow happened, so the Network lists are shown in the API's order and are never labelled newest or oldest. See [docs/network-ordering.md](docs/network-ordering.md).
 - The Network tab retrieves at most 10,000 accounts per list; a larger network is reported as incomplete rather than silently truncated. It is available for public audits only, not the private repository audit.
 - The unfollow manager works only on the account you are signed in as, only when both relationship lists were retrieved completely, and only one account at a time. GitProfileLens never unfollows anyone automatically and implements no bulk action.
-- The audit carried across a sign-in lives in one browser tab for ten minutes. A sign-in opened in a new tab, or finished later than that, returns to the same place but fetches the profile again.
+- The audit carried across a sign-in lives in one browser tab for ten minutes, and the page a sign-in started from is remembered in that tab for an hour. A sign-in finished later than ten minutes returns to the same place but fetches the profile again. One opened in a different tab returns to the same place only if it finishes within ten minutes; after that GitHub's state has expired and it lands on the homepage.
 - A GitHub App's user permissions are granted as one set at authorization, so GitProfileLens cannot narrow the write permission at the GitHub level. Its separate follow-management authorization is an application-level gate that makes the moment explicit; it is not a smaller token. See [docs/network-management.md](docs/network-management.md).
 
 ## Contributing

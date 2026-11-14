@@ -67,7 +67,10 @@
     </div>
   </header>
 
-  <div id="auth-notice" class="auth-notice" role="status" aria-live="polite" hidden>
+  <!-- Always rendered, so assistive technology is already listening when a message arrives. -->
+  <div id="auth-live" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="auth-alert" class="visually-hidden" role="alert" aria-atomic="true"></div>
+  <div id="auth-notice" class="auth-notice" hidden>
     <div class="auth-notice-inner">
       <span class="auth-notice-dot" aria-hidden="true"></span>
       <p id="auth-notice-text" class="auth-notice-text"></p>

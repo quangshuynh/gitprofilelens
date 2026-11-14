@@ -1957,7 +1957,9 @@ test("a confirmed unfollow reconciles every surface at once", { skip: !chromePat
     await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
 
     await bob.getByRole("button", { name: "Unfollowed: bob" }).waitFor();
-    assert.deepEqual(calls, [{ body: { login: "bob" }, method: "POST" }]);
+    // The page names the account it believes is acting, so the server can refuse
+    // an unfollow meant for an account that is no longer signed in.
+    assert.deepEqual(calls, [{ body: { login: "bob", expectedActor: "example" }, method: "POST" }]);
     assert.equal(await bob.getAttribute("data-state"), "done");
     assert.match(await page.locator("#network-manager-announcement").innerText(), /Unfollowed @bob\./);
     assert.match(await page.locator("#network-manager-announcement").innerText(), /1 account remains/);
@@ -3938,6 +3940,282 @@ test("a 39-character login fits the navigation, profile, and manager on a 375px 
     await page.keyboard.press("Escape");
     await page.locator("#account-menu").waitFor({ state: "hidden" });
     assert.equal(await page.evaluate(() => document.activeElement?.id), "account-button");
+  } finally {
+    await browser.close();
+  }
+});
+
+/* --------------------------------------------------------------------------
+ * Review fixes: races, lost context, account changes, history, accessibility
+ * ------------------------------------------------------------------------ */
+
+test("a profile that finishes loading after Back never takes over the screen", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await mockGithubRequests(page, [repository], { login: "example" });
+    await mockGithubRequests(page, [secondRepository], { login: "slowpoke", profileDelay: 900 });
+    await mockSessionState(page, { authenticated: false });
+
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    await page.locator(".site-nav .brand").click();
+    await page.locator("#username").fill("slowpoke");
+    await page.getByRole("button", { name: "Analyze profile" }).click();
+    await page.locator("#loading-screen").waitFor({ state: "visible" });
+    // The reader changes their mind before the slow profile arrives.
+    await page.goBack();
+    await page.locator("#profile-link").filter({ hasText: "@example" }).waitFor();
+    await page.waitForTimeout(1300);
+
+    assert.equal(await page.locator("#profile-link").innerText(), "@example");
+    assert.equal(new URL(page.url()).searchParams.get("user"), "example");
+    assert.equal(await page.locator("#loading-screen").isHidden(), true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a callback that lost its return cookie still returns to the page that started it", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await prepareProfile(page, OWN_NETWORK);
+    await mockSessionState(page, { login: "example", canManageFollows: false });
+    // The state expired on GitHub, so the callback could only send the reader home.
+    await page.route("**/api/auth/github**", (route) => route.fulfill({
+      status: 302,
+      headers: { Location: `${baseUrl}/?auth=invalid` },
+    }));
+
+    await page.goto(`${baseUrl}/?user=example&view=network`);
+    await page.locator("#network-manage-unfollows").filter({ hasText: "Allow managing follows" }).click();
+    await page.locator("#auth-notice").filter({ hasText: /could not be verified/ }).waitFor();
+
+    assert.equal(await page.locator("#profile-link").innerText(), "@example");
+    assert.equal(await page.locator("#network-tab").getAttribute("aria-selected"), "true");
+    assert.equal(new URL(page.url()).searchParams.get("user"), "example");
+    assert.equal(await page.locator("#auth-notice-action").innerText(), "Try again");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a session lost during a private audit takes the private results with it", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await mockGithubRequests(page);
+    await mockSessionState(page, { login: "example" });
+    let expired = false;
+    await page.route("**/api/private-repositories", (route) => route.fulfill(expired
+      ? { status: 401, json: { error: "Your GitHub session expired. Please sign in again." } }
+      : {
+        json: {
+          installation: true,
+          configure_url: null,
+          repositories: [{ ...repository, id: 902, name: "secret-project", full_name: "example/secret-project", html_url: "https://github.com/example/secret-project", private: true, visibility: "private" }],
+          public_repositories: [],
+          readmes: { "secret-project": readme },
+          metadata: { complete: true, unavailable_readmes: 0, issues: {} },
+        },
+      }));
+
+    await page.goto(baseUrl);
+    await page.locator("#home-private-audit-button").click();
+    await page.locator("#audit-title").filter({ hasText: "Private Repository Audit" }).waitFor();
+    expired = true;
+    await page.locator("#account-button").click();
+    await page.locator("#private-audit-button").click();
+    await page.locator("#status.error").filter({ hasText: /session expired/ }).waitFor();
+
+    assert.equal(await page.locator("#result-section").isHidden(), true);
+    assert.equal(await page.locator("#signed-out-auth").isVisible(), true);
+    const state = await page.evaluate(() => JSON.stringify({
+      mode: appState.mode,
+      repositories: appState.repositories.map((item) => item.name),
+      privateExports: appState.privateExports,
+    }));
+    assert.doesNotMatch(state, /secret-project/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an unfollow names the account it was meant for, and a mismatch stops the manager", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await prepareProfile(page, OWN_NETWORK);
+    await mockSessionState(page, { login: "example", canManageFollows: true });
+    const calls = await mockUnfollowEndpoint(page, () => ({
+      status: 409,
+      json: {
+        error: "You are signed in as @someone-else, not @example. Nothing was changed.",
+        reason: "account_mismatch",
+      },
+    }));
+
+    await page.goto(`${baseUrl}/?user=example&view=network&manage=unfollows`);
+    const bob = page.locator('.manager-row[data-login="bob"]');
+    await bob.getByRole("button", { name: "Unfollow bob" }).click();
+    await bob.getByRole("button", { name: "Confirm unfollowing bob" }).click();
+    await page.locator('.manager-row[data-login="bob"][data-state="failed"]').waitFor();
+
+    assert.deepEqual(calls[0].body, { login: "bob", expectedActor: "example" });
+    assert.match(await bob.locator(".manager-outcome").innerText(), /Nothing was changed/);
+    assert.match(await page.locator("#network-manager-blocked").innerText(), /different GitHub account/);
+    assert.equal(
+      await page.locator('.manager-row[data-login="carol"] .manager-unfollow').innerText(),
+      "Unavailable"
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("returning as a different account says so and offers that account's network", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await prepareProfile(page, OWN_NETWORK);
+    const session = await mockSessionState(page, { authenticated: false });
+    await mockAuthorizationRoundTrip(page, {
+      beforeReturn: () => Object.assign(session, { authenticated: true, login: "alice", canManageFollows: true }),
+    });
+
+    await page.goto(`${baseUrl}/?user=example&view=network`);
+    await page.getByRole("button", { name: "Sign in to manage unfollows" }).click();
+    await page.locator("#auth-login").filter({ hasText: "@alice" }).waitFor();
+    await page.locator("#auth-notice-action").filter({ hasText: "View my network" }).waitFor();
+
+    const notice = await page.locator("#auth-notice").innerText();
+    assert.match(notice, /@alice/);
+    assert.match(notice, /@example/);
+    assert.equal(await page.locator("#network-manager").isHidden(), true);
+    assert.equal(new URL(page.url()).searchParams.has("manage"), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Back after Forward re-opened the manager is never a dead step", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await prepareProfile(page, OWN_NETWORK);
+    await mockSessionState(page, { login: "example", canManageFollows: true });
+
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    await page.getByRole("tab", { name: "Network" }).click();
+    await page.locator("#network-manage-unfollows").filter({ hasText: "Manage unfollows" }).click();
+    await page.locator("#network-manager").waitFor({ state: "visible" });
+    await page.goBack();
+    await page.locator("#network-manager").waitFor({ state: "hidden" });
+    await page.goForward();
+    await page.locator("#network-manager").waitFor({ state: "visible" });
+
+    await page.locator("#network-manager-back").click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    await page.goBack();
+    await page.waitForFunction(() => !new URL(location.href).searchParams.has("view"));
+    assert.equal(await page.locator("#overview-tab").getAttribute("aria-selected"), "true");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("leaving the Network tab cancels a manager the URL asked for", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await prepareProfile(page, {
+      example: { ...OWN_NETWORK.example, relationshipDelay: 700 },
+    });
+    await mockSessionState(page, { login: "example", canManageFollows: true });
+
+    await page.goto(`${baseUrl}/?user=example&view=network&manage=unfollows`);
+    await page.locator("#result-section").waitFor({ state: "visible" });
+    await page.getByRole("tab", { name: "Audit" }).click();
+    await page.waitForTimeout(1200);
+
+    await page.getByRole("tab", { name: "Network" }).click();
+    await page.locator("#network-results").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#network-manager").isHidden(), true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("keyboard focus lands somewhere useful after account-menu actions", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await mockGithubRequests(page);
+    await mockSessionState(page, { login: "example" });
+    await page.route("**/api/auth/logout", (route) => route.fulfill({ json: { authenticated: false } }));
+    await page.goto(`${baseUrl}/?user=example`);
+    await page.locator("#signed-in-auth").waitFor({ state: "visible" });
+
+    await page.locator("#account-button").focus();
+    await page.keyboard.press("Enter");
+    await page.locator("#account-menu").waitFor({ state: "visible" });
+    await page.locator("#logout-button").focus();
+    await page.keyboard.press("Enter");
+    await page.locator("#signed-out-auth").waitFor({ state: "visible" });
+
+    const focused = await page.evaluate(() => ({
+      tag: document.activeElement?.tagName,
+      inSignIn: Boolean(document.activeElement?.closest("#signed-out-auth")),
+    }));
+    assert.deepEqual(focused, { tag: "A", inSignIn: true });
+  } finally {
+    await browser.close();
+  }
+});
+
+test("authorization outcomes are announced, and failures assertively", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await mockGithubRequests(page);
+    await mockSessionState(page, { login: "example" });
+
+    // Live regions are present from the start, so assistive technology is already
+    // listening when a message arrives.
+    await page.goto(baseUrl);
+    assert.equal(await page.locator("#auth-live").getAttribute("role"), "status");
+    assert.equal(await page.locator("#auth-alert").getAttribute("role"), "alert");
+
+    await page.goto(`${baseUrl}/?auth=success`);
+    await page.locator("#auth-live").filter({ hasText: "Signed in as @example." }).waitFor({ state: "attached" });
+    await page.goto(`${baseUrl}/?auth=error`);
+    await page.locator("#auth-alert").filter({ hasText: /could not complete/ }).waitFor({ state: "attached" });
+    // The visible notice is not a second live region announcing the same words.
+    assert.equal(await page.locator("#auth-notice").getAttribute("aria-live"), null);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a failed session re-check changes nothing", { skip: !chromePath }, async () => {
+  const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await mockGithubRequests(page);
+    const session = await mockSessionState(page, { login: "example" });
+    await page.goto(baseUrl);
+    await page.locator("#home-signed-in-auth").waitFor({ state: "visible" });
+
+    await page.unroute("**/api/auth/session");
+    await page.route("**/api/auth/session", (route) => route.fulfill({ status: 500, json: { error: "boom" } }));
+    void session;
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await page.waitForTimeout(300);
+
+    assert.equal(await page.locator("#home-signed-in-auth").isVisible(), true);
+    assert.equal(await page.locator("#auth-login").innerText(), "@example");
   } finally {
     await browser.close();
   }

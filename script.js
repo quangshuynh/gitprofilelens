@@ -123,6 +123,8 @@ const authNoticeDismiss = document.querySelector("#auth-notice-dismiss");
 const networkManagerBlockedGroup = document.querySelector("#network-manager-blocked-group");
 const networkManagerReauthorize = document.querySelector("#network-manager-reauthorize");
 const networkPanel = document.querySelector("#network-panel");
+const authLive = document.querySelector("#auth-live");
+const authAlert = document.querySelector("#auth-alert");
 
 /**
  * Result tabs, in the order the tab strip presents them.
@@ -313,6 +315,24 @@ const auditCache = new Map();
 const handoffStore = GitProfileAuthContext.createHandoffStore({ storage: readSessionStorage() });
 
 /**
+ * where the last authorization in this tab started, for when the server cannot say
+ *
+ * The callback returns to its stored destination only while the OAuth state is
+ * alive. An expired or revisited callback lands on the homepage, and this puts
+ * the reader back on the page they left instead.
+ */
+const returnMemory = GitProfileAuthContext.createReturnMemory({ storage: readSessionStorage() });
+
+/**
+ * identifies the newest profile load, so a slow one cannot overwrite a newer view
+ *
+ * Every load takes a number. Back, Forward, the brand link, a cached profile,
+ * and a private audit all take a newer one, and a load that finishes holding a
+ * stale number is dropped without touching the screen or the URL.
+ */
+let profileRequestId = 0;
+
+/**
  * observation history for the Network lists, stored only in this browser
  *
  * GitHub exposes no follow timestamp, so ordering can never come from the API.
@@ -369,6 +389,8 @@ copyButton.addEventListener("click", copyMarkdown);
 downloadButton.addEventListener("click", downloadMarkdown);
 privateAuditButton.addEventListener("click", () => {
   setAccountMenu(false);
+  // The item that was focused is gone with the menu; keep the reader in the nav.
+  accountButton.focus();
   loadPrivateRepositories();
 });
 homePrivateAuditButton.addEventListener("click", loadPrivateRepositories);
@@ -413,6 +435,10 @@ window.addEventListener("pageshow", (event) => {
 document.addEventListener("visibilitychange", () => {
   // Another tab may have signed in, signed out, or switched accounts.
   if (document.visibilityState === "visible" && authState.resolved) refreshAuthSession("recheck");
+});
+window.addEventListener("focus", () => {
+  // Two windows side by side never become hidden, so focus is the signal there.
+  if (authState.resolved) refreshAuthSession("recheck");
 });
 includeDetailsInput.addEventListener("change", refreshMarkdown);
 pinnedOnlyInput.addEventListener("change", refreshMarkdown);
@@ -528,6 +554,7 @@ async function loadProfile(username, options = {}) {
     return;
   }
 
+  const requestId = (profileRequestId += 1);
   setLoading(true);
   showLoadingView(username);
   statusEl.classList.remove("error");
@@ -537,6 +564,7 @@ async function loadProfile(username, options = {}) {
     const user = await fetchJson(
       `https://api.github.com/users/${encodeURIComponent(username)}`
     );
+    if (requestId !== profileRequestId) return;
     if (!user || typeof user.login !== "string" || !GitHubAudit.isValidUsername(user.login)) {
       throw new Error("GitHub returned a profile response that could not be read. Try again shortly.");
     }
@@ -548,6 +576,8 @@ async function loadProfile(username, options = {}) {
       // GitHub requests behind it, would be spent to learn nothing.
       isOrganization ? Promise.resolve(null) : fetchContributedRepositories(user.login),
     ]);
+    // The reader moved on while this was loading; their newer choice stands.
+    if (requestId !== profileRequestId) return;
     // The public audit only ever holds public repositories.
     const repositories = transformRepositories(retrieval.repositories, supplemental)
       .filter((repository) => !repository.private);
@@ -566,11 +596,21 @@ async function loadProfile(username, options = {}) {
       }),
     }, { history: options.history ?? "replace" });
   } catch (error) {
+    if (requestId !== profileRequestId) return;
     showHomeView();
     showError(error.message);
   } finally {
-    setLoading(false);
+    if (requestId === profileRequestId) setLoading(false);
   }
+}
+
+/**
+ * abandons a profile that is still loading, so it can never replace what the reader chose next
+ * @returns {void} no return value
+ */
+function cancelProfileLoad() {
+  profileRequestId += 1;
+  setLoading(false);
 }
 
 /**
@@ -772,6 +812,8 @@ function writeRoute(route, mode = "replace", state = null) {
  */
 function applyRoute(route) {
   setAccountMenu(false);
+  // Whatever was still loading belonged to the place the reader just left.
+  cancelProfileLoad();
   if (!route.user) {
     if (managerState.open) closeUnfollowManager({ history: "none" });
     showHomeView();
@@ -782,8 +824,9 @@ function applyRoute(route) {
   if (current && sameLogin(current, route.user)) {
     if (resultPage.hidden) showResultView();
     activateTab(route.view, "none");
+    // The URL now decides whether the manager is wanted, in both directions.
+    authState.pendingManage = route.manage;
     if (route.manage && !managerState.open) {
-      authState.pendingManage = true;
       resolvePendingManage();
     } else if (!route.manage && managerState.open) {
       closeUnfollowManager({ history: "none" });
@@ -805,8 +848,12 @@ function applyRoute(route) {
 function showProfile(login, options = {}) {
   setActiveTab(options.view ?? "overview");
   const cached = auditCache.get(login.toLowerCase());
-  if (cached) applyPublicAudit(cached.snapshot, { history: options.history, network: cached.network });
-  else loadProfile(login, { history: options.history });
+  if (cached) {
+    cancelProfileLoad();
+    applyPublicAudit(cached.snapshot, { history: options.history, network: cached.network });
+  } else {
+    loadProfile(login, { history: options.history });
+  }
 }
 
 /**
@@ -818,6 +865,8 @@ function handleBrandClick(event) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
   setAccountMenu(false);
+  cancelProfileLoad();
+  authState.pendingManage = false;
   if (managerState.open) closeUnfollowManager({ history: "none" });
   writeRoute({ user: null }, "push");
   showHomeView();
@@ -851,9 +900,14 @@ async function refreshAuthSession(reason = "initial") {
   } catch {
     data = null;
   }
-  if (reason !== "initial" && data === null) return;
+  // A re-check that failed, including a server error, is not news about the
+  // session, so it changes nothing.
+  if (reason !== "initial" && (data === null || !ok)) return;
 
   const next = ok && data?.authenticated && typeof data.user?.login === "string" ? data.user : null;
+  // A private audit belongs to the account that ran it, whatever the page last
+  // believed about who was signed in.
+  const privateOwner = appState.mode === "private" ? appState.user?.login : null;
   appState.authUser = next;
   // A capability the server reports, never a credential. The server checks it
   // again on every mutation, so this copy only decides what is offered.
@@ -861,7 +915,11 @@ async function refreshAuthSession(reason = "initial") {
   authState.status = next ? "signed-in" : data?.expired ? "expired" : "signed-out";
   authState.resolved = true;
 
-  if (previous && !sameLogin(previous.login, next?.login)) handleAccountChange(previous, next);
+  if (previous && !sameLogin(previous.login, next?.login)) {
+    handleAccountChange(previous, next, { expired: authState.status === "expired" });
+  } else if (privateOwner && !sameLogin(privateOwner, next?.login)) {
+    clearPrivateAudit();
+  }
   renderAuthState();
 
   if (reason === "initial") {
@@ -881,16 +939,17 @@ async function refreshAuthSession(reason = "initial") {
  *
  * @param {Object} previous the account that was signed in
  * @param {Object|null} next the account signed in now, if any
+ * @param {Object} options expired when the session ran out rather than being ended
  * @returns {void} no return value
  */
-function handleAccountChange(previous, next) {
+function handleAccountChange(previous, next, options = {}) {
   handoffStore.clear();
   if (appState.mode === "private") clearPrivateAudit();
   if (managerState.open && !managerState.blocked) {
     blockUnfollowManager(
       next
         ? `You are now signed in as @${next.login}, not @${previous.login}.`
-        : "You are no longer signed in to GitHub.",
+        : options.expired ? "Your GitHub session ended." : "You are no longer signed in to GitHub.",
       next ? null : "signin"
     );
   }
@@ -898,16 +957,41 @@ function handleAccountChange(previous, next) {
     usernameInput.value = next?.login ?? "";
     authState.prefilled = Boolean(next);
   }
-  showAuthNotice(next
-    ? {
-      message: `You are now signed in as @${next.login}. Nothing that belonged to @${previous.login} is shown any more.`,
+  const signInAgain = { label: "Sign in again", run: () => beginAuthorization({ manage: false }) };
+  if (next) {
+    showAuthNotice({
+      message: `You are now signed in as @${next.login}. @${previous.login}'s private audit and ` +
+        "unfollow actions are no longer available here.",
       tone: "info",
-    }
-    : {
-      message: "You were signed out of GitProfileLens.",
-      tone: "info",
-      action: { label: "Sign in again", run: () => beginAuthorization({ manage: false }) },
     });
+  } else if (options.expired) {
+    showAuthNotice({
+      message: "Your GitHub session expired. Sign in again to manage follows or audit authorized repositories.",
+      tone: "warning",
+      action: signInAgain,
+    });
+  } else {
+    showAuthNotice({ message: "You were signed out of GitProfileLens.", tone: "info", action: signInAgain });
+  }
+}
+
+/**
+ * records that the server no longer recognizes the session, and clears what it owned
+ *
+ * Every place that discovers a lost session comes through here, so a private
+ * audit, an open manager's offers, and the handoff are cleared the same way
+ * whether the discovery was a re-check, an audit, or an unfollow.
+ *
+ * @returns {void} no return value
+ */
+function loseSession() {
+  const previous = appState.authUser;
+  appState.authUser = null;
+  appState.canManageFollows = false;
+  authState.status = "expired";
+  if (previous) handleAccountChange(previous, null, { expired: true });
+  else if (appState.mode === "private") clearPrivateAudit();
+  renderAuthState();
 }
 
 /**
@@ -954,6 +1038,18 @@ function handleAuthOutcome(outcome) {
   }
   if (outcome === "success" && login) {
     showAuthNotice({ message: `Signed in as @${login}.`, tone: "success" });
+  } else if (outcome === "manage-follows" && login && appState.canManageFollows &&
+      readRoute().user && !sameLogin(readRoute().user, login)) {
+    // GitHub signed the reader in as a different account from the profile they
+    // asked to manage. Nothing here belongs to that account, so say so and offer
+    // the network that does.
+    const viewing = readRoute().user;
+    showAuthNotice({
+      message: `Signed in as @${login}. You are viewing @${viewing}, and GitProfileLens can only ` +
+        `manage the follows of the account you are signed in as.`,
+      tone: "info",
+      action: { label: "View my network", run: () => openOwnProfile({ view: "network" }) },
+    });
   } else if (outcome === "manage-follows" && login && appState.canManageFollows) {
     showAuthNotice({
       message: `GitProfileLens can now unfollow accounts you choose, as @${login}. ` +
@@ -1016,15 +1112,24 @@ function resolvePendingManage() {
  * @returns {string} same-origin url of the authorization start route
  */
 function buildAuthorizationUrl({ manage = false } = {}) {
-  const route = currentRoute();
   const parameters = new URLSearchParams();
   if (manage) parameters.set("manage", "follows");
-  parameters.set("return", GitProfileAuthContext.buildReturnPath({
+  parameters.set("return", buildAuthorizationReturnPath({ manage }));
+  return `/api/auth/github?${parameters}`;
+}
+
+/**
+ * the place an authorization should return to, from where the reader stands now
+ * @param {Object} options manage asks to return to the unfollow manager
+ * @returns {string} a same-origin path
+ */
+function buildAuthorizationReturnPath({ manage = false } = {}) {
+  const route = currentRoute();
+  return GitProfileAuthContext.buildReturnPath({
     user: route.user,
     view: route.user && route.view !== "overview" ? route.view : null,
     manage: route.user && manage ? "unfollows" : null,
-  }));
-  return `/api/auth/github?${parameters}`;
+  });
 }
 
 /**
@@ -1034,6 +1139,7 @@ function buildAuthorizationUrl({ manage = false } = {}) {
  */
 function prepareAuthorization(options = {}) {
   saveHandoff();
+  returnMemory.remember(buildAuthorizationReturnPath(options));
   showAuthNotice({ message: "Redirecting to GitHub…", tone: "progress" });
   return buildAuthorizationUrl(options);
 }
@@ -1175,7 +1281,9 @@ function openOwnProfile(options = {}) {
 function handleMyProfileClick(event) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
+  const fromMenu = accountMenu.contains(event.currentTarget);
   openOwnProfile();
+  if (fromMenu) accountButton.focus();
 }
 
 /**
@@ -1229,6 +1337,25 @@ function showAuthNotice({ message, tone = "info", action = null }) {
   authState.noticeAction = action;
   authNoticeAction.hidden = !action;
   authNoticeAction.textContent = action?.label ?? "";
+  announce(message, tone === "error");
+}
+
+/**
+ * speaks a message through a live region that was already on the page
+ *
+ * A region revealed and filled in the same moment is skipped by several screen
+ * readers, so the regions are always rendered and the words arrive a moment
+ * after being cleared. Failures are announced assertively.
+ *
+ * @param {string} message words to announce
+ * @param {boolean} assertive whether the message reports a failure
+ * @returns {void} no return value
+ */
+function announce(message, assertive) {
+  const region = assertive ? authAlert : authLive;
+  (assertive ? authLive : authAlert).textContent = "";
+  region.textContent = "";
+  window.setTimeout(() => { region.textContent = message; }, 60);
 }
 
 /**
@@ -1251,6 +1378,8 @@ async function loadPrivateRepositories() {
     showError("Sign in with GitHub before auditing authorized repositories.");
     return;
   }
+  // A public profile still loading must not replace the private audit later.
+  cancelProfileLoad();
   privateAuditButton.disabled = true;
   homePrivateAuditButton.disabled = true;
   statusEl.classList.remove("error");
@@ -1260,9 +1389,8 @@ async function loadPrivateRepositories() {
     const response = await fetch("/api/private-repositories", { headers: { Accept: "application/json" } });
     const data = await response.json().catch(() => null);
     if (response.status === 401) {
-      appState.authUser = null;
-      authState.status = "expired";
-      renderAuthState();
+      // The private audit on screen, if any, belonged to that session.
+      loseSession();
       throw new Error(data?.error || "Your GitHub session expired. Please sign in again.");
     }
     if (!response.ok || !data || !Array.isArray(data.repositories) ||
@@ -1327,6 +1455,7 @@ async function loadPrivateRepositories() {
 }
 
 async function logout() {
+  const trigger = document.activeElement;
   setAccountMenu(false);
   logoutButton.disabled = true;
   homeLogoutButton.disabled = true;
@@ -1352,7 +1481,21 @@ async function logout() {
     homeLogoutButton.disabled = false;
     statusEl.classList.remove("error");
     statusEl.textContent = "Signed out of GitProfileLens.";
+    // The control that was used is hidden now; the way back in takes its place.
+    if (focusIsLost()) {
+      const homeLink = homeSignedOutAuth.querySelector("a");
+      (trigger === homeLogoutButton && !hero.hidden ? homeLink : signedOutAuth.querySelector("a"))?.focus();
+    }
   }
+}
+
+/**
+ * reports whether keyboard focus has fallen out of anything the reader can see
+ * @returns {boolean} true when focus is on the body or inside hidden content
+ */
+function focusIsLost() {
+  const active = document.activeElement;
+  return !active || active === document.body || Boolean(active.closest?.("[hidden]"));
 }
 
 /**
@@ -2829,6 +2972,9 @@ function createPinnedStatus(text) {
  * @returns {void} no return value
  */
 function handleTabClick(event) {
+  // Choosing a tab is a new decision: a manager the URL asked for earlier is no
+  // longer wanted, and must not open later behind whatever tab is chosen.
+  authState.pendingManage = false;
   // A chosen tab is a place the reader can come Back to.
   activateTab(event.currentTarget.dataset.tab, "push");
 }
@@ -2859,6 +3005,7 @@ function handleTabKeydown(event) {
   nextTab.focus();
   // Arrowing through the tab strip is browsing, not navigating: one history
   // entry for the strip rather than one per key press.
+  authState.pendingManage = false;
   activateTab(nextTab.dataset.tab, "replace");
 }
 
@@ -2937,8 +3084,16 @@ function readActiveTab() {
  * @returns {void} no return value
  */
 function initializeFromUrl() {
-  const route = readRoute();
+  let route = readRoute();
   authState.outcome = GitProfileAuthContext.readAuthOutcome(window.location.search);
+  // The server sends a reader home when it can no longer vouch for where they
+  // came from: an expired state, or a callback visited twice. This tab still
+  // remembers, so the reader goes back to the page they left.
+  const remembered = returnMemory.recall();
+  if (authState.outcome && !route.user && remembered) {
+    const restored = readRoute(new URL(remembered, window.location.origin).search);
+    if (restored.user) route = restored;
+  }
   authState.requestedManage = route.manage;
   authState.pendingManage = route.manage;
   const handoff = handoffStore.take(route.user ?? "");
@@ -3740,7 +3895,10 @@ function openUnfollowManager(options = {}) {
   networkManager.hidden = false;
   networkPanel.classList.add("is-managing");
   renderUnfollowManager();
-  writeRoute(currentRoute(), historyMode, historyMode === "push" ? { manager: true } : null);
+  // A manager entry this page pushed keeps saying so when it is rewritten in
+  // place, as Forward does, so Back to Network can still step back to it.
+  const pushedHere = historyMode === "push" || (historyMode === "replace" && history.state?.manager === true);
+  writeRoute(currentRoute(), historyMode, pushedHere ? { manager: true } : null);
   // The view changed under the reader, so the heading takes focus and names what
   // they are now looking at rather than leaving them at the top of the document.
   networkManagerHeading.focus();
@@ -4250,7 +4408,9 @@ async function requestUnfollow(login) {
     response = await fetch("/api/unfollow", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ login }),
+      // The account this manager belongs to, so the server can refuse rather than
+      // act if a different account has signed in since. It can only narrow.
+      body: JSON.stringify({ login, expectedActor: managerState.username }),
     });
     data = await response.json().catch(() => null);
   } catch {
@@ -4264,15 +4424,20 @@ async function requestUnfollow(login) {
 
   if (response.status === 401) {
     // The session is gone, so every other row is unactionable too.
-    appState.authUser = null;
-    appState.canManageFollows = false;
     finishUnfollow(login, {
       state: "failed",
       message: data?.error || "Your GitHub session expired. Please sign in again.",
     });
-    authState.status = "expired";
     blockUnfollowManager("Your GitHub session ended.", "signin");
-    renderAuthState();
+    loseSession();
+    return;
+  }
+  if (response.status === 409 && data?.reason === "account_mismatch") {
+    // Another tab signed this browser in as someone else. Nothing was changed,
+    // and nothing further is offered until the page knows who is signed in.
+    finishUnfollow(login, { state: "failed", message: data.error });
+    blockUnfollowManager("GitProfileLens is now signed in as a different GitHub account.");
+    refreshAuthSession("recheck");
     return;
   }
   if (response.status === 403 && data?.reason === "permission_required") {

@@ -607,3 +607,43 @@ test("diagnostics name the target and the status but never a credential", async 
   assert.match(joined, /"github_status":403/);
   assert.doesNotMatch(joined, /github-user-access-token|gpl_session|Bearer|Authorization|client-secret|valid-code/i);
 });
+
+test("an unfollow meant for another signed-in account is refused before GitHub is asked", async () => {
+  // The page was managing @alice's follows; another tab has since signed this
+  // browser in as @example. Acting now would unfollow from the wrong account.
+  const { result, calls } = await callUnfollow(
+    { GET: { status: 204 }, DELETE: { status: 204 } },
+    { headers: { cookie: sessionCookie() }, body: { login: "octocat", expectedActor: "alice" } }
+  );
+
+  assert.equal(result.status, 409);
+  assert.equal(result.body.reason, "account_mismatch");
+  assert.match(result.body.error, /@example/);
+  assert.match(result.body.error, /Nothing was changed/);
+  assert.deepEqual(calls, []);
+});
+
+test("the expected account is compared the way GitHub compares logins", async () => {
+  const { result, calls } = await callUnfollow(
+    { GET: { status: 204 }, DELETE: { status: 204 } },
+    { headers: { cookie: sessionCookie() }, body: { login: "octocat", expectedActor: "EXAMPLE" } }
+  );
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.state, "unfollowed");
+  assert.equal(calls.length, 2);
+});
+
+test("naming an expected account can only narrow what the session may do", async () => {
+  // A session without the follow permission stays refused whatever the body says.
+  const { result, calls } = await callUnfollow(
+    { GET: { status: 204 }, DELETE: { status: 204 } },
+    {
+      headers: { cookie: sessionCookie({ manageFollows: false }) },
+      body: { login: "octocat", expectedActor: "example" },
+    }
+  );
+  assert.equal(result.status, 403);
+  assert.equal(result.body.reason, "permission_required");
+  assert.deepEqual(calls, []);
+});
