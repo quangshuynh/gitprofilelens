@@ -1,22 +1,47 @@
 const {
   SESSION_COOKIE,
   STATE_COOKIE,
+  RETURN_COOKIE,
   SESSION_DURATION_SECONDS,
   parseCookies,
   seal,
+  unseal,
   createCookie,
   clearCookie,
   stateMatches,
   setPrivateResponseHeaders,
 } = require("./session-crypto.js");
 const { MANAGE_FOLLOWS_MARKER } = require("./github.js");
+const { normalizeReturnPath } = require("../../auth-context.js");
 
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
 const USER_URL = "https://api.github.com/user";
 
+/**
+ * finishes a GitHub authorization and returns the reader to where they started
+ *
+ * Every outcome a reader can reach ends in a redirect back to the page they
+ * left, carrying exactly one word in `auth=` that says what happened:
+ *
+ *   success         ordinary sign-in completed
+ *   manage-follows  the follow-management authorization completed
+ *   denied          the reader cancelled on GitHub; nothing changed
+ *   error           GitHub could not complete the exchange; nothing changed
+ *   invalid         the request could not be verified as one this site started
+ *
+ * Only success and manage-follows issue a session. The others leave whatever
+ * session already existed exactly as it was, so cancelling a follow-management
+ * request never signs the reader out.
+ *
+ * @param {Object} request vercel request
+ * @param {Object} response vercel response
+ * @returns {Promise<void>} no return value
+ */
 async function githubCallbackHandler(request, response) {
   setPrivateResponseHeaders(response);
-  response.setHeader("Set-Cookie", clearCookie(STATE_COOKIE));
+  // Both one-time cookies are spent by any visit here, whatever the outcome.
+  const spent = [clearCookie(STATE_COOKIE), clearCookie(RETURN_COOKIE)];
+  response.setHeader("Set-Cookie", spent);
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
     response.status(405).json({ error: "Method not allowed." });
@@ -24,10 +49,24 @@ async function githubCallbackHandler(request, response) {
   }
 
   const cookies = parseCookies(request);
+  const returnTo = readReturnDestination(cookies[RETURN_COOKIE]);
   const code = String(request.query?.code || "");
   const state = String(request.query?.state || "");
-  if (!code || !stateMatches(cookies[STATE_COOKIE], state)) {
-    response.status(400).json({ error: "GitHub sign-in could not be verified. Please try again." });
+  const githubError = String(request.query?.error || "");
+
+  // The state is checked before anything else is believed, including GitHub's
+  // report that the reader cancelled: an unverified error is not evidence of
+  // anything this site asked for.
+  if (!stateMatches(cookies[STATE_COOKIE], state)) {
+    redirectWithOutcome(response, returnTo, "invalid");
+    return;
+  }
+  if (githubError) {
+    redirectWithOutcome(response, returnTo, githubError === "access_denied" ? "denied" : "error");
+    return;
+  }
+  if (!code) {
+    redirectWithOutcome(response, returnTo, "invalid");
     return;
   }
 
@@ -56,20 +95,64 @@ async function githubCallbackHandler(request, response) {
         : null,
       user: { login: user.login, avatar_url: user.avatar_url },
       // Never inferred and never defaulted on: an ordinary sign-in leaves this
-      // false, so the unfollow endpoint refuses that session outright.
-      manageFollows: managingFollows,
+      // false, so the unfollow endpoint refuses that session outright. The one
+      // exception is a still-valid session for this same account that already
+      // carried it, so signing in again does not silently withdraw a permission
+      // the reader granted minutes ago.
+      manageFollows: managingFollows || keepsFollowPermission(cookies[SESSION_COOKIE], user.login, now),
       expiresAt: now + SESSION_DURATION_SECONDS * 1000,
     };
     response.setHeader("Set-Cookie", [
-      clearCookie(STATE_COOKIE),
+      ...spent,
       createCookie(SESSION_COOKIE, seal(session), SESSION_DURATION_SECONDS),
     ]);
-    response.statusCode = 302;
-    response.setHeader("Location", managingFollows ? "/?auth=manage-follows" : "/?auth=success");
-    response.end();
+    redirectWithOutcome(response, returnTo, managingFollows ? "manage-follows" : "success");
   } catch {
-    response.status(502).json({ error: "GitHub sign-in failed. Please try again." });
+    redirectWithOutcome(response, returnTo, "error");
   }
+}
+
+/**
+ * reads the stored return destination, falling back to the homepage
+ * @param {string|undefined} value raw cookie value
+ * @returns {string} a same-origin path
+ */
+function readReturnDestination(value) {
+  try {
+    return normalizeReturnPath(decodeURIComponent(value || "")) || "/";
+  } catch {
+    return "/";
+  }
+}
+
+/**
+ * redirects to a same-origin destination with the authorization outcome appended
+ * @param {Object} response vercel response
+ * @param {string} destination normalized same-origin path
+ * @param {string} outcome one of the documented outcomes
+ * @returns {void} no return value
+ */
+function redirectWithOutcome(response, destination, outcome) {
+  response.statusCode = 302;
+  response.setHeader("Location", `${destination}${destination.includes("?") ? "&" : "?"}auth=${outcome}`);
+  response.end();
+}
+
+/**
+ * reports whether an existing session already carried follow permission for this account
+ * @param {string|undefined} sealedSession existing session cookie
+ * @param {string} login account that just signed in
+ * @param {number} now current time
+ * @returns {boolean} true only for an unexpired session of the same account
+ */
+function keepsFollowPermission(sealedSession, login, now) {
+  const previous = unseal(sealedSession);
+  return Boolean(
+    previous &&
+    previous.manageFollows === true &&
+    previous.expiresAt > now &&
+    String(previous.user?.login || "").toLowerCase() === String(login).toLowerCase()
+  );
 }
 
 async function exchangeCode({ code, clientId, clientSecret, callbackUrl }, fetchImplementation = fetch) {

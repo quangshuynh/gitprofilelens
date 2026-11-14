@@ -2,6 +2,9 @@ const crypto = require("node:crypto");
 
 const SESSION_COOKIE = "gpl_session";
 const STATE_COOKIE = "gpl_oauth_state";
+// Where to send the reader once authorization finishes. Normalized to a
+// same-origin path before it is stored and again before it is used.
+const RETURN_COOKIE = "gpl_oauth_return";
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
 const STATE_DURATION_SECONDS = 10 * 60;
 
@@ -98,6 +101,7 @@ function setPrivateResponseHeaders(response) {
 module.exports = {
   SESSION_COOKIE,
   STATE_COOKIE,
+  RETURN_COOKIE,
   SESSION_DURATION_SECONDS,
   STATE_DURATION_SECONDS,
   seal,

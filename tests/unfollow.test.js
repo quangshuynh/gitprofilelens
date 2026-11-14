@@ -489,8 +489,8 @@ test("follow management is a separate authorization from ordinary sign-in", asyn
     const managing = createResponse();
     authStartHandler({ method: "GET", query: { manage: "follows" } }, managing.response);
 
-    assert.doesNotMatch(ordinary.result.headers["Set-Cookie"], /~follows/);
-    assert.match(managing.result.headers["Set-Cookie"], /~follows/);
+    assert.doesNotMatch(ordinary.result.headers["Set-Cookie"].join(" "), /~follows/);
+    assert.match(managing.result.headers["Set-Cookie"].join(" "), /~follows/);
     // GitHub still sees a state it can echo back, and the marker travels with it.
     const state = new URL(managing.result.headers.Location).searchParams.get("state");
     assert.ok(state.endsWith("~follows"));
@@ -580,8 +580,10 @@ test("a mismatched state is still refused when it carries the marker", async () 
       headers: { cookie: "gpl_oauth_state=real-state~follows" },
     }, response);
 
-    assert.equal(result.status, 400);
-    assert.match(result.body.error, /could not be verified/);
+    assert.equal(result.statusCode, 302);
+    assert.equal(result.headers.Location, "/?auth=invalid");
+    const cookies = [].concat(result.headers["Set-Cookie"] || []);
+    assert.equal(cookies.some((cookie) => cookie.startsWith("gpl_session=")), false);
   });
 });
 

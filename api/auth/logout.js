@@ -1,6 +1,7 @@
 const {
   SESSION_COOKIE,
   STATE_COOKIE,
+  RETURN_COOKIE,
   clearCookie,
   setPrivateResponseHeaders,
 } = require("./session-crypto.js");
@@ -13,7 +14,11 @@ function logoutHandler(request, response) {
     return;
   }
 
-  response.setHeader("Set-Cookie", [clearCookie(SESSION_COOKIE), clearCookie(STATE_COOKIE)]);
+  response.setHeader("Set-Cookie", [
+    clearCookie(SESSION_COOKIE),
+    clearCookie(STATE_COOKIE),
+    clearCookie(RETURN_COOKIE),
+  ]);
   response.status(200).json({ authenticated: false });
 }
 
