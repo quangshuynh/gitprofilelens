@@ -3,109 +3,182 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Get a 0–100 GitHub portfolio presentation score and actionable recommendations for improving your public profile." />
+  <meta name="description" content="Audit and improve your GitHub portfolio: a transparent 0–100 presentation score, prioritized recommendations, and a plan for the repositories you feature." />
   <meta name="application-name" content="GitProfileLens" />
-  <meta property="og:title" content="GitProfileLens - What's your GitHub portfolio score?" />
+  <meta name="theme-color" content="#040506" />
+  <meta name="color-scheme" content="dark" />
+  <meta property="og:title" content="GitProfileLens - Audit and improve your GitHub portfolio" />
   <meta property="og:description" content="Enter a GitHub username for a transparent 0–100 portfolio presentation score and actionable recommendations." />
   <meta property="og:image" content="https://gitprofilelens.vercel.app/docs/images/logo.png" />
   <meta property="og:type" content="website" />
   <title>GitProfileLens - GitHub Profile and Portfolio Analysis</title>
   <link rel="icon" type="image/png" href="docs/images/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="page-doodles" aria-hidden="true">
-    <span class="doodle doodle-ring"></span>
-    <span class="doodle doodle-star">✦</span>
-    <span class="doodle doodle-dots"></span>
-    <svg class="doodle-squiggle" viewBox="0 0 180 70" focusable="false">
-      <path d="M4 45 C26 5, 43 67, 67 29 S107 13, 119 43 S151 65, 176 19" />
-    </svg>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a id="brand-link" class="brand" href="/" aria-label="GitProfileLens home">
+        <span class="brand-mark" aria-hidden="true"><img src="docs/images/logo.png" alt="" width="64" height="64" /></span>
+        <span class="brand-name">GitProfileLens</span>
+      </a>
+
+      <nav class="nav-account" aria-label="Your GitHub account">
+        <div id="signed-out-auth" class="nav-signed-out">
+          <a class="button button-primary button-sm github-button" href="/api/auth/github" data-auth-start="signin">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18A10.97 10.97 0 0 1 12 6.32c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.04c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
+            <span>Sign in <span class="label-optional">with GitHub</span></span>
+          </a>
+        </div>
+
+        <div id="signed-in-auth" class="nav-signed-in" hidden>
+          <a id="nav-my-profile" class="nav-link" href="/">My profile</a>
+          <div class="account">
+            <button id="account-button" class="account-button" type="button" aria-expanded="false" aria-controls="account-menu">
+              <img id="account-avatar" class="account-avatar" alt="" width="24" height="24" />
+              <span id="auth-login" class="account-login"></span>
+              <svg class="account-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M4.2 6.2a.75.75 0 0 1 1.06 0L8 8.94l2.74-2.74a.75.75 0 1 1 1.06 1.06L8.53 10.53a.75.75 0 0 1-1.06 0L4.2 7.26a.75.75 0 0 1 0-1.06Z"/></svg>
+              <span class="visually-hidden">Account menu</span>
+            </button>
+            <div id="account-menu" class="account-menu" hidden>
+              <div class="account-menu-header">
+                <img id="account-menu-avatar" class="account-menu-avatar" alt="" width="36" height="36" />
+                <div class="account-menu-identity">
+                  <span class="account-menu-label">Signed in as</span>
+                  <span id="account-menu-login" class="account-menu-login"></span>
+                </div>
+              </div>
+              <p id="account-capability" class="account-capability"></p>
+              <div class="account-menu-items">
+                <a id="menu-my-profile" class="menu-item" href="/">My profile</a>
+                <button id="private-audit-button" class="menu-item" type="button">Audit my repositories</button>
+                <a id="configure-access-link" class="menu-item" target="_blank" rel="noopener noreferrer" hidden>Configure repository access</a>
+                <button id="logout-button" class="menu-item" type="button">Sign out</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Always rendered, so assistive technology is already listening when a message arrives. -->
+  <div id="auth-live" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="auth-alert" class="visually-hidden" role="alert" aria-atomic="true"></div>
+  <div id="auth-notice" class="auth-notice" hidden>
+    <div class="auth-notice-inner">
+      <span class="auth-notice-dot" aria-hidden="true"></span>
+      <p id="auth-notice-text" class="auth-notice-text"></p>
+      <div class="auth-notice-actions">
+        <button id="auth-notice-action" class="button button-secondary button-sm" type="button" hidden></button>
+        <button id="auth-notice-dismiss" class="icon-button" type="button" aria-label="Dismiss this message">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
+        </button>
+      </div>
+    </div>
   </div>
-  <main class="container">
-    <header class="hero">
-      <img class="hero-logo" src="docs/images/logo.png" alt="GitProfileLens" />
-      <h1>What's your GitHub portfolio score?</h1>
-      <p class="subtitle">Enter a GitHub username to get a transparent 0–100 score and actionable recommendations for improving how the public profile and repositories present themselves.</p>
-      <p class="product-pillars" aria-label="GitProfileLens features">
-        <span>Profile audit</span><span>Repository explorer</span><span>Markdown export</span>
-      </p>
+
+  <main id="main" class="container" tabindex="-1">
+    <section class="hero" aria-labelledby="hero-title">
+      <img class="hero-logo" src="docs/images/logo.png" alt="GitProfileLens" width="1254" height="1254" />
+      <p class="eyebrow">GitHub portfolio audit</p>
+      <h1 id="hero-title">Audit and improve your GitHub portfolio.</h1>
+      <p class="subtitle">A transparent 0–100 presentation score, prioritized recommendations, and a clear plan for the repositories you feature. No sign-in needed for public profiles.</p>
+
       <form id="github-form" class="search-form">
         <label for="username">GitHub username</label>
         <div class="input-row">
-          <input id="username" name="username" type="text" placeholder="quangshuynh" autocomplete="off" required />
-          <button id="generate-button" type="submit">Analyze profile</button>
+          <div class="input-shell">
+            <span class="input-prefix" aria-hidden="true">github.com/</span>
+            <input id="username" name="username" type="text" placeholder="octocat" autocomplete="off" autocapitalize="none" spellcheck="false" required />
+          </div>
+          <button id="generate-button" class="button button-primary" type="submit">Analyze profile</button>
         </div>
       </form>
-      <div class="auth-divider" aria-hidden="true"><span>or</span></div>
-      <section class="home-auth" aria-label="Private repository auditing">
-        <div id="home-signed-out-auth">
-          <a class="button-link github-button" href="/api/auth/github">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18A10.97 10.97 0 0 1 12 6.32c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.04c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
+
+      <section class="home-auth" aria-label="Your GitHub account">
+        <div id="home-signed-out-auth" class="home-auth-card">
+          <div class="home-auth-copy">
+            <p class="home-auth-title">Connect GitHub for more</p>
+            <p>Audit repositories you authorize, including private ones, and manage who you follow one account at a time.</p>
+          </div>
+          <a class="button button-secondary github-button" href="/api/auth/github" data-auth-start="signin">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18A10.97 10.97 0 0 1 12 6.32c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.04c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
             <span>Sign in with GitHub</span>
           </a>
-          <p>Audit repositories you authorize, including private repositories.</p>
         </div>
-        <div id="home-signed-in-auth" class="home-signed-in-auth" hidden>
-          <p>Signed in as <strong id="home-auth-login"></strong></p>
+        <div id="home-signed-in-auth" class="home-auth-card is-signed-in" hidden>
+          <img id="home-auth-avatar" class="home-auth-avatar" alt="" width="40" height="40" />
+          <div class="home-auth-copy">
+            <p class="home-auth-label">Signed in as</p>
+            <strong id="home-auth-login" class="home-auth-login"></strong>
+          </div>
           <div class="home-auth-actions">
-            <button id="home-private-audit-button" class="github-button" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18A10.97 10.97 0 0 1 12 6.32c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.04c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
+            <button id="home-my-profile-button" class="button button-secondary" type="button">Analyze my profile</button>
+            <button id="home-private-audit-button" class="button button-secondary github-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18A10.97 10.97 0 0 1 12 6.32c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.04c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
               <span>Audit my repositories</span>
             </button>
-            <button id="home-logout-button" class="secondary" type="button">Sign out</button>
+            <button id="home-logout-button" class="button button-ghost" type="button">Sign out</button>
           </div>
         </div>
       </section>
       <p id="status" class="status" aria-live="polite"></p>
-    </header>
+
+      <ul class="capabilities" aria-label="What GitProfileLens covers">
+        <li class="capability">
+          <span class="capability-index" aria-hidden="true">01</span>
+          <h2>Portfolio score</h2>
+          <p>A 0–100 presentation score across six categories, with every rule explained.</p>
+        </li>
+        <li class="capability">
+          <span class="capability-index" aria-hidden="true">02</span>
+          <h2>Repository audit</h2>
+          <p>Names, descriptions, READMEs, topics, licenses, and maintenance, lowest scores first.</p>
+        </li>
+        <li class="capability">
+          <span class="capability-index" aria-hidden="true">03</span>
+          <h2>Pinned optimizer</h2>
+          <p>Which repositories form the strongest set to feature, and the reason for each.</p>
+        </li>
+        <li class="capability">
+          <span class="capability-index" aria-hidden="true">04</span>
+          <h2>Network and exports</h2>
+          <p>Followers, following, deliberate unfollows, and Markdown exports of what you see.</p>
+        </li>
+      </ul>
+    </section>
 
     <section id="loading-screen" class="loading-screen" aria-live="polite" hidden>
-      <div class="loading-orbit" aria-hidden="true"><span></span></div>
+      <div class="loading-spinner" aria-hidden="true"></div>
       <p class="eyebrow">Building portfolio audit</p>
       <h2>Analyzing <span id="loading-username"></span></h2>
       <p>Fetching repositories, checking presentation signals, and preparing recommendations.</p>
     </section>
 
     <section id="result-page" class="result-page" hidden>
-      <header class="result-page-header">
-        <a class="result-brand" href="/" aria-label="Start a new GitProfileLens audit">
-          <span class="result-logo-crop" aria-hidden="true"><img src="docs/images/logo.png" alt="" /></span>
-          <span>GitProfileLens</span>
-        </a>
-        <section class="result-auth" aria-label="Private repository auditing">
-          <div id="signed-out-auth">
-            <a class="button-link github-button compact" href="/api/auth/github">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2.02c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.28-5.27-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18A10.97 10.97 0 0 1 12 6.32c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.39-5.29 5.68.42.36.79 1.07.79 2.16v3.04c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
-              <span>Sign in with GitHub</span>
-            </a>
-          </div>
-          <div id="signed-in-auth" class="signed-in-auth" hidden>
-            <p>Signed in as <strong id="auth-login"></strong></p>
-            <div class="auth-actions">
-              <button id="private-audit-button" type="button">Audit my repositories</button>
-              <a id="configure-access-link" class="button-link secondary" target="_blank" rel="noopener noreferrer" hidden>Configure access</a>
-              <button id="logout-button" class="secondary" type="button">Sign out</button>
-            </div>
-          </div>
-        </section>
-      </header>
-
       <section id="result-section" class="results" hidden>
       <div class="profile-bar">
         <div class="profile-identity">
-          <img id="profile-avatar" class="avatar" alt="" />
-          <div>
+          <img id="profile-avatar" class="avatar" alt="" width="56" height="56" />
+          <div class="profile-text">
             <p id="profile-name" class="profile-name"></p>
-            <a id="profile-link" class="muted-link" target="_blank" rel="noopener noreferrer"></a>
-            <span id="profile-type" class="account-type"></span>
+            <p class="profile-handle">
+              <a id="profile-link" class="muted-link" target="_blank" rel="noopener noreferrer"></a>
+              <span id="profile-type" class="account-type"></span>
+            </p>
             <p id="profile-description" class="profile-description" hidden></p>
             <p id="profile-insight" class="profile-insight"></p>
           </div>
         </div>
         <div class="profile-actions">
-          <button id="share-button" class="secondary" type="button">Share result</button>
-          <button id="score-card-button" class="secondary" type="button">Download score card</button>
+          <button id="share-button" class="button button-secondary" type="button">Share result</button>
+          <button id="score-card-button" class="button button-secondary" type="button">Download score card</button>
         </div>
       </div>
 
@@ -121,10 +194,10 @@
       <section id="overview-panel" class="tab-panel" role="tabpanel" aria-labelledby="overview-tab" tabindex="0">
         <div class="score-layout">
           <article class="overall-score">
-            <p>GitHub Profile Score</p>
+            <p class="overall-score-label">GitHub Profile Score</p>
             <strong><span id="overall-score">0</span><small>/100</small></strong>
             <p id="score-completeness" class="score-completeness" role="note" hidden></p>
-            <p class="score-disclaimer">Measures public portfolio presentation and discoverability - not engineering skill.</p>
+            <p class="score-disclaimer">Measures public portfolio presentation and discoverability, not engineering skill.</p>
           </article>
           <div id="category-scores" class="category-scores"></div>
         </div>
@@ -170,95 +243,121 @@
 
       <section id="network-panel" class="tab-panel" role="tabpanel" aria-labelledby="network-tab" tabindex="0" hidden>
         <div class="section-heading">
-          <div><p class="eyebrow">Public follower network</p><h2>Network</h2></div>
+          <div><p class="eyebrow">Public relationships</p><h2>Network</h2></div>
           <p id="network-summary" class="summary-text"></p>
         </div>
-        <p class="panel-help">The public followers and following lists for this profile, retrieved when this tab is first opened. GitProfileLens never follows or unfollows anyone.</p>
+        <p class="panel-help">The public followers and following lists for this profile, retrieved when this tab is first opened. GitProfileLens never follows or unfollows anyone on its own.</p>
         <p id="network-status" class="status" aria-live="polite"></p>
-        <button id="network-retry-button" class="secondary" type="button" hidden>Try again</button>
+        <button id="network-retry-button" class="button button-secondary" type="button" hidden>Try again</button>
 
         <div id="network-results" hidden>
           <dl class="network-counts">
-            <div><dt>Followers</dt><dd id="network-follower-count">0</dd></div>
-            <div><dt>Following</dt><dd id="network-following-count">0</dd></div>
-            <div><dt>Following who don't follow back</dt><dd id="network-unreciprocated-count">0</dd></div>
+            <div class="stat"><dt>Followers</dt><dd id="network-follower-count">0</dd></div>
+            <div class="stat"><dt>Following</dt><dd id="network-following-count">0</dd></div>
+            <div class="stat"><dt>Following who don't follow back</dt><dd id="network-unreciprocated-count">0</dd></div>
           </dl>
-          <p id="network-ordering-note" class="network-ordering-note">Accounts appear in the order the GitHub API returned them. GitHub does not record when a follow happened and does not document an order for these lists, so this is not a newest-to-oldest follow history.</p>
-          <p id="network-history-note" class="network-history-note" role="status" tabindex="-1" hidden></p>
-          <div id="network-history-controls" class="network-history-controls" hidden>
-            <button id="network-history-reset" class="link-button" type="button">Reset observation history</button>
-            <span id="network-history-confirm-group" class="network-history-confirm" hidden>
-              <span id="network-history-confirm-label">Delete the observation history stored in this browser?</span>
-              <button id="network-history-confirm" class="link-button is-destructive" type="button">Delete history</button>
-              <button id="network-history-cancel" class="link-button" type="button">Keep it</button>
-            </span>
+
+          <div id="network-manage" class="manage-callout" hidden>
+            <div class="manage-callout-copy">
+              <h3 class="manage-callout-title">Manage unfollows</h3>
+              <p id="network-manage-note" class="network-manage-note"></p>
+            </div>
+            <button id="network-manage-unfollows" class="button button-primary" type="button" hidden>Manage unfollows</button>
           </div>
+
           <p id="network-notice" class="network-notice" hidden></p>
+          <div class="network-ordering">
+            <p id="network-ordering-note" class="network-ordering-note">Accounts appear in the order the GitHub API returned them. GitHub does not record when a follow happened and does not document an order for these lists, so this is not a newest-to-oldest follow history.</p>
+            <p id="network-history-note" class="network-history-note" role="status" tabindex="-1" hidden></p>
+            <div id="network-history-controls" class="network-history-controls" hidden>
+              <button id="network-history-reset" class="link-button" type="button">Reset observation history</button>
+              <span id="network-history-confirm-group" class="network-history-confirm" hidden>
+                <span id="network-history-confirm-label">Delete the observation history stored in this browser?</span>
+                <button id="network-history-confirm" class="link-button is-destructive" type="button">Delete history</button>
+                <button id="network-history-cancel" class="link-button" type="button">Keep it</button>
+              </span>
+            </div>
+          </div>
 
           <div id="network-disclosure-controls" class="list-controls network-global-controls" hidden>
-            <button id="network-expand-all" class="secondary" type="button" aria-label="Expand all network lists">Expand all</button>
-            <button id="network-collapse-all" class="secondary" type="button" aria-label="Collapse all network lists">Collapse all</button>
+            <button id="network-expand-all" class="button button-secondary button-sm" type="button" aria-label="Expand all network lists">Expand all</button>
+            <button id="network-collapse-all" class="button button-secondary button-sm" type="button" aria-label="Collapse all network lists">Collapse all</button>
           </div>
 
-          <section class="section-block network-section">
-            <h3 id="network-followers-heading">Followers</h3>
+          <section class="network-section" aria-labelledby="network-followers-heading">
+            <div class="network-section-header">
+              <h3 id="network-followers-heading">Followers</h3>
+              <p class="network-section-description">Accounts that follow this profile.</p>
+            </div>
             <p id="network-followers-empty" class="empty-state" hidden></p>
             <ul id="network-follower-list" class="account-list" aria-labelledby="network-followers-heading"></ul>
             <p id="network-followers-status" class="list-status" hidden></p>
             <div id="network-followers-controls" class="list-controls" hidden>
-              <button id="network-followers-more" class="secondary" type="button" aria-label="Show 25 more Followers">Show 25 more</button>
-              <button id="network-followers-all" class="secondary" type="button" aria-label="Show all Followers">Show all</button>
-              <button id="network-followers-collapse" class="secondary" type="button" aria-label="Collapse Followers" hidden>Collapse</button>
+              <button id="network-followers-more" class="button button-secondary button-sm" type="button" aria-label="Show 25 more Followers">Show 25 more</button>
+              <button id="network-followers-all" class="button button-secondary button-sm" type="button" aria-label="Show all Followers">Show all</button>
+              <button id="network-followers-collapse" class="button button-secondary button-sm" type="button" aria-label="Collapse Followers" hidden>Collapse</button>
             </div>
           </section>
 
-          <section class="section-block network-section">
-            <h3 id="network-following-heading">Following</h3>
+          <section class="network-section" aria-labelledby="network-following-heading">
+            <div class="network-section-header">
+              <h3 id="network-following-heading">Following</h3>
+              <p class="network-section-description">Accounts this profile follows.</p>
+            </div>
             <p id="network-following-empty" class="empty-state" hidden></p>
             <ul id="network-following-list" class="account-list" aria-labelledby="network-following-heading"></ul>
             <p id="network-following-status" class="list-status" hidden></p>
             <div id="network-following-controls" class="list-controls" hidden>
-              <button id="network-following-more" class="secondary" type="button" aria-label="Show 25 more Following users">Show 25 more</button>
-              <button id="network-following-all" class="secondary" type="button" aria-label="Show all Following users">Show all</button>
-              <button id="network-following-collapse" class="secondary" type="button" aria-label="Collapse Following users" hidden>Collapse</button>
+              <button id="network-following-more" class="button button-secondary button-sm" type="button" aria-label="Show 25 more Following users">Show 25 more</button>
+              <button id="network-following-all" class="button button-secondary button-sm" type="button" aria-label="Show all Following users">Show all</button>
+              <button id="network-following-collapse" class="button button-secondary button-sm" type="button" aria-label="Collapse Following users" hidden>Collapse</button>
             </div>
           </section>
 
-          <section id="network-unreciprocated-section" hidden class="section-block network-section">
-            <h3 id="network-unreciprocated-heading">Following who don't follow back</h3>
+          <section id="network-unreciprocated-section" hidden class="network-section is-highlighted" aria-labelledby="network-unreciprocated-heading">
+            <div class="network-section-header">
+              <h3 id="network-unreciprocated-heading">Following who don't follow back</h3>
+              <p class="network-section-description">Accounts this profile follows that were not in the followers list GitHub returned. That is all it means.</p>
+            </div>
             <p id="network-unreciprocated-empty" class="empty-state" hidden></p>
             <ul id="network-unreciprocated-list" class="account-list" aria-labelledby="network-unreciprocated-heading"></ul>
             <p id="network-unreciprocated-status" class="list-status" hidden></p>
             <div id="network-unreciprocated-controls" class="list-controls" hidden>
-              <button id="network-unreciprocated-more" class="secondary" type="button" aria-label="Show 25 more users who don't follow back">Show 25 more</button>
-              <button id="network-unreciprocated-all" class="secondary" type="button" aria-label="Show all users who don't follow back">Show all</button>
-              <button id="network-unreciprocated-collapse" class="secondary" type="button" aria-label="Collapse users who don't follow back" hidden>Collapse</button>
+              <button id="network-unreciprocated-more" class="button button-secondary button-sm" type="button" aria-label="Show 25 more users who don't follow back">Show 25 more</button>
+              <button id="network-unreciprocated-all" class="button button-secondary button-sm" type="button" aria-label="Show all users who don't follow back">Show all</button>
+              <button id="network-unreciprocated-collapse" class="button button-secondary button-sm" type="button" aria-label="Collapse users who don't follow back" hidden>Collapse</button>
             </div>
           </section>
-
-          <div id="network-manage" class="network-manage" hidden>
-            <button id="network-manage-unfollows" class="secondary" type="button" hidden>Manage unfollows</button>
-            <p id="network-manage-note" class="network-manage-note"></p>
-          </div>
 
           <div id="network-export" class="section-block" hidden>
             <div class="section-heading export-heading">
               <div><p class="eyebrow">Preview and export</p><h2>Network Markdown</h2></div>
               <div class="actions">
-                <button id="network-copy-button" class="secondary" type="button">Copy Markdown</button>
-                <button id="network-download-button" class="secondary" type="button">Download .md</button>
+                <button id="network-copy-button" class="button button-secondary" type="button">Copy Markdown</button>
+                <button id="network-download-button" class="button button-secondary" type="button">Download .md</button>
               </div>
             </div>
             <textarea id="network-output" readonly spellcheck="false" aria-label="Generated network Markdown"></textarea>
           </div>
         </div>
-        <section id="network-manager" class="section-block network-manager" hidden aria-labelledby="network-manager-heading">
-          <button id="network-manager-back" class="secondary" type="button">Back to Network</button>
-          <h3 id="network-manager-heading" tabindex="-1">Manage unfollows</h3>
-          <p id="network-manager-summary" class="summary-text"></p>
-          <p class="network-manager-promise">GitProfileLens never unfollows anyone automatically. There is no bulk action here: every unfollow is one account you choose, one at a time.</p>
-          <p id="network-manager-caveat" class="network-manager-caveat">These are accounts you follow that were not in the followers list GitHub returned. That is all it means. GitProfileLens cannot know why an account does not follow back.</p>
-          <p id="network-manager-blocked" class="network-notice is-error" hidden></p>
+
+        <section id="network-manager" class="network-manager" hidden aria-labelledby="network-manager-heading">
+          <button id="network-manager-back" class="button button-ghost button-sm back-button" type="button">
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M9.78 3.72a.75.75 0 0 1 0 1.06L6.56 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L4.97 8.53a.75.75 0 0 1 0-1.06l3.75-3.75a.75.75 0 0 1 1.06 0Z"/></svg>
+            <span>Back to Network</span>
+          </button>
+          <div class="network-manager-header">
+            <h3 id="network-manager-heading" tabindex="-1">Manage unfollows</h3>
+            <p id="network-manager-summary" class="summary-text"></p>
+          </div>
+          <div class="network-manager-promises">
+            <p class="network-manager-promise">GitProfileLens never unfollows anyone automatically. There is no bulk action here: every unfollow is one account you choose, one at a time.</p>
+            <p id="network-manager-caveat" class="network-manager-caveat">These are accounts you follow that were not in the followers list GitHub returned. That is all it means. GitProfileLens cannot know why an account does not follow back.</p>
+          </div>
+          <div id="network-manager-blocked-group" class="network-manager-blocked" hidden>
+            <p id="network-manager-blocked" class="network-notice is-error"></p>
+            <button id="network-manager-reauthorize" class="button button-primary button-sm" type="button" hidden></button>
+          </div>
           <p id="network-manager-announcement" class="status manager-announcement" role="status" aria-live="polite" tabindex="-1"></p>
           <div id="network-manager-filter-group" class="network-manager-filter" hidden>
             <label for="network-manager-filter">Filter by username</label>
@@ -268,9 +367,9 @@
           <ul id="network-manager-list" class="manager-list" aria-labelledby="network-manager-heading"></ul>
           <p id="network-manager-status" class="list-status" hidden></p>
           <div id="network-manager-controls" class="list-controls" hidden>
-            <button id="network-manager-more" class="secondary" type="button" aria-label="Show 25 more accounts to manage">Show 25 more</button>
-            <button id="network-manager-all" class="secondary" type="button" aria-label="Show all accounts to manage">Show all</button>
-            <button id="network-manager-collapse" class="secondary" type="button" aria-label="Collapse the accounts to manage" hidden>Collapse</button>
+            <button id="network-manager-more" class="button button-secondary button-sm" type="button" aria-label="Show 25 more accounts to manage">Show 25 more</button>
+            <button id="network-manager-all" class="button button-secondary button-sm" type="button" aria-label="Show all accounts to manage">Show all</button>
+            <button id="network-manager-collapse" class="button button-secondary button-sm" type="button" aria-label="Collapse the accounts to manage" hidden>Collapse</button>
           </div>
         </section>
       </section>
@@ -327,8 +426,8 @@
         <div class="section-heading export-heading">
           <div><p class="eyebrow">Preview and export</p><h2>Markdown report</h2></div>
           <div class="actions">
-            <button id="copy-button" class="secondary" type="button">Copy</button>
-            <button id="download-button" class="secondary" type="button">Download .md</button>
+            <button id="copy-button" class="button button-secondary" type="button">Copy</button>
+            <button id="download-button" class="button button-secondary" type="button">Download .md</button>
           </div>
         </div>
         <fieldset id="public-export-options" class="export-options">
@@ -351,7 +450,7 @@
     </section>
 
     <footer class="footer">
-      <strong>GitProfileLens</strong>
+      <span class="footer-brand">GitProfileLens</span>
       <span>Independent developer tool. Not affiliated with or endorsed by GitHub.</span>
     </footer>
   </main>
@@ -361,6 +460,7 @@
   <script src="pinned-optimizer.js"></script>
   <script src="network-history.js"></script>
   <script src="network-export.js"></script>
+  <script src="auth-context.js"></script>
   <script src="script.js"></script>
   <script src="markdown-format.js"></script>
 </body>

@@ -1,10 +1,12 @@
 const {
   STATE_COOKIE,
+  RETURN_COOKIE,
   STATE_DURATION_SECONDS,
   createCookie,
   createOAuthState,
   setPrivateResponseHeaders,
 } = require("./session-crypto.js");
+const { normalizeReturnPath } = require("../../auth-context.js");
 
 /**
  * marks an authorization the reader started in order to manage who they follow
@@ -41,7 +43,17 @@ function githubAuthHandler(request, response) {
   authorizationUrl.searchParams.set("redirect_uri", callbackUrl);
   authorizationUrl.searchParams.set("state", state);
 
-  response.setHeader("Set-Cookie", createCookie(STATE_COOKIE, state, STATE_DURATION_SECONDS));
+  // Where the reader was when they chose to sign in, reduced to a same-origin
+  // path naming only a profile, a result view, and the management view. It is
+  // kept server-side in an HttpOnly cookie rather than sent to GitHub, and the
+  // callback normalizes it again before redirecting, so neither a crafted link
+  // nor an edited cookie can turn the redirect into one that leaves this site.
+  const returnTo = normalizeReturnPath(request.query?.return) || "/";
+
+  response.setHeader("Set-Cookie", [
+    createCookie(STATE_COOKIE, state, STATE_DURATION_SECONDS),
+    createCookie(RETURN_COOKIE, encodeURIComponent(returnTo), STATE_DURATION_SECONDS),
+  ]);
   response.statusCode = 302;
   response.setHeader("Location", authorizationUrl.toString());
   response.end();

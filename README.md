@@ -16,7 +16,28 @@ GitProfileLens evaluates presentation and discoverability, not developer ability
 
 ### [Try the live audit →](https://gitprofilelens.vercel.app/)
 
-![Completed GitProfileLens audit showing an overall portfolio score, category scores, and prioritized recommendations](docs/images/gitprofilelens-audit.png)
+![Completed GitProfileLens audit showing an overall portfolio score of 80, six category scores, and prioritized recommendations](docs/images/screenshots/overview.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/screenshots/home-signed-in.png" alt="Homepage for a signed-in reader, with their GitHub username already filled in and shortcuts to analyze their own profile or audit authorized repositories" /></td>
+    <td width="50%"><img src="docs/images/screenshots/network.png" alt="Network tab with follower, following, and non-follow-back counts and the Manage unfollows entry point" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/screenshots/manage-unfollows.png" alt="Manage unfollows view with one account awaiting confirmation and the promise that nothing is unfollowed automatically" /></td>
+    <td><img src="docs/images/screenshots/audit.png" alt="Repository audit card with candidacy, README checklist, and findings" /></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/images/screenshots/mobile-home.png" alt="Homepage on a 390-pixel-wide phone" width="230" />
+  &nbsp;
+  <img src="docs/images/screenshots/mobile-network.png" alt="Network tab on a 390-pixel-wide phone" width="230" />
+  &nbsp;
+  <img src="docs/images/screenshots/tablet-overview.png" alt="Profile overview on a 768-pixel-wide tablet" width="260" />
+</p>
+
+All screenshots are of the real interface, captured with `npm run screenshots` against a fictional demonstration profile. More views are in [docs/images/screenshots](docs/images/screenshots).
 
 ## Two deliberately separate modes
 
@@ -48,6 +69,43 @@ Sign in with GitHub and install the GitHub App on all or selected repositories. 
 
 Private repositories never affect the public GitHub Profile Score. Private identifiers are not included in public URLs, score cards, public metadata endpoints, or `/api/report`. Private details enter Markdown only when the authenticated user explicitly selects a private or combined export.
 
+## Signing in without losing your place
+
+Public auditing never needs an account. Signing in with GitHub adds three things, and only these: auditing repositories you authorize, managing who you follow, and a navigation that knows who you are.
+
+**You come back to where you started.** Sign-in and follow-management authorization both return you to the profile, tab, and view you left, never to the homepage by default. Before leaving for GitHub, the page:
+
+1. Records where you are as a return destination. The server reduces it to an allowlisted same-origin path (`/`, a valid `user`, a known `view`, and `manage=unfollows`), keeps it in a short-lived `HttpOnly` cookie, and normalizes it again in the callback, so neither a crafted link nor an edited cookie can redirect anywhere else.
+2. Hands the public audit and network you were looking at across the redirect in this tab's `sessionStorage`. The copy is public data only, is read once, expires after ten minutes, is never written for a private audit, and holds nothing that could act as you. On return the page restores it instead of fetching the profile again, which matters against GitHub's sixty-requests-an-hour unauthenticated limit. If the browser blocks storage, the profile is simply fetched once more.
+3. Remembers the same return path in this tab for an hour. If you take long enough on GitHub that the sign-in itself expires, or revisit an old callback, the server can no longer vouch for the destination and sends you home; the tab then puts you back on the page you left, with an explanation and **Try again**.
+
+**Your username is filled in for you.** The navigation shows your avatar and login with **My profile**, **Audit my repositories**, and **Sign out**. The homepage field is prefilled with your login only when it is empty. A profile in the URL, or one you typed or chose, always wins, so you can inspect anyone's public profile without signing out.
+
+**Follow management is asked for only when you ask to manage follows.** Ordinary sign-in never carries the follow permission. From the Network tab:
+
+| You are | You see | It does |
+| --- | --- | --- |
+| Signed out | **Sign in to manage unfollows** | One GitHub authorization that signs you in and records the follow-management intent, then opens the manager |
+| Signed in, permission not granted | **Allow managing follows** | The follow-management authorization, then straight back to the manager |
+| Signed in and allowed | **Manage unfollows** | Opens the manager. No sign-in, no authorization, no username |
+| Signed in as someone else | **View my network** | Opens your own profile's Network tab |
+
+Every outcome is stated, with a way forward and without losing your place:
+
+| Outcome | What you see |
+| --- | --- |
+| Signed in | "Signed in as @you." |
+| Follow management allowed | The manager, and a note that nothing is ever unfollowed automatically |
+| Cancelled on GitHub | "GitHub authorization was cancelled. Nothing was changed." with **Try again**; an existing session is left untouched |
+| GitHub error | "GitHub could not complete the authorization." with **Try again** |
+| Expired or unverifiable request | "That sign-in could not be verified, or it took too long." with **Try again** |
+| Session expired | "Your GitHub session expired." with **Sign in again** |
+| Session ends or permission is revoked mid-task | The manager stays on screen, its remaining offers are withdrawn, and **Sign in again** or **Allow managing follows** returns you to it with every confirmed unfollow kept |
+
+The page re-reads the session whenever it is shown again, including after Back from GitHub. If another tab signed out or switched accounts, the previous account's private audit, open manager offers, and handoff are cleared immediately. Public profile data is not account data and stays.
+
+**Back, Forward, and reload behave like pages.** The profile, the tab you chose, and the open manager are part of the URL, so a reload or a shared link returns to them, and Back walks through them. Profiles seen earlier in the same visit come back from memory without another request.
+
 ## Network tab
 
 **Network** is one of the profile result tabs, alongside Overview, Audit, Repositories and Markdown export. It retrieves the audited profile's public followers and following lists and exports them as Markdown.
@@ -75,7 +133,7 @@ It is a factual relationship difference, nothing more. GitProfileLens does not s
 
 ### Manage unfollows
 
-Beneath that list, **Manage unfollows** opens a focused view where you can unfollow accounts yourself, one at a time. It appears only when all three of its conditions hold, and says which one is missing when they do not:
+Below the counts, **Manage unfollows** opens a focused view where you can unfollow accounts yourself, one at a time. Each row shows the avatar, the login, a link to the GitHub profile, the relationship it was derived from, and its own Unfollow control with per-row progress and outcome. The view has its own URL (`manage=unfollows`), so a reload or a returning authorization lands back in it. It is actionable only when all three of its conditions hold, and says which one is missing when they do not, offering the one step that would resolve it:
 
 - Both the Followers and Following lists were retrieved completely, because the difference is only a fact when neither list is missing a page.
 - The audited profile is the account you are signed in as, compared case-insensitively. You cannot manage someone else's follows from their profile.
@@ -152,8 +210,12 @@ GitProfileLens uses the GitHub App web authorization flow and requests read-only
 - Browser JavaScript receives only safe sign-in identity data, never raw tokens or session secrets. Whether a session may manage follows is reported to the browser as a boolean capability, never as anything it could act with.
 - The only endpoint that changes anything on GitHub is `POST /api/unfollow`. It accepts one login and takes the acting identity from the sealed session, so a browser cannot name who is acting or which token to use. It performs exactly one bounded operation and is not a general GitHub proxy.
 - Private repository responses are processed for the current request and are not permanently stored by GitProfileLens.
-- Private Markdown reports are generated locally in the browser and cleared from page state on logout.
+- Private Markdown reports are generated locally in the browser and cleared from page state on logout, and when the page finds a different account signed in.
+- Every authorization returns to a server-normalized, same-origin destination. The OAuth callback never ends on an error page: a cancelled, failed, or unverifiable authorization redirects back with an outcome word in `auth=`, issues no session, and leaves any existing session as it was.
+- The only browser storage used for authorization is a single-use, ten-minute `sessionStorage` copy of the public audit you were looking at, and the normalized path an authorization started from. Tokens, private repository data, and anything account-specific never enter browser storage.
+- An unfollow request names the account the page believes is acting. The server refuses with `409` when that is no longer the signed-in account, so an account switched in another tab can never unfollow from the wrong account. The field only narrows: who acts is always the sealed session.
 - Logout clears the GitProfileLens session cookie. It does not sign the user out of GitHub.
+- The interface loads the Inter and Geist Mono typefaces from Google Fonts. This is the only third-party request the page makes besides GitHub's API and avatars; without it the page falls back to system fonts.
 
 The server necessarily receives authorized GitHub API responses while producing an audit. Avoid granting the GitHub App access to repositories you do not want GitProfileLens to process.
 
@@ -365,7 +427,10 @@ gitprofilelens/
 |   |-- private-repositories.js      # authenticated authorized-repository endpoint
 |   |-- report.js                    # public-only JSON report endpoint
 |   `-- unfollow.js                  # the one endpoint that changes anything on GitHub
+|-- scripts/
+|   `-- capture-screenshots.js        # README screenshots from the real UI with demo data
 |-- tests/                            # unit, API, security, and browser tests
+|-- auth-context.js                   # return destinations, outcomes, username precedence, audit handoff
 |-- audit.js                          # deterministic scoring and normalization
 |-- pinned-optimizer.js               # deterministic pinned repository set selection
 |-- index.html                        # accessible application structure
@@ -389,7 +454,12 @@ npm run test:browser
 npm run eval
 npm run eval:pins
 npm run eval:pins:diagnose
+npm run screenshots
 ```
+
+The authentication lifecycle is tested at two levels. `tests/auth-context.test.js` and `tests/auth.test.js` exercise return-destination validation, callback outcomes, state verification, permission carry-over, and session expiry without a browser. `tests/browser.test.js` drives the real page through every journey with GitHub mocked: public auditing while signed out, homepage prefill and typed-username precedence, signing in from the Network tab straight into the manager, granting follow permission, a fully authorized reader opening the manager directly, cancellation, session expiry mid-manager, Back/Forward/reload, account switching, blocked storage, and a 39-character login at 375 pixels. No test contacts GitHub or performs a real unfollow.
+
+`npm run screenshots` regenerates `docs/images/screenshots/` from the real interface served locally, with every GitHub and GitProfileLens API request answered from a fictional demonstration profile. It needs a local Chrome or Chromium.
 
 Tests cover deterministic scoring, portfolio candidacy classification, pinned set selection and its current-versus-recommended comparison, public report isolation, OAuth state verification, encrypted session behavior, logout, authorized-repository pagination, owner filtering, README analysis, safe GitHub errors, private cache headers, three-scope Markdown export, follower and following pagination with partial-failure, non-follow-back derivation, lazy loading and stale-response handling, unfollow authorization and its refusals against a mocked GitHub boundary, mutation reconciliation across every derived surface, and browser-level isolation from public scoring, sharing, score cards, and URLs. `npm run eval:pins:diagnose` is an opt-in developer diagnostic that reports which selection rule decided each pinned recommendation, how often presentation score is consulted, and how candidate selection policies compare. `npm run eval:candidacy` is its counterpart for the `Strong` / `Worth polishing` distinction: the gates, which gate held each repository back, every case where a `Worth polishing` repository outscores a `Strong` one, and — by searching 120,960 repository shapes rather than exhibiting one pair — how far the tier could override presentation score before it was given a five-point band. `npm run eval:performance` drives the real page in a browser and reports deterministic counts — requests issued and repeated, elements created per interaction, repeated derived computations, DOM nodes per panel, storage writes — rather than machine-dependent timings, and sweeps a synthetic unfollow manager from 25 to 10,000 accounts to show that opening it and reconciling one confirmed unfollow do not grow with the list. All three are described in [docs/scoring.md](docs/scoring.md). `tests/local-runtime.test.js` guards the local-development architecture: the client's enrichment calls stay same-origin, every `/api` path it requests has a handler file, the handler runs under a plain Node HTTP server, a static server neither executes nor discloses it, and no `dev` script or `vercel.json` development command re-enters `vercel dev`.
 
@@ -422,6 +492,7 @@ GitHub Pages can host only the static public client. Public repository fetching,
 - GitHub exposes no timestamp for when a follow happened, so the Network lists are shown in the API's order and are never labelled newest or oldest. See [docs/network-ordering.md](docs/network-ordering.md).
 - The Network tab retrieves at most 10,000 accounts per list; a larger network is reported as incomplete rather than silently truncated. It is available for public audits only, not the private repository audit.
 - The unfollow manager works only on the account you are signed in as, only when both relationship lists were retrieved completely, and only one account at a time. GitProfileLens never unfollows anyone automatically and implements no bulk action.
+- The audit carried across a sign-in lives in one browser tab for ten minutes, and the page a sign-in started from is remembered in that tab for an hour. A sign-in finished later than ten minutes returns to the same place but fetches the profile again. One opened in a different tab returns to the same place only if it finishes within ten minutes; after that GitHub's state has expired and it lands on the homepage.
 - A GitHub App's user permissions are granted as one set at authorization, so GitProfileLens cannot narrow the write permission at the GitHub level. Its separate follow-management authorization is an application-level gate that makes the moment explicit; it is not a smaller token. See [docs/network-management.md](docs/network-management.md).
 
 ## Contributing

@@ -89,6 +89,19 @@ async function unfollowHandler(request, response) {
     });
     return;
   }
+  // The page names the account it believes is acting. That can only narrow what
+  // happens: if another tab has since signed this browser in as someone else, the
+  // unfollow is refused rather than performed from an account the reader was not
+  // looking at. It never names who acts; that is always the sealed session.
+  const expectedActor = readExpectedActor(request.body);
+  if (expectedActor !== null && expectedActor.toLowerCase() !== String(session.user.login).toLowerCase()) {
+    logDiagnostic("account_mismatch", { requestId });
+    response.status(409).json({
+      error: `You are signed in as @${session.user.login}, not @${expectedActor}. Nothing was changed.`,
+      reason: "account_mismatch",
+    });
+    return;
+  }
   // GitHub cannot follow you to yourself, and asking would spend a request to
   // learn it.
   if (login.toLowerCase() === String(session.user.login).toLowerCase()) {
@@ -219,6 +232,34 @@ function respondToGitHubFailure(response, result, requestId, login, startedAt) {
  * @returns {string|null} a syntactically valid login, or null
  */
 function readTargetLogin(body) {
+  const parsed = parseBody(body);
+  if (!parsed) return null;
+  const login = typeof parsed.login === "string" ? parsed.login.trim() : "";
+  return USERNAME_PATTERN.test(login) ? login : null;
+}
+
+/**
+ * reads the account the page believes is acting, if it named one
+ *
+ * Optional, and only ever used to refuse. A value that is present but not a
+ * login is returned as given, so it can never match a real account and the
+ * request is refused rather than performed.
+ *
+ * @param {*} body parsed or raw request body
+ * @returns {string|null} the named account, or null when none was named
+ */
+function readExpectedActor(body) {
+  const parsed = parseBody(body);
+  if (!parsed || !("expectedActor" in parsed)) return null;
+  return typeof parsed.expectedActor === "string" ? parsed.expectedActor.trim() : String(parsed.expectedActor);
+}
+
+/**
+ * parses a request body that may arrive as an object, a string, or a buffer
+ * @param {*} body request body
+ * @returns {Object|null} parsed object, or null when unreadable
+ */
+function parseBody(body) {
   let parsed = body;
   if (Buffer.isBuffer(parsed)) parsed = parsed.toString("utf8");
   if (typeof parsed === "string") {
@@ -228,10 +269,7 @@ function readTargetLogin(body) {
       return null;
     }
   }
-  if (!parsed || typeof parsed !== "object") return null;
-
-  const login = typeof parsed.login === "string" ? parsed.login.trim() : "";
-  return USERNAME_PATTERN.test(login) ? login : null;
+  return parsed && typeof parsed === "object" ? parsed : null;
 }
 
 /**
@@ -344,4 +382,5 @@ function logDiagnostic(event, details) {
 
 module.exports = unfollowHandler;
 module.exports.readTargetLogin = readTargetLogin;
+module.exports.readExpectedActor = readExpectedActor;
 module.exports.hasSameOriginRequest = hasSameOriginRequest;

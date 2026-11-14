@@ -63,6 +63,8 @@ global.document = {
     return selectorRegistry.get(selector);
   },
   querySelectorAll: () => [],
+  addEventListener: () => {},
+  removeEventListener: () => {},
 };
 
 // window.setTimeout queues instead of running, so tests control when restore happens
@@ -72,9 +74,11 @@ global.window = {
   clearTimeout: () => {},
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   scrollTo: () => {},
-  location: { href: "http://localhost/", search: "" },
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  location: { href: "http://localhost/", search: "", pathname: "/" },
 };
-global.history = { replaceState: () => {} };
+global.history = { replaceState: () => {}, pushState: () => {} };
 global.CSS = { escape: (value) => value };
 global.Image = class { set src(value) {} };
 
@@ -86,7 +90,9 @@ Object.defineProperty(globalThis, "navigator", {
 
 global.fetch = async () => ({ ok: false, json: async () => ({}) });
 
-// Stubs for the sibling browser scripts script.js expects as globals
+// Stubs for the sibling browser scripts script.js expects as globals. The
+// authorization rules are pure, so the real module is used rather than a stub.
+global.GitProfileAuthContext = require("../auth-context.js");
 global.GitProfileNetworkHistory = {
   createStore: () => ({}),
   orderAccounts: (accounts) => ({ accounts }),

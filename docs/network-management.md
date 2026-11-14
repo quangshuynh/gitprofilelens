@@ -93,18 +93,42 @@ for:
 
 1. The Network tab explains, in the interface: *"Managing follows requires
    permission to change who you follow. GitProfileLens never unfollows accounts
-   automatically."*
-2. Choosing **Allow managing follows** sends you to
-   `/api/auth/github?manage=follows`, which marks the OAuth `state` it generates.
+   automatically."* A reader who is not signed in is told the same thing and
+   offered **Sign in to manage unfollows**, which is this same authorization,
+   not an ordinary sign-in followed by a second trip.
+2. Choosing **Allow managing follows** (or **Sign in to manage unfollows**) sends
+   you to `/api/auth/github?manage=follows&return=…`, which marks the OAuth
+   `state` it generates and stores the normalized return destination
+   `/?user=you&view=network&manage=unfollows` in a separate `HttpOnly` cookie.
 3. The marker travels in the `state` GitHub echoes back. The callback verifies
    the state against the `HttpOnly` cookie **first**, then reads the marker from
    that verified cookie — never from the query string, which a browser could
    have edited.
-4. Only then does the sealed session carry `manageFollows: true`.
+4. Only then does the sealed session carry `manageFollows: true`, and the
+   callback returns you to the manager with `auth=manage-follows`. The page
+   re-reads the capability from `GET /api/auth/session` before opening it.
 
 An ordinary sign-in leaves it `false`, and an older session sealed before this
 feature existed has no such field, which is also `false`. The unfollow endpoint
-refuses both before making any GitHub request.
+refuses both before making any GitHub request. The one carry-over is narrow: an
+ordinary sign-in that replaces a still-valid session **for the same account**
+that already carried the permission keeps it, so signing in again never quietly
+withdraws a permission granted minutes ago. Another account never inherits it,
+and an expired session grants nothing.
+
+A cancelled authorization (`error=access_denied`) is reported as cancelled only
+after its `state` verifies, issues no session, and leaves any existing session
+exactly as it was. The reader is returned to the Network tab with **Try again**.
+
+### Returning to the manager
+
+An OAuth round trip is a full page navigation. So that it does not cost a full
+re-audit, the page hands the public audit and the network it was showing,
+including every unfollow already confirmed, across the redirect in this tab's
+`sessionStorage`: one copy, public data only, read once, discarded after ten
+minutes. Restoring it is not a new observation, so observation history is read,
+not written. If storage is unavailable the profile and network are fetched once
+more, and the manager still opens.
 
 This is an application-level gate, not a token-level one. It makes the moment
 explicit and auditable; it does not and cannot shrink what the token could do if
@@ -126,16 +150,22 @@ browser
         -> DELETE https://api.github.com/user/following/octocat
 ```
 
-The request body may name **only** who to unfollow. `actingUser`,
-`authenticatedLogin`, `token` and anything else in the body are ignored, not
-trusted. There is no path parameter, no token parameter and no batch form, so
+The request body may name **only** who to unfollow, plus, optionally, which
+account the page believes is acting (`expectedActor`). That second field can
+only refuse: when it differs from the sealed session's login, compared
+case-insensitively, the request is answered `409 account_mismatch` before any
+GitHub request, because another tab has signed this browser in as someone else
+and the reader was managing a different account's follows. The page always
+sends it. `actingUser`, `authenticatedLogin`, `token` and anything else in the
+body are ignored, not trusted. There is no path parameter, no token parameter and no batch form, so
 the endpoint cannot be turned into a general GitHub proxy by anyone who has the
 URL. It implements exactly one bounded operation.
 
 The server checks, in order: the method is `POST`; the `Origin`, when present,
 matches the host; the target login is syntactically valid; the session is valid
-and unexpired; the session carries the follow-management permission; and the
-target is not the signed-in account itself. The session cookie is already
+and unexpired; the session carries the follow-management permission; the page's
+expected account, when named, is the signed-in account; and the target is not
+the signed-in account itself. The session cookie is already
 `SameSite=Lax`, so the `Origin` check is a second lock rather than the only one.
 
 A write is **never retried**. GitHub counts one against a secondary limit of 80
@@ -183,6 +213,15 @@ If the session ends or the permission is withdrawn while the manager is open,
 the manager **stays on screen**. That is precisely the moment you most need to
 see which accounts were changed and which were not. Its remaining offers are
 withdrawn, labelled *Unavailable*, and a notice says why.
+
+Beside the notice is the one step that would fix it: **Sign in again** for an
+ended session, **Allow managing follows** for a withdrawn permission. Either
+returns to this manager with the network as it now stands, so an account
+already unfollowed does not reappear and nothing has to be audited again.
+
+The same applies when another tab signs this browser out or into a different
+account: the page re-reads the session when it is shown again, withdraws the
+remaining offers, and says which account is now signed in.
 
 ## Observation history after a mutation
 
@@ -289,3 +328,7 @@ does and what GitHub permits.
 - Observation history lives in this browser only. A different browser or device
   starts a new baseline, and the ordering falls back to GitHub's own.
 - Unfollowing is possible only for the account you are signed in as.
+- The audit handed across an authorization lives in one browser tab for ten
+  minutes. A sign-in completed later fetches the profile again; the tab
+  remembers for an hour where the authorization started, so it still returns
+  there even when GitHub's state has expired.
