@@ -1,0 +1,1 @@
+Before screenshots for the authentication and redesign pull request, captured from main (7501a40) with the same fictional demonstration profile as docs/images/screenshots. Not part of the application; safe to delete after the pull request is merged.
